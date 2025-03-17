@@ -72,6 +72,10 @@ llm_ctx src/*.c | pbcopy
 ## Output Format
 
 ```
+<user_instructions>
+// when `-c` is used, instructions show up here
+</user_instructions>
+
 <file_tree>
 .
 ├── src
