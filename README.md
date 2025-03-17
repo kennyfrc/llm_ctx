@@ -83,14 +83,15 @@ llm_ctx src/*.c | pbcopy
 <file_context>
 
 File: src/main.c
-```
+
 // Your code here
-```
+
 ----------------------------------------
+
 File: include/header.h
-```
+
 // Your header file content
-```
+
 ----------------------------------------
 
 </file_context>
