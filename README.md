@@ -123,7 +123,7 @@ alias llm='llm_ctx | pbcopy'
 
 - Select relevant files only
 - Use `-c` flag for instructions
-- Process output with other tools as needed
+- Process output with other tools as needed (like `find`, `pbcopy`, etc.)
 
 ## Reference
 
