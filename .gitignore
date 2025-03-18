@@ -2,3 +2,9 @@
 llm_ctx
 *.o
 *.out
+test_*
+!test_*.c
+!test_*.h
+tests/test_cli
+tests/test_gitignore
+tests/test_stdin
