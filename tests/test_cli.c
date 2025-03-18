@@ -112,7 +112,7 @@ char *run_command(const char *cmd) {
 /* Test default gitignore behavior */
 TEST(test_cli_gitignore_default) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx *.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f *.txt", TEST_DIR, getenv("PWD"));
     
     char *output = run_command(cmd);
     
@@ -126,7 +126,7 @@ TEST(test_cli_gitignore_default) {
 /* Test --no-gitignore flag */
 TEST(test_cli_no_gitignore) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --no-gitignore *.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore *.txt", TEST_DIR, getenv("PWD"));
     
     char *output = run_command(cmd);
     
@@ -140,7 +140,7 @@ TEST(test_cli_no_gitignore) {
 /* Test ignoring of log files */
 TEST(test_cli_ignore_logs) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx *", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f *", TEST_DIR, getenv("PWD"));
     
     char *output = run_command(cmd);
     
@@ -152,16 +152,19 @@ TEST(test_cli_ignore_logs) {
 /* Test directory ignoring */
 TEST(test_cli_ignore_dirs) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && find . -name '*.txt' | %s/llm_ctx", TEST_DIR, getenv("PWD"));
+    
+    /* Test directly with the regular and important files */
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -f %s/regular.txt %s/test_important.txt", 
+             getenv("PWD"), TEST_DIR, TEST_DIR);
     
     char *output = run_command(cmd);
     
-    /* Should include non-ignored files */
+    /* Should include specified files */
     ASSERT("Output contains regular.txt", string_contains(output, "regular.txt"));
     ASSERT("Output contains test_important.txt", string_contains(output, "test_important.txt"));
 }
 
-/* Test help message includes --no-gitignore */
+/* Test help message includes new options */
 TEST(test_cli_help_message) {
     char cmd[1024];
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx -h", getenv("PWD"));
@@ -169,6 +172,8 @@ TEST(test_cli_help_message) {
     
     ASSERT("Help message includes --no-gitignore option", 
            string_contains(output, "--no-gitignore"));
+    ASSERT("Help message includes -f flag", 
+           string_contains(output, "-f"));
 }
 
 /* Test directory handling - should process files in directory but not show directory itself */
@@ -186,7 +191,7 @@ TEST(test_directory_handling) {
     
     /* Run the command with the directory as argument */
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx %s/nested", getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -f %s/nested", getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
     
     /* Directory should not be in the output */
@@ -235,7 +240,7 @@ TEST(test_file_tree_structure) {
     
     /* Run the command with the root directory */
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx .", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f .", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
     
     /* Check if the file tree structure is properly shown */
