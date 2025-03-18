@@ -48,6 +48,16 @@ char *find_common_prefix(void);
 void print_tree_node(const char *path, int level, int is_last, const char *prefix);
 void build_tree_recursive(char **paths, int count, int level, char *prefix, const char *path_prefix);
 int process_stdin(void);
+int process_stdin_content(void);
+int is_likely_filenames(FILE *input);
+void output_file_callback(const char *name, const char *type, const char *content);
+
+/* Special file structure for stdin content */
+typedef struct {
+    char filename[MAX_PATH];
+    char type[32];
+    char *content;
+} SpecialFile;
 
 /* Global variables - used to track state across functions */
 char temp_file_path[MAX_PATH];
@@ -59,6 +69,8 @@ FileInfo file_tree[MAX_FILES];
 int file_tree_count = 0;
 FILE *tree_file = NULL;        /* For the file tree output */
 char tree_file_path[MAX_PATH]; /* Path to the tree file */
+SpecialFile special_files[10]; /* Support up to 10 special files */
+int num_special_files = 0;
 
 /**
  * Check if a file has already been processed to avoid duplicates
@@ -390,20 +402,88 @@ void show_help(void) {
     printf("Format files for LLM code analysis with appropriate tags.\n\n");
     printf("Options:\n");
     printf("  -c TEXT        Add user instructions wrapped in <user_instructions> tags\n");
+    printf("  -f [FILE...]   Process files instead of stdin content\n");
     printf("  -h             Show this help message\n");
     printf("  --no-gitignore Ignore .gitignore files when collecting files\n\n");
-    printf("If no FILE arguments are given, read from standard input.\n");
-    printf("This allows piping from commands like find, ls, etc.\n\n");
+    printf("By default, llm_ctx reads content from stdin.\n");
+    printf("Use -f flag to indicate file arguments are provided.\n\n");
     printf("Examples:\n");
-    printf("  # Pass files directly\n");
-    printf("  llm_ctx src/main.c include/header.h\n\n");
+    printf("  # Process content from stdin (default behavior)\n");
+    printf("  git diff | llm_ctx -c \"Please explain these changes\"\n\n");
+    printf("  # Process content from a file via stdin\n");
+    printf("  cat complex_file.json | llm_ctx -c \"Explain this JSON structure\"\n\n");
+    printf("  # Process specific files (using -f flag)\n");
+    printf("  llm_ctx -f src/main.c include/header.h\n\n");
     printf("  # Use with find to process files\n");
-    printf("  find src -name \"*.c\" | llm_ctx\n\n");
+    printf("  find src -name \"*.c\" | xargs llm_ctx -f\n\n");
     printf("  # Add instructions for the LLM\n");
-    printf("  llm_ctx -c \"Please explain this code\" src/*.c\n\n");
+    printf("  llm_ctx -c \"Please explain this code\" -f src/*.c\n\n");
     printf("  # Pipe to clipboard\n");
-    printf("  llm_ctx src/*.c | pbcopy\n");
+    printf("  git diff | llm_ctx -c \"Review these changes\" | pbcopy\n");
     exit(0);
+}
+
+/**
+ * Determine if input is likely filenames or raw content
+ * Checks the first few lines of input to see if they look like valid files
+ * 
+ * Returns 1 if likely filenames, 0 if likely content
+ */
+int is_likely_filenames(FILE *input) {
+    char line[MAX_PATH];
+    int line_count = 0;
+    int valid_file_count = 0;
+    
+    /* Remember current position */
+    long pos = ftell(input);
+    
+    /* Check first few lines */
+    while (fgets(line, sizeof(line), input) != NULL && line_count < 5) {
+        /* Remove trailing newline */
+        size_t len = strlen(line);
+        if (len > 0 && line[len - 1] == '\n') {
+            line[len - 1] = '\0';
+        }
+        
+        /* Skip empty lines */
+        if (strlen(line) == 0) {
+            continue;
+        }
+        
+        /* Content type detection heuristics */
+        if (line[0] == '{' || line[0] == '[' || 
+            strstr(line, "<?xml") == line || 
+            strstr(line, "<") != NULL ||
+            line[0] == '#' || 
+            strstr(line, "```") != NULL ||
+            strstr(line, "diff --git") == line || 
+            strstr(line, "commit ") == line ||
+            strstr(line, "index ") == line ||
+            strstr(line, "--- a/") == line) {
+            /* If it looks like content, immediately return false */
+            fseek(input, pos, SEEK_SET);
+            return 0;
+        }
+        
+        /* Check if line looks like a valid file */
+        if (access(line, F_OK) == 0) {
+            valid_file_count++;
+        }
+        
+        line_count++;
+    }
+    
+    /* Restore position */
+    fseek(input, pos, SEEK_SET);
+    
+    /* If at least half the lines are valid files, assume filenames */
+    /* If no files were found, assume this is content */
+    if (line_count > 0 && valid_file_count == 0) {
+        return 0;  /* No valid files found, assume content */
+    }
+    
+    /* If at least one valid file found, assume filenames */
+    return (valid_file_count > 0);
 }
 
 /**
@@ -433,6 +513,136 @@ int process_stdin(void) {
     }
     
     return (files_found > initial_files_found) ? 0 : 1;
+}
+
+/**
+ * Process raw content from stdin
+ * Any content piped in is treated as a single file
+ * This handles commands like cat, git diff, git show, etc.
+ * 
+ * Returns 0 if successful, 1 on failure
+ */
+int process_stdin_content(void) {
+    char buffer[4096];
+    size_t bytes_read;
+    FILE *content_file;
+    int found_content = 0;
+    
+    /* Create a temporary file to store the content */
+    char content_path[MAX_PATH];
+    strcpy(content_path, "/tmp/llm_ctx_content_XXXXXX");
+    int fd = mkstemp(content_path);
+    if (fd == -1) {
+        return 1;
+    }
+    
+    content_file = fdopen(fd, "w+");
+    if (!content_file) {
+        close(fd);
+        return 1;
+    }
+    
+    /* Read all data from stdin and save to temp file */
+    while ((bytes_read = fread(buffer, 1, sizeof(buffer), stdin)) > 0) {
+        fwrite(buffer, 1, bytes_read, content_file);
+        found_content = 1;
+    }
+    
+    /* Check if we actually got any content */
+    if (!found_content) {
+        fclose(content_file);
+        unlink(content_path);
+        return 1;
+    }
+    
+    /* Rewind the file so we can read it */
+    rewind(content_file);
+    
+    /* Try to determine the content type for proper formatting */
+    char content_type[32] = "";
+    char first_line[1024] = "";
+    
+    /* Read the first line to help detect content type */
+    if (fgets(first_line, sizeof(first_line), content_file) != NULL) {
+        /* Git diff detection */
+        if (strstr(first_line, "diff --git") == first_line || 
+            strstr(first_line, "commit ") == first_line ||
+            strstr(first_line, "index ") == first_line ||
+            strstr(first_line, "--- a/") == first_line) {
+            strcpy(content_type, "diff");
+        }
+        /* JSON detection */
+        else if (first_line[0] == '{' || first_line[0] == '[') {
+            strcpy(content_type, "json");
+        }
+        /* XML detection */
+        else if (strstr(first_line, "<?xml") == first_line || 
+                 strstr(first_line, "<") != NULL) {
+            strcpy(content_type, "xml");
+        }
+        /* Markdown detection */
+        else if (first_line[0] == '#' || 
+                 strstr(first_line, "```") != NULL) {
+            strcpy(content_type, "markdown");
+        }
+    }
+    
+    /* Rewind again to read the full content */
+    rewind(content_file);
+    
+    /* We need to store the content for later output */
+    char *stdin_content = malloc(1024 * 1024); /* Allocate 1MB - adjust as needed */
+    if (!stdin_content) {
+        fclose(content_file);
+        unlink(content_path);
+        return 1;
+    }
+    
+    size_t total_read = 0;
+    stdin_content[0] = '\0';
+    
+    while ((bytes_read = fread(buffer, 1, sizeof(buffer), content_file)) > 0) {
+        if (total_read + bytes_read < 1024 * 1024) {
+            memcpy(stdin_content + total_read, buffer, bytes_read);
+            total_read += bytes_read;
+        }
+    }
+    stdin_content[total_read] = '\0';
+    
+    /* Register a special file output function */
+    output_file_callback("stdin_content", content_type, stdin_content);
+    
+    /* Clean up */
+    fclose(content_file);
+    unlink(content_path);
+    
+    /* Increment files found so we don't error out */
+    files_found++;
+    
+    return 0;
+}
+
+/* Function to register a callback for a special file */
+void output_file_callback(const char *name, const char *type, const char *content) {
+    /* Check if we have room for more special files */
+    if (num_special_files >= 10) {
+        return;
+    }
+    
+    /* Store the special file information */
+    strcpy(special_files[num_special_files].filename, name);
+    strcpy(special_files[num_special_files].type, type);
+    special_files[num_special_files].content = strdup(content);
+    num_special_files++;
+    
+    /* Add to processed files list for tree display */
+    if (num_processed_files < MAX_FILES) {
+        processed_files[num_processed_files] = strdup(name);
+        num_processed_files++;
+        
+        /* Also add to the file tree structure */
+        add_to_file_tree(name);
+    }
 }
 
 /**
@@ -492,6 +702,8 @@ int collect_file(const char *filepath) {
     return 0;
 }
 
+/* Output file content implementation continues below */
+
 /**
  * Output a file's content to the specified output file
  * 
@@ -501,6 +713,26 @@ int collect_file(const char *filepath) {
  * Returns 0 on success, 1 on failure
  */
 int output_file_content(const char *filepath, FILE *output) {
+    /* Check if this is a special file (stdin content) */
+    for (int i = 0; i < num_special_files; i++) {
+        if (strcmp(filepath, special_files[i].filename) == 0) {
+            /* Format with a header showing the filename for context */
+            fprintf(output, "File: %s\n", filepath);
+            fprintf(output, "```%s\n", special_files[i].type);
+            
+            /* Write the stored content */
+            fprintf(output, "%s", special_files[i].content);
+            
+            /* Close the code fence and add a separator for visual clarity */
+            fprintf(output, "```\n");
+            fprintf(output, "----------------------------------------\n");
+            
+            return 0;
+        }
+    }
+    
+    /* Not a special file, process normally */
+    
     /* Check if path is a directory - skip it if so */
     struct stat statbuf;
     if (lstat(filepath, &statbuf) == 0 && S_ISDIR(statbuf.st_mode)) {
@@ -672,6 +904,11 @@ void cleanup(void) {
         free(processed_files[i]);
     }
     
+    /* Free special file content */
+    for (int i = 0; i < num_special_files; i++) {
+        free(special_files[i].content);
+    }
+    
     /* Remove temporary file */
     if (strlen(temp_file_path) > 0) {
         unlink(temp_file_path);
@@ -690,6 +927,8 @@ int main(int argc, char *argv[]) {
     /* Parse command line arguments */
     char *user_instructions = NULL;
     int i;
+    int file_mode = 0;  /* Default to stdin mode */
+    int file_args_start = 0;  /* Where file arguments start */
     
     /* Register cleanup handler */
     atexit(cleanup);
@@ -723,11 +962,27 @@ int main(int argc, char *argv[]) {
                 unlink(temp_file_path);
                 return 1;
             }
+        } else if (strcmp(argv[i], "-f") == 0) {
+            file_mode = 1;  /* Switch to file mode */
+            file_args_start = i + 1;  /* Files start after the -f flag */
         } else if (strcmp(argv[i], "--no-gitignore") == 0) {
             respect_gitignore = 0;
+        } else if (file_mode && argv[i][0] != '-') {
+            /* If in file mode and not an option, it's a file */
+            continue;
+        } else if (argv[i][0] == '-') {
+            /* Unknown option */
+            fprintf(stderr, "Error: Unknown option %s\n", argv[i]);
+            fclose(temp_file);
+            unlink(temp_file_path);
+            return 1;
         } else {
-            /* Not an option, break out to process files */
-            break;
+            /* Not in file mode but saw a non-option - error */
+            fprintf(stderr, "Error: File arguments must be specified with -f flag\n");
+            fprintf(stderr, "Example: llm_ctx -f file1.c file2.c\n");
+            fclose(temp_file);
+            unlink(temp_file_path);
+            return 1;
         }
     }
     
@@ -739,19 +994,26 @@ int main(int argc, char *argv[]) {
         load_all_gitignore_files();
     }
     
-    /* Check if we need to read from stdin */
-    if (i >= argc) {
-        /* No file arguments, check if stdin is a terminal */
+    /* Process input based on mode */
+    if (file_mode) {
+        /* Process files */
+        if (file_args_start >= argc) {
+            /* -f flag provided but no files specified */
+            fprintf(stderr, "Warning: -f flag provided but no files specified\n");
+        } else {
+            /* Process each file argument */
+            for (i = file_args_start; i < argc; i++) {
+                collect_file(argv[i]);
+            }
+        }
+    } else {
+        /* Default to stdin mode */
         if (isatty(STDIN_FILENO)) {
             /* If stdin is a terminal, show help */
             show_help();
         } else {
-            process_stdin();
-        }
-    } else {
-        /* Process each file argument */
-        for (; i < argc; i++) {
-            collect_file(argv[i]);
+            /* Process stdin content */
+            process_stdin_content();
         }
     }
     
