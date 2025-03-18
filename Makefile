@@ -2,8 +2,8 @@ CC = gcc
 CFLAGS = -std=c99 -Wall -Wextra
 TARGET = llm_ctx
 SRC = main.c gitignore.c
-TEST_SRC = tests/test_gitignore.c tests/test_cli.c
-TEST_TARGETS = tests/test_gitignore tests/test_cli
+TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c
+TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 
@@ -21,11 +21,16 @@ tests/test_gitignore: tests/test_gitignore.c gitignore.c
 tests/test_cli: tests/test_cli.c
 	$(CC) $(CFLAGS) -o $@ $^
 
+tests/test_stdin: tests/test_stdin.c
+	$(CC) $(CFLAGS) -o $@ $^
+
 test: $(TARGET) $(TEST_TARGETS)
 	@echo "\nRunning unit tests..."
 	./tests/test_gitignore
 	@echo "\nRunning integration tests..."
 	./tests/test_cli
+	@echo "\nRunning stdin pipe tests..."
+	./tests/test_stdin
 
 clean:
 	rm -f $(TARGET) $(TEST_TARGETS)
