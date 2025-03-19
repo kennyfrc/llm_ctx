@@ -20,6 +20,8 @@
 #include <errno.h>
 #include <fnmatch.h>  /* For pattern matching */
 #include <ctype.h>    /* For isspace() */
+#include <stdbool.h>  /* For bool type */
+#include <stdint.h>   /* For fixed-width integer types */
 #include "gitignore.h"
 
 #define MAX_PATH 4096
@@ -31,25 +33,25 @@
 typedef struct {
     char path[MAX_PATH];
     char *relative_path;
-    int is_dir;
+    bool is_dir;
 } FileInfo;
 
-/* Function declarations */
+/* Function declarations with proper prototypes */
 void show_help(void);
-int collect_file(const char *filepath);
-int output_file_content(const char *filepath, FILE *output);
+bool collect_file(const char *filepath);
+bool output_file_content(const char *filepath, FILE *output);
 void add_user_instructions(const char *instructions);
 void find_recursive(const char *base_dir, const char *pattern);
-int process_pattern(const char *pattern);
+bool process_pattern(const char *pattern);
 void generate_file_tree(void);
 void add_to_file_tree(const char *filepath);
 int compare_file_paths(const void *a, const void *b);
 char *find_common_prefix(void);
-void print_tree_node(const char *path, int level, int is_last, const char *prefix);
+void print_tree_node(const char *path, int level, bool is_last, const char *prefix);
 void build_tree_recursive(char **paths, int count, int level, char *prefix, const char *path_prefix);
-int process_stdin(void);
-int process_stdin_content(void);
-int is_likely_filenames(FILE *input);
+bool process_stdin(void);
+bool process_stdin_content(void);
+bool is_likely_filenames(FILE *input);
 void output_file_callback(const char *name, const char *type, const char *content);
 
 /* Special file structure for stdin content */
@@ -75,27 +77,54 @@ int num_special_files = 0;
 /**
  * Check if a file has already been processed to avoid duplicates
  * 
- * Returns 1 if the file has been processed, 0 otherwise
+ * Returns true if the file has been processed, false otherwise
  */
-int file_already_processed(const char *filepath) {
+bool file_already_processed(const char *filepath) {
+    /* Pre-condition: valid filepath parameter */
+    assert(filepath != NULL);
+    assert(strlen(filepath) > 0);
+    
+    /* Invariant: num_processed_files is always valid */
+    assert(num_processed_files >= 0);
+    assert(num_processed_files <= MAX_FILES);
+    
     for (int i = 0; i < num_processed_files; i++) {
+        /* Invariant: each processed_files entry is valid */
+        assert(processed_files[i] != NULL);
+        
         if (strcmp(processed_files[i], filepath) == 0) {
-            return 1;
+            /* Post-condition: found matching file */
+            return true;
         }
     }
-    return 0;
+    /* Post-condition: file not found */
+    return false;
 }
 
 /**
  * Add a file to the processed files list
  */
 void add_to_processed_files(const char *filepath) {
+    /* Pre-condition: valid filepath */
+    assert(filepath != NULL);
+    assert(strlen(filepath) > 0);
+    
+    /* Pre-condition: we have space for more files */
+    assert(num_processed_files < MAX_FILES);
+    
     if (num_processed_files < MAX_FILES) {
         processed_files[num_processed_files] = strdup(filepath);
+        /* Invariant: successfully allocated memory */
+        assert(processed_files[num_processed_files] != NULL);
+        
         num_processed_files++;
         
         /* Also add to the file tree structure */
         add_to_file_tree(filepath);
+        
+        /* Post-condition: file was added successfully */
+        assert(num_processed_files > 0);
+        assert(strcmp(processed_files[num_processed_files-1], filepath) == 0);
     }
 }
 
@@ -103,22 +132,37 @@ void add_to_processed_files(const char *filepath) {
  * Add a file to the file tree structure
  */
 void add_to_file_tree(const char *filepath) {
+    /* Pre-condition: valid filepath */
+    assert(filepath != NULL);
+    assert(strlen(filepath) > 0);
+    
+    /* Pre-condition: space in file tree */
+    assert(file_tree_count < MAX_FILES);
+    
     if (file_tree_count < MAX_FILES) {
         struct stat statbuf;
         
         /* Get file information */
         if (lstat(filepath, &statbuf) == 0) {
+            FileInfo new_file = {
+                .path = "",
+                .relative_path = NULL,
+                .is_dir = S_ISDIR(statbuf.st_mode)
+            };
+            
             /* Store file path */
-            strncpy(file_tree[file_tree_count].path, filepath, MAX_PATH - 1);
-            file_tree[file_tree_count].path[MAX_PATH - 1] = '\0';
+            strncpy(new_file.path, filepath, MAX_PATH - 1);
+            new_file.path[MAX_PATH - 1] = '\0';
             
-            /* Determine if it's a directory */
-            file_tree[file_tree_count].is_dir = S_ISDIR(statbuf.st_mode);
+            /* Verify path was copied correctly */
+            assert(strcmp(new_file.path, filepath) == 0);
             
-            /* Initially set relative_path to NULL - will be set after finding common prefix */
-            file_tree[file_tree_count].relative_path = NULL;
-            
+            /* Add to file tree array */
+            file_tree[file_tree_count] = new_file;
             file_tree_count++;
+            
+            /* Post-condition: file tree was updated */
+            assert(file_tree_count > 0);
         }
     }
 }
@@ -193,7 +237,7 @@ char *find_common_prefix(void) {
 /**
  * Print a tree node with appropriate indentation
  */
-void print_tree_node(const char *path, int level, int is_last, const char *prefix) {
+void print_tree_node(const char *path, int level, bool is_last, const char *prefix) {
     /* Print indentation */
     fprintf(tree_file, "%s", prefix);
     
@@ -218,10 +262,9 @@ void build_tree_recursive(char **paths, int count, int level, char *prefix, cons
     if (count <= 0) return;
     
     char current_dir[MAX_PATH] = "";
-    int i, j;
     
     /* Find current directory for this level */
-    for (i = 0; i < count; i++) {
+    for (int i = 0; i < count; i++) {
         char *path = paths[i];
         char *slash = strchr(path, '/');
         
@@ -235,7 +278,7 @@ void build_tree_recursive(char **paths, int count, int level, char *prefix, cons
     }
     
     /* First print files at current level */
-    for (i = 0; i < count; i++) {
+    for (int i = 0; i < count; i++) {
         if (strchr(paths[i], '/') == NULL) {
             fprintf(tree_file, "%s%s%s\n", 
                    prefix, 
@@ -245,7 +288,7 @@ void build_tree_recursive(char **paths, int count, int level, char *prefix, cons
     }
     
     /* Then process subdirectories */
-    for (i = 0; i < count;) {
+    for (int i = 0; i < count;) {
         char *slash = strchr(paths[i], '/');
         if (!slash) {
             i++; /* Skip files, already processed */
@@ -259,7 +302,7 @@ void build_tree_recursive(char **paths, int count, int level, char *prefix, cons
         
         /* Count how many entries are in this directory */
         int subdir_count = 0;
-        for (j = i; j < count; j++) {
+        for (int j = i; j < count; j++) {
             if (strncmp(paths[j], dirname, dir_len) == 0 && paths[j][dir_len] == '/') {
                 subdir_count++;
             } else if (j > i) {
@@ -283,7 +326,7 @@ void build_tree_recursive(char **paths, int count, int level, char *prefix, cons
             int subdir_idx = 0;
             
             /* Extract paths relative to this subdirectory */
-            for (j = i; j < i + subdir_count; j++) {
+            for (int j = i; j < i + subdir_count; j++) {
                 subdirs[subdir_idx++] = paths[j] + dir_len + 1; /* Skip dirname and slash */
             }
             
@@ -427,9 +470,9 @@ void show_help(void) {
  * Determine if input is likely filenames or raw content
  * Checks the first few lines of input to see if they look like valid files
  * 
- * Returns 1 if likely filenames, 0 if likely content
+ * Returns true if likely filenames, false if likely content
  */
-int is_likely_filenames(FILE *input) {
+bool is_likely_filenames(FILE *input) {
     char line[MAX_PATH];
     int line_count = 0;
     int valid_file_count = 0;
@@ -479,20 +522,20 @@ int is_likely_filenames(FILE *input) {
     /* If at least half the lines are valid files, assume filenames */
     /* If no files were found, assume this is content */
     if (line_count > 0 && valid_file_count == 0) {
-        return 0;  /* No valid files found, assume content */
+        return false;  /* No valid files found, assume content */
     }
     
     /* If at least one valid file found, assume filenames */
-    return (valid_file_count > 0);
+    return (valid_file_count > 0) ? true : false;
 }
 
 /**
  * Process lines from stdin
  * Each line is treated as a filename to process
  * 
- * Returns 0 if files were processed, 1 otherwise
+ * Returns true if files were processed, false otherwise
  */
-int process_stdin(void) {
+bool process_stdin(void) {
     char line[MAX_PATH];
     int initial_files_found = files_found;
     
@@ -512,7 +555,7 @@ int process_stdin(void) {
         collect_file(line);
     }
     
-    return (files_found > initial_files_found) ? 0 : 1;
+    return (files_found > initial_files_found);
 }
 
 /**
@@ -520,39 +563,39 @@ int process_stdin(void) {
  * Any content piped in is treated as a single file
  * This handles commands like cat, git diff, git show, etc.
  * 
- * Returns 0 if successful, 1 on failure
+ * Returns true if successful, false on failure
  */
-int process_stdin_content(void) {
+bool process_stdin_content(void) {
     char buffer[4096];
     size_t bytes_read;
     FILE *content_file;
-    int found_content = 0;
+    bool found_content = false;
     
     /* Create a temporary file to store the content */
     char content_path[MAX_PATH];
     strcpy(content_path, "/tmp/llm_ctx_content_XXXXXX");
     int fd = mkstemp(content_path);
     if (fd == -1) {
-        return 1;
+        return false;
     }
     
     content_file = fdopen(fd, "w+");
     if (!content_file) {
         close(fd);
-        return 1;
+        return false;
     }
     
     /* Read all data from stdin and save to temp file */
     while ((bytes_read = fread(buffer, 1, sizeof(buffer), stdin)) > 0) {
         fwrite(buffer, 1, bytes_read, content_file);
-        found_content = 1;
+        found_content = true;
     }
     
     /* Check if we actually got any content */
     if (!found_content) {
         fclose(content_file);
         unlink(content_path);
-        return 1;
+        return false;
     }
     
     /* Rewind the file so we can read it */
@@ -619,12 +662,18 @@ int process_stdin_content(void) {
     /* Increment files found so we don't error out */
     files_found++;
     
-    return 0;
+    return true;
 }
 
 /* Function to register a callback for a special file */
 void output_file_callback(const char *name, const char *type, const char *content) {
+    /* Pre-condition: validate inputs */
+    assert(name != NULL);
+    assert(type != NULL);
+    assert(content != NULL);
+    
     /* Check if we have room for more special files */
+    assert(num_special_files < 10);
     if (num_special_files >= 10) {
         return;
     }
@@ -633,7 +682,14 @@ void output_file_callback(const char *name, const char *type, const char *conten
     strcpy(special_files[num_special_files].filename, name);
     strcpy(special_files[num_special_files].type, type);
     special_files[num_special_files].content = strdup(content);
+    
+    /* Invariant: memory was allocated successfully */
+    assert(special_files[num_special_files].content != NULL);
+    
     num_special_files++;
+    
+    /* Post-condition: file was added */
+    assert(num_special_files > 0);
     
     /* Add to processed files list for tree display */
     if (num_processed_files < MAX_FILES) {
@@ -650,22 +706,22 @@ void output_file_callback(const char *name, const char *type, const char *conten
  * 
  * Only adds the file to our tracking lists if it hasn't been processed yet
  * 
- * Returns 0 on success, 1 on failure
+ * Returns true on success, false on failure
  */
-int collect_file(const char *filepath) {
+bool collect_file(const char *filepath) {
     /* Check if we've already processed this file to avoid duplicates */
     if (file_already_processed(filepath)) {
-        return 0;
+        return true;
     }
 
     /* Check if the file should be ignored based on gitignore patterns */
     if (should_ignore_path(filepath)) {
-        return 0;  /* Silently skip ignored files */
+        return true;  /* Silently skip ignored files */
     }
     
     /* Check if file exists and is readable before adding it */
     if (access(filepath, R_OK) != 0) {
-        return 1;
+        return false;
     }
     
     struct stat statbuf;
@@ -699,7 +755,7 @@ int collect_file(const char *filepath) {
         files_found++;
     }
     
-    return 0;
+    return true;
 }
 
 /* Output file content implementation continues below */
@@ -710,9 +766,9 @@ int collect_file(const char *filepath) {
  * Reads the file content and formats it with fenced code blocks
  * and file headers for better LLM understanding
  * 
- * Returns 0 on success, 1 on failure
+ * Returns true on success, false on failure
  */
-int output_file_content(const char *filepath, FILE *output) {
+bool output_file_content(const char *filepath, FILE *output) {
     /* Check if this is a special file (stdin content) */
     for (int i = 0; i < num_special_files; i++) {
         if (strcmp(filepath, special_files[i].filename) == 0) {
@@ -727,7 +783,7 @@ int output_file_content(const char *filepath, FILE *output) {
             fprintf(output, "```\n");
             fprintf(output, "----------------------------------------\n");
             
-            return 0;
+            return true;
         }
     }
     
@@ -736,17 +792,17 @@ int output_file_content(const char *filepath, FILE *output) {
     /* Check if path is a directory - skip it if so */
     struct stat statbuf;
     if (lstat(filepath, &statbuf) == 0 && S_ISDIR(statbuf.st_mode)) {
-        return 0; /* Skip directories silently */
+        return true; /* Skip directories silently */
     }
 
     /* Check if file exists and is readable before attempting to open */
     if (access(filepath, R_OK) != 0) {
-        return 1;
+        return false;
     }
 
     FILE *file = fopen(filepath, "r");
     if (!file) {
-        return 1;
+        return false;
     }
 
     /* Format with a header showing the filename for context */
@@ -765,7 +821,7 @@ int output_file_content(const char *filepath, FILE *output) {
     fprintf(output, "----------------------------------------\n");
 
     fclose(file);
-    return 0;
+    return true;
 }
 
 /**
@@ -825,7 +881,7 @@ void find_recursive(const char *base_dir, const char *pattern) {
 /**
  * Process a glob pattern to find matching files
  */
-int process_pattern(const char *pattern) {
+bool process_pattern(const char *pattern) {
     int initial_files_found = files_found;
     
     /* Check if this is a recursive pattern */
@@ -879,7 +935,7 @@ int process_pattern(const char *pattern) {
         /* Expand the pattern to match files */
         int glob_status = glob(pattern, glob_flags, NULL, &glob_result);
         if (glob_status != 0 && glob_status != GLOB_NOMATCH) {
-            return 1;
+            return false;
         }
         
         /* Process each matched file */
@@ -890,8 +946,8 @@ int process_pattern(const char *pattern) {
         globfree(&glob_result);
     }
     
-    /* Return 0 if we found at least one new file, 1 otherwise */
-    return (files_found > initial_files_found) ? 0 : 1;
+    /* Return true if we found at least one new file, false otherwise */
+    return (files_found > initial_files_found);
 }
 
 
@@ -991,7 +1047,11 @@ int main(int argc, char *argv[]) {
     
     /* Load gitignore files if enabled */
     if (respect_gitignore) {
+        /* Pre-condition: gitignore is enabled */
+        assert(respect_gitignore == 1);
         load_all_gitignore_files();
+        /* Post-condition: gitignore patterns may have been loaded */
+        assert(respect_gitignore == 1);
     }
     
     /* Process input based on mode */
