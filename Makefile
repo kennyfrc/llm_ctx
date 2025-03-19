@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -std=c99 -Wall -Wextra
+CFLAGS = -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes
 TARGET = llm_ctx
 SRC = main.c gitignore.c
 TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c
