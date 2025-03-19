@@ -153,15 +153,24 @@ TEST(test_cli_ignore_logs) {
 TEST(test_cli_ignore_dirs) {
     char cmd[1024];
     
-    /* Test directly with the regular and important files */
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -f %s/regular.txt %s/test_important.txt", 
-             getenv("PWD"), TEST_DIR, TEST_DIR);
+    /* Create a test .gitignore file that ignores all test_ files */
+    FILE *ignore_file = fopen(TEST_DIR "/.gitignore", "w");
+    if (ignore_file) {
+        fprintf(ignore_file, "test_*\n");
+        fclose(ignore_file);
+    }
+    
+    /* Test with the directory, which should respect .gitignore inside it */
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -f %s", getenv("PWD"), TEST_DIR);
     
     char *output = run_command(cmd);
     
-    /* Should include specified files */
+    /* Should include regular file but not the test_important.txt */
     ASSERT("Output contains regular.txt", string_contains(output, "regular.txt"));
-    ASSERT("Output contains test_important.txt", string_contains(output, "test_important.txt"));
+    ASSERT("Output does not contain test_important.txt", !string_contains(output, "test_important.txt"));
+    
+    /* Clean up */
+    unlink(TEST_DIR "/.gitignore");
 }
 
 /* Test help message includes new options */

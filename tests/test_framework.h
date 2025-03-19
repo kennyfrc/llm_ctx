@@ -41,7 +41,7 @@ static char last_failure[1024] = "";
 } while (0)
 
 /* Macros for test definition and running */
-#define TEST(test_name) void test_name()
+#define TEST(test_name) void test_name(void)
 #define RUN_TEST(test_name) do { \
     printf("- %-40s", #test_name); \
     tests_run++; \
@@ -54,8 +54,8 @@ static char last_failure[1024] = "";
     } \
 } while (0)
 
-#define RUN_TESTS(test_fns...) do { \
-    void (*tests[])(void) = { test_fns }; \
+#define RUN_TESTS(...) do { \
+    void (*tests[])(void) = { __VA_ARGS__ }; \
     size_t num_tests = sizeof(tests) / sizeof(tests[0]); \
     for (size_t i = 0; i < num_tests; i++) { \
         tests[i](); \
