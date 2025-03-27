@@ -140,6 +140,29 @@ TEST(test_pattern_precedence) {
     ASSERT_EQUALS(1, should_ignore_path("file.txt"));
 }
 
+TEST(test_negation_override) {
+    reset_gitignore_patterns();
+    
+    char pattern1[] = "*.log";
+    char pattern2[] = "!debug.log";
+    char pattern3[] = "debug.log";
+    
+    add_ignore_pattern(pattern1);
+    add_ignore_pattern(pattern2);
+    add_ignore_pattern(pattern3);
+    
+    /* Current incorrect logic returns 0 because it stops at !debug.log */
+    /* Correct logic should return 1 because the last match (debug.log) is an ignore rule */
+    ASSERT_EQUALS(1, should_ignore_path("debug.log")); 
+    
+    /* Other .log files should still be ignored by the first rule */
+    ASSERT_EQUALS(1, should_ignore_path("trace.log"));
+    
+    /* Non-log files should not be ignored */
+    ASSERT_EQUALS(0, should_ignore_path("config.ini"));
+}
+
+
 int main(void) {
     printf("Running gitignore pattern tests\n");
     printf("===============================\n");
@@ -155,6 +178,7 @@ int main(void) {
     RUN_TEST(test_should_ignore_path_directory_only);
     RUN_TEST(test_respect_gitignore_flag);
     RUN_TEST(test_pattern_precedence);
+    RUN_TEST(test_negation_override);
     
     PRINT_TEST_SUMMARY();
 }
