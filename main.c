@@ -1103,10 +1103,20 @@ int main(int argc, char *argv[]) {
     fclose(temp_file);
     
     /* Display the output directly to stdout */
-    char cmd[MAX_PATH + 10];
-    sprintf(cmd, "cat %s", temp_file_path);
-    system(cmd);
-    
+    FILE *final_output = fopen(temp_file_path, "r");
+    if (final_output) {
+        char buffer[4096];
+        size_t bytes_read;
+        while ((bytes_read = fread(buffer, 1, sizeof(buffer), final_output)) > 0) {
+            fwrite(buffer, 1, bytes_read, stdout);
+        }
+        fclose(final_output);
+    } else {
+        perror("Failed to open temporary file for reading");
+        /* atexit handler will still attempt cleanup */
+        return 1; /* Indicate failure */
+    }
+
     /* Cleanup is handled by atexit handler */
     return 0;
 }
