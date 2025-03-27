@@ -28,6 +28,7 @@
 #define TEMP_FILE_TEMPLATE "/tmp/llm_ctx_XXXXXX"
 #define MAX_PATTERNS 64   /* Maximum number of patterns to support */
 #define MAX_FILES 1024    /* Maximum number of files to process */
+#define STDIN_BUFFER_SIZE (1024 * 1024) /* 1MB buffer for stdin content */
 
 /* Structure to hold file information for the tree */
 typedef struct {
@@ -634,7 +635,7 @@ bool process_stdin_content(void) {
     rewind(content_file);
     
     /* We need to store the content for later output */
-    char *stdin_content = malloc(1024 * 1024); /* Allocate 1MB - adjust as needed */
+    char *stdin_content = malloc(STDIN_BUFFER_SIZE); 
     if (!stdin_content) {
         fclose(content_file);
         unlink(content_path);
