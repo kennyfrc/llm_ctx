@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <errno.h>
 #include "test_framework.h"
 
 /**
@@ -17,6 +18,9 @@
 
 /* Test directory for creating test files */
 #define TEST_DIR "/tmp/llm_ctx_stdin_test"
+#define LARGE_CONTENT_SIZE (1024 * 1024 + 100) /* Slightly over 1MB */
+#define LARGE_CONTENT_FILE TEST_DIR "/large_content.txt"
+#define TRUNCATION_MARKER "---END_OF_LARGE_INPUT---"
 
 /* Set up the test environment */
 void setup_test_env(void) {
@@ -246,6 +250,39 @@ TEST(test_stdin_with_instructions) {
     ASSERT("Output contains stdin_content header", string_contains(output, "File: stdin_content"));
 }
 
+/* Test stdin processing with input larger than the internal buffer */
+TEST(test_stdin_large_content_truncation) {
+    /* 1. Create the large file */
+    FILE *large_file = fopen(LARGE_CONTENT_FILE, "w");
+    ASSERT("Failed to create large content file", large_file != NULL);
+    if (!large_file) return;
+
+    /* Write repeating pattern */
+    size_t bytes_to_write = LARGE_CONTENT_SIZE - strlen(TRUNCATION_MARKER);
+    const char pattern[] = "0123456789ABCDEF";
+    size_t pattern_len = strlen(pattern);
+    for (size_t i = 0; i < bytes_to_write; ++i) {
+        fputc(pattern[i % pattern_len], large_file);
+    }
+    /* Write the marker at the very end */
+    fprintf(large_file, "%s", TRUNCATION_MARKER);
+    fclose(large_file);
+
+    /* 2. Run llm_ctx with the large file piped to stdin */
+    char cmd[1024];
+    char input_cmd[1024];
+    snprintf(input_cmd, sizeof(input_cmd), "cat %s", LARGE_CONTENT_FILE);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    char *output = run_command_with_stdin(input_cmd, cmd);
+
+    /* 3. Assertions */
+    ASSERT("Output contains stdin_content header", string_contains(output, "File: stdin_content"));
+    ASSERT("Output contains start of large content", string_contains(output, "0123456789ABCDEF0123"));
+    ASSERT("Output does NOT contain the end marker (truncated)", !string_contains(output, TRUNCATION_MARKER));
+    ASSERT("Output contains closing fence", string_contains(output, "```\n----------------------------------------"));
+}
+
+
 int main(void) {
     printf("Running llm_ctx stdin pipe integration tests\n");
     printf("===========================================\n");
@@ -260,6 +297,7 @@ int main(void) {
     RUN_TEST(test_stdin_diff_detection);
     RUN_TEST(test_stdin_file_list);
     RUN_TEST(test_stdin_with_instructions);
+    RUN_TEST(test_stdin_large_content_truncation);
     
     /* Clean up */
     teardown_test_env();
