@@ -91,8 +91,11 @@ int string_contains(const char *str, const char *substr) {
 
 /* Run a command with stdin coming from a pipe */
 char *run_command_with_stdin(const char *input_cmd, const char *cmd) {
-    static char buffer[16384];
+    /* Increased buffer size to handle potentially large output (e.g., from large stdin test) */
+    static char buffer[2 * 1024 * 1024]; /* 2MB */
     buffer[0] = '\0';
+    size_t buffer_capacity = sizeof(buffer);
+    size_t buffer_len = 0;
     
     /* Create a temporary script for running the commands */
     char script_file[1024];
@@ -124,9 +127,18 @@ char *run_command_with_stdin(const char *input_cmd, const char *cmd) {
         return buffer;
     }
     
-    char tmp[1024];
+    char tmp[4096]; /* Read in larger chunks */
     while (fgets(tmp, sizeof(tmp), pipe) != NULL) {
-        strcat(buffer, tmp);
+        size_t tmp_len = strlen(tmp);
+        if (buffer_len + tmp_len < buffer_capacity) {
+            /* Using strcat for simplicity; consider safer alternatives if issues arise */
+            strcat(buffer, tmp); 
+            buffer_len += tmp_len;
+        } else {
+            /* Buffer full - stop reading to avoid overflow */
+            fprintf(stderr, "\nWarning: Test output buffer overflow in run_command_with_stdin!\n");
+            break; 
+        }
     }
     
     pclose(pipe);
