@@ -643,15 +643,27 @@ bool process_stdin_content(void) {
     }
     
     size_t total_read = 0;
-    stdin_content[0] = '\0';
-    
-    while ((bytes_read = fread(buffer, 1, sizeof(buffer), content_file)) > 0) {
-        if (total_read + bytes_read < 1024 * 1024) {
+    stdin_content[0] = '\0'; /* Initialize as empty string */
+
+    /* Read from content_file into stdin_content, respecting STDIN_BUFFER_SIZE */
+    while (total_read < STDIN_BUFFER_SIZE - 1) { /* Leave space for null terminator */
+        size_t space_left = STDIN_BUFFER_SIZE - 1 - total_read;
+        /* Determine how much to read: either a full buffer chunk or just the remaining space */
+        size_t bytes_to_read = (space_left < sizeof(buffer)) ? space_left : sizeof(buffer);
+        
+        bytes_read = fread(buffer, 1, bytes_to_read, content_file);
+        
+        if (bytes_read > 0) {
+            /* Append read data to stdin_content */
             memcpy(stdin_content + total_read, buffer, bytes_read);
             total_read += bytes_read;
+        } else {
+            /* End of file reached or read error occurred */
+            break;
         }
     }
-    stdin_content[total_read] = '\0';
+    /* Ensure null termination */
+    stdin_content[total_read] = '\0'; 
     
     /* Register a special file output function */
     output_file_callback("stdin_content", content_type, stdin_content);
