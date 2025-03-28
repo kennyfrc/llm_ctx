@@ -513,7 +513,7 @@ TEST(test_cli_native_recursive_glob_specific) {
     ASSERT("Output does not contain __brace_test.c", !string_contains(output, "__brace_test.c")); // Not under __src
 }
 
-/* Test native recursive glob '**/*' with --no-gitignore (prefixed) */
+/* Test native recursive glob '** / *' with --no-gitignore (prefixed) */
 TEST(test_cli_native_recursive_glob_no_gitignore) {
     char cmd[1024];
     // Pass '**/*' directly to llm_ctx with --no-gitignore
