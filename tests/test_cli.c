@@ -65,6 +65,16 @@ void setup_test_env(void) {
     f = fopen(TEST_DIR "/__test_2.log", "w"); // Ignored by default
     if (f) { fprintf(f, "Test log 2 content\n"); fclose(f); }
 
+    /* Files for brace expansion tests (prefixed) */
+    f = fopen(TEST_DIR "/__brace_test.c", "w");
+    if (f) { fprintf(f, "Brace test C file\n"); fclose(f); }
+
+    f = fopen(TEST_DIR "/__brace_test.h", "w");
+    if (f) { fprintf(f, "Brace test H file\n"); fclose(f); }
+
+    f = fopen(TEST_DIR "/__brace_test.js", "w"); // Different extension, should not match {c,h}
+    if (f) { fprintf(f, "Brace test JS file\n"); fclose(f); }
+
 
     /* Create nested directories for recursive glob testing (prefixed) */
     mkdir(TEST_DIR "/__src", 0755);
@@ -446,6 +456,84 @@ TEST(test_cli_glob_brackets_negation) {
     ASSERT("Output does not contain __app.log", !string_contains(output, "__app.log")); // Doesn't match pattern
 }
 
+/* Test glob pattern '{}' (brace expansion) (prefixed) */
+TEST(test_cli_glob_brace_expansion) {
+    char cmd[1024];
+    // Use single quotes to prevent shell expansion of '{}'
+    // This tests if the underlying glob() function (with GLOB_BRACE) works.
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '__brace_test.{c,h}'", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    // Should include .c and .h files matching the brace expansion
+    ASSERT("Output contains __brace_test.c", string_contains(output, "__brace_test.c"));
+    ASSERT("Output contains __brace_test.h", string_contains(output, "__brace_test.h"));
+    // Should not include the .js file
+    ASSERT("Output does not contain __brace_test.js", !string_contains(output, "__brace_test.js"));
+}
+
+/* Test native recursive glob '**/*' respecting .gitignore (prefixed) */
+TEST(test_cli_native_recursive_glob_all) {
+    char cmd[1024];
+    // Pass '**/*' directly to llm_ctx using single quotes
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '**/*'", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    // Should behave similarly to the `find`-based test, respecting .gitignore
+    ASSERT("Output contains __regular.txt", string_contains(output, "__regular.txt"));
+    ASSERT("Output contains __test_important.txt", string_contains(output, "__test_important.txt"));
+    ASSERT("Output contains __src/__main.c", string_contains(output, "__src/__main.c"));
+    ASSERT("Output contains __src/__core/__engine.c", string_contains(output, "__src/__core/__engine.c"));
+    ASSERT("Output contains __src/__utils/__helper.js", string_contains(output, "__src/__utils/__helper.js"));
+    ASSERT("Output contains __src/__utils/__data.json", string_contains(output, "__src/__utils/__data.json"));
+    ASSERT("Output contains __brace_test.c", string_contains(output, "__brace_test.c")); // Added in setup
+
+    // Should NOT include files ignored by .gitignore
+    ASSERT("Output does not contain __app.log", !string_contains(output, "__app.log"));
+    ASSERT("Output does not contain __test_1.txt", !string_contains(output, "__test_1.txt"));
+    ASSERT("Output does not contain __secrets/__secret.txt", !string_contains(output, "__secrets/__secret.txt")); // Should be ignored by __secrets/
+    ASSERT("Output does not contain __build/__output.log", !string_contains(output, "__build/__output.log"));
+    // .gitignore itself should NOT be included by '**/*' unless explicitly listed or --no-gitignore is used
+    ASSERT("Output does not contain .gitignore", !string_contains(output, ".gitignore"));
+}
+
+/* Test specific native recursive glob for C files in __src (prefixed) */
+TEST(test_cli_native_recursive_glob_specific) {
+    char cmd[1024];
+    // Pass '__src/**/*.c' directly to llm_ctx using single quotes
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '__src/**/*.c'", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    // Should include only .c files within __src and its subdirectories
+    ASSERT("Output contains __src/__main.c", string_contains(output, "__src/__main.c"));
+    ASSERT("Output contains __src/__core/__engine.c", string_contains(output, "__src/__core/__engine.c"));
+
+    // Should NOT include files outside __src, non-.c files, or ignored files
+    ASSERT("Output does not contain __regular.txt", !string_contains(output, "__regular.txt"));
+    ASSERT("Output does not contain __src/__utils/__helper.js", !string_contains(output, "__src/__utils/__helper.js"));
+    ASSERT("Output does not contain __brace_test.c", !string_contains(output, "__brace_test.c")); // Not under __src
+}
+
+/* Test native recursive glob '**/*' with --no-gitignore (prefixed) */
+TEST(test_cli_native_recursive_glob_no_gitignore) {
+    char cmd[1024];
+    // Pass '**/*' directly to llm_ctx with --no-gitignore
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore '**/*'", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    // Should include ALL files, including those normally ignored
+    ASSERT("Output contains __regular.txt", string_contains(output, "__regular.txt"));
+    ASSERT("Output contains __test_important.txt", string_contains(output, "__test_important.txt"));
+    ASSERT("Output contains __test_1.txt", string_contains(output, "__test_1.txt")); // Included now
+    ASSERT("Output contains __app.log", string_contains(output, "__app.log")); // Included now
+    ASSERT("Output contains __secrets/__secret.txt", string_contains(output, "__secrets/__secret.txt")); // Included now
+    ASSERT("Output contains __build/__output.log", string_contains(output, "__build/__output.log")); // Included now
+    ASSERT("Output contains __src/__main.c", string_contains(output, "__src/__main.c"));
+    ASSERT("Output contains __brace_test.c", string_contains(output, "__brace_test.c")); // Included now
+    // .gitignore itself should NOT be included by '**/*' even with --no-gitignore,
+    // as globbing typically excludes dotfiles unless explicitly matched (e.g., '.*')
+    ASSERT("Output does not contain .gitignore", !string_contains(output, ".gitignore"));
+}
+
 
 // ============================================================================
 // Main Test Runner
@@ -474,6 +562,10 @@ int main(void) {
     RUN_TEST(test_cli_glob_brackets);
     RUN_TEST(test_cli_glob_brackets_range);
     RUN_TEST(test_cli_glob_brackets_negation);
+    RUN_TEST(test_cli_glob_brace_expansion);
+    RUN_TEST(test_cli_native_recursive_glob_all);
+    RUN_TEST(test_cli_native_recursive_glob_specific);
+    RUN_TEST(test_cli_native_recursive_glob_no_gitignore);
 
     /* Clean up */
     teardown_test_env();
