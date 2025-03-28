@@ -471,7 +471,7 @@ TEST(test_cli_glob_brace_expansion) {
     ASSERT("Output does not contain __brace_test.js", !string_contains(output, "__brace_test.js"));
 }
 
-/* Test native recursive glob '**/*' respecting .gitignore (prefixed) */
+/* Test native recursive glob '** / *' respecting .gitignore (prefixed) */
 TEST(test_cli_native_recursive_glob_all) {
     char cmd[1024];
     // Pass '**/*' directly to llm_ctx using single quotes
