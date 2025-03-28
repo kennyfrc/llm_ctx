@@ -17,7 +17,7 @@
 
 3.  **Provide context for the entire project** (respecting `.gitignore`) and copy (macOS):
     ```bash
-    # Use a recursive glob. node_modules/, build/, *.log etc. in .gitignore will be skipped.
+    # Use a recursive glob. Assuming that .gitignore has node_modules/, build/, *.log etc., these will be skipped.
     llm_ctx -f '**/*' -c "Provide a high-level overview of this project." | pbcopy
     ```
     *(Warning: This can generate a lot of context!)*
