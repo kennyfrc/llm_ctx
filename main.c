@@ -858,7 +858,17 @@ void find_recursive(const char *base_dir, const char *pattern) {
     struct dirent *entry;
     struct stat statbuf;
     char path[MAX_PATH];
-    
+    int fnmatch_flags = FNM_PATHNAME; // Basic flag for matching path components
+
+    /* Adjust fnmatch flags based on gitignore setting */
+    if (respect_gitignore) {
+        /* When respecting gitignore, a wildcard '*' at the start of the pattern
+           should not match a leading '.' in the filename, unless the pattern
+           explicitly starts with '.'. This mirrors standard shell/gitignore behavior. */
+        fnmatch_flags |= FNM_PERIOD;
+    }
+    // If not respecting gitignore, FNM_PERIOD is omitted, allowing '*' to match leading dots.
+
     /* Try to open directory - silently return if can't access */
     if (!(dir = opendir(base_dir)))
         return;
@@ -876,13 +886,20 @@ void find_recursive(const char *base_dir, const char *pattern) {
         if (lstat(path, &statbuf) == -1)
             continue;
         
+        /* Check if the path should be ignored *before* processing */
+        if (respect_gitignore && should_ignore_path(path)) {
+            continue; /* Skip ignored files/directories */
+        }
+
         /* If entry is a directory, recurse into it */
         if (S_ISDIR(statbuf.st_mode)) {
             find_recursive(path, pattern);
-        } 
+        }
         /* If entry is a regular file, check if it matches the pattern */
         else if (S_ISREG(statbuf.st_mode)) {
-            if (fnmatch(pattern, entry->d_name, 0) == 0) {
+            /* Match filename against the pattern using appropriate flags */
+            if (fnmatch(pattern, entry->d_name, fnmatch_flags) == 0) {
+                /* Collect the file only if it matches and wasn't ignored */
                 collect_file(path);
             }
         }
