@@ -49,26 +49,36 @@
 - Linux - Should work, not fully tested
 - Windows (WSL) - Should work under WSL, not fully tested
 
-### Building from Source
+### Getting Started (Build & Use)
 
-```bash
-git clone https://github.com/kennyfrc/llm_ctx.git
-cd llm_ctx
-make
-```
+Follow these steps to get the code, build it, and make it easily accessible:
 
-### Installing
+1.  **Clone the Repository:**
+    Get the source code from GitHub:
+    ```bash
+    git clone https://github.com/kennyfrc/llm_ctx.git
+    cd llm_ctx
+    ```
 
-```bash
-# Install to system
-sudo make install
+2.  **Build the Executable:**
+    Compile the source code using `make`. This creates the `llm_ctx` executable in the current directory.
+    ```bash
+    make
+    ```
+    You can run the tool directly from this directory: `./llm_ctx --help`.
 
-# Create symlink
-make symlink
+3.  **Add `llm_ctx` to your PATH:**
+    Use `make symlink` (recommended) or `make install` to run `llm_ctx` from anywhere.
 
-# Custom location
-make symlink PREFIX=~/bin
-```
+    ```bash
+    # Recommended: Create symlink in /usr/local/bin (default)
+    # Use 'make symlink PREFIX=~/bin' for a custom location (ensure it's in PATH)
+    make symlink
+
+    # Alternative: Install system-wide (usually requires sudo)
+    # sudo make install
+    ```
+    Now run: `llm_ctx --help`
 
 ## Tutorials
 
