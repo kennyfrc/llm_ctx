@@ -2,7 +2,7 @@
 
 *Format your codebase for LLMs using Unix-style commands*
 
-`llm_ctx` is a CLI tool for developers who like to compose command-line tools (like `grep`, `find`, `git diff`) using pipes (`|`). It formats code/text from files or stdin into structured context for LLMs (like Claude.ai, ChatGPT, or Gemini AI Studio). Key features include generating file trees, respecting `.gitignore`, and seamless integration with these command-line pipelines.
+`llm_ctx` is a CLI tool for developers who like to compose command-line tools (like `grep`, `find`, `git diff`) using pipes (`|`). It formats code/text from files or stdin into structured context for LLMs (like Claude.ai, ChatGPT, or Gemini AI Studio). Key features include generating file trees, respecting `.gitignore`, skipping binary files (see Limitations), and seamless integration with unix pipelines.
 
 **Quick Examples:**
 
@@ -32,6 +32,7 @@
 *   [Tutorials](#tutorials)
 *   [How-To Guides](#how-to-guides)
 *   [Reference](#reference)
+*   [Limitations](#limitations)
 *   [Design Decisions](#design-decisions)
 *   [Testing](#testing)
 *   [License](#license)
@@ -400,6 +401,33 @@ When using the `-f` flag, `llm_ctx` supports standard glob patterns:
     *   Negation patterns (`!`) always override ignore patterns for a matching file.
 *   **Disabling:** Use the `--no-gitignore` flag to completely skip loading and checking `.gitignore` files.
 
+## Limitations
+
+### Binary File Detection
+
+`llm_ctx` includes a simple heuristic to detect binary files. It checks the beginning of each file for:
+1.  Null bytes (`\0`).
+2.  Certain non-whitespace control characters (ASCII 0x01-0x1F, excluding tab, newline, carriage return).
+ 
+If either is found, the file is considered binary, and its content is replaced with the placeholder `[Binary file content skipped]` in the output. This prevents large amounts of non-textual data (e.g., images like PNG/JPEG, executables, archives) from cluttering the LLM context.
+ 
+### Text Encoding Handling (UTF-16/UTF-32)
+
+A consequence of the null byte check is that text files encoded in **UTF-16** or **UTF-32** (which often contain null bytes as part of their character representation) are usually **detected as binary** and skipped.
+
+`llm_ctx` is primarily designed for UTF-8 and plain ASCII text files, which are most common in source code repositories.
+
+**Workaround:** If you need to include content from a file encoded in UTF-16, UTF-32, or another encoding that gets incorrectly flagged as binary, you can convert it to UTF-8 *before* piping it to `llm_ctx` using tools like `iconv`:
+
+```bash
+# Example: Convert a UTF-16LE log file to UTF-8 before processing
+iconv -f UTF-16LE -t UTF-8 important_log.txt | llm_ctx -c "Analyze this log file"
+```
+
+### No Explicit Include/Exclude Flags
+
+File inclusion is solely based on the files/patterns provided via `-f` or stdin. Exclusion is handled only via `.gitignore` rules (or the lack thereof if `--no-gitignore` is used). There are no separate `--include` or `--exclude` flags.
+
 ## Design Decisions
 
 This section provides context and clarifies design choices.
@@ -423,6 +451,7 @@ The XML-like tags (`<file_tree>`, `<file_context>`, etc.) and Markdown fences ar
 *   **Context Preservation:** The file tree helps the LLM understand the relationships between files.
 *   **Robustness:** Less likely to be confused with code content compared to using only Markdown.
 *   **Easy Parsing:** While designed for LLMs, the structure is simple enough for basic parsing if needed.
+*   **Binary File Handling:** If a file is detected as binary (see Limitations), its content is replaced with a placeholder `[Binary file content skipped]` instead of being included within code fences.
 
 ### Tips for Effective LLM Context
 
