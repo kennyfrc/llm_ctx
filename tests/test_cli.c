@@ -52,6 +52,20 @@ void setup_test_env(void) {
     f = fopen(TEST_DIR "/__app.log", "w");
     if (f) { fprintf(f, "Log content\n"); fclose(f); }
 
+    /* Files for glob pattern tests (prefixed) */
+    f = fopen(TEST_DIR "/__test_a.txt", "w");
+    if (f) { fprintf(f, "Test file A content\n"); fclose(f); }
+
+    f = fopen(TEST_DIR "/__test_b.txt", "w");
+    if (f) { fprintf(f, "Test file B content\n"); fclose(f); }
+
+    f = fopen(TEST_DIR "/__test_1.log", "w"); // Ignored by default
+    if (f) { fprintf(f, "Test log 1 content\n"); fclose(f); }
+
+    f = fopen(TEST_DIR "/__test_2.log", "w"); // Ignored by default
+    if (f) { fprintf(f, "Test log 2 content\n"); fclose(f); }
+
+
     /* Create nested directories for recursive glob testing (prefixed) */
     mkdir(TEST_DIR "/__src", 0755);
     mkdir(TEST_DIR "/__src/__core", 0755);
@@ -377,6 +391,62 @@ TEST(test_cli_recursive_glob_no_gitignore) {
     ASSERT("Output contains .gitignore", string_contains(output, ".gitignore"));
 }
 
+/* Test glob pattern '?' (single character wildcard) (prefixed) */
+TEST(test_cli_glob_question_mark) {
+    char cmd[1024];
+    // Use single quotes to prevent shell expansion of '?'
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '__test_?.txt'", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    // Should include __test_a.txt and __test_b.txt (matching '?')
+    // Should respect gitignore for __test_1.txt and __test_2.txt (which don't match anyway)
+    ASSERT("Output contains __test_a.txt", string_contains(output, "__test_a.txt"));
+    ASSERT("Output contains __test_b.txt", string_contains(output, "__test_b.txt"));
+    ASSERT("Output does not contain __regular.txt", !string_contains(output, "__regular.txt"));
+    ASSERT("Output does not contain __test_1.txt", !string_contains(output, "__test_1.txt")); // Ignored by gitignore
+    ASSERT("Output does not contain __test_important.txt", !string_contains(output, "__test_important.txt")); // Doesn't match pattern
+}
+
+/* Test glob pattern '[]' (character set) (prefixed) */
+TEST(test_cli_glob_brackets) {
+    char cmd[1024];
+    // Use single quotes to prevent shell expansion of '[]'
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '__test_[ab].txt'", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    // Should include __test_a.txt and __test_b.txt (matching '[ab]')
+    ASSERT("Output contains __test_a.txt", string_contains(output, "__test_a.txt"));
+    ASSERT("Output contains __test_b.txt", string_contains(output, "__test_b.txt"));
+    ASSERT("Output does not contain __regular.txt", !string_contains(output, "__regular.txt"));
+    ASSERT("Output does not contain __test_1.txt", !string_contains(output, "__test_1.txt")); // Ignored by gitignore
+}
+
+/* Test glob pattern '[]' (character range) with --no-gitignore (prefixed) */
+TEST(test_cli_glob_brackets_range) {
+    char cmd[1024];
+    // Use single quotes and --no-gitignore because *.log files are ignored by default
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore '__test_[1-2].log'", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    // Should include __test_1.log and __test_2.log (matching '[1-2]')
+    ASSERT("Output contains __test_1.log", string_contains(output, "__test_1.log"));
+    ASSERT("Output contains __test_2.log", string_contains(output, "__test_2.log"));
+    ASSERT("Output does not contain __app.log", !string_contains(output, "__app.log")); // Doesn't match pattern
+}
+
+/* Test glob pattern '[]' (negation) with --no-gitignore (prefixed) */
+TEST(test_cli_glob_brackets_negation) {
+    char cmd[1024];
+    // Use single quotes and --no-gitignore because *.log files are ignored by default
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore '__test_[!1].log'", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    // Should include __test_2.log (matching '[!1]') but not __test_1.log
+    ASSERT("Output contains __test_2.log", string_contains(output, "__test_2.log"));
+    ASSERT("Output does not contain __test_1.log", !string_contains(output, "__test_1.log"));
+    ASSERT("Output does not contain __app.log", !string_contains(output, "__app.log")); // Doesn't match pattern
+}
+
 
 // ============================================================================
 // Main Test Runner
@@ -401,6 +471,10 @@ int main(void) {
     RUN_TEST(test_cli_recursive_glob_all);
     RUN_TEST(test_cli_recursive_glob_specific);
     RUN_TEST(test_cli_recursive_glob_no_gitignore);
+    RUN_TEST(test_cli_glob_question_mark);
+    RUN_TEST(test_cli_glob_brackets);
+    RUN_TEST(test_cli_glob_brackets_range);
+    RUN_TEST(test_cli_glob_brackets_negation);
 
     /* Clean up */
     teardown_test_env();
