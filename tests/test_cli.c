@@ -669,6 +669,60 @@ TEST(test_cli_utf8_file) {
     ASSERT("Output contains UTF8 file header", string_contains(output, "File: __utf8.txt"));
     // Current expectation: Raw UTF-8 content is included.
     ASSERT("Output contains UTF-8 characters", string_contains(output, "Hello 你好 World"));
+    ASSERT("Output contains code fences for UTF-8", string_contains(output, "```\nHello 你好 World"));
+}
+
+/* Test handling of a typical assembly file */
+TEST(test_cli_assembly_file) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __test.asm", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains ASM file header", string_contains(output, "File: __test.asm"));
+    // Expectation: Treated as text, content included.
+    ASSERT("Output contains ASM content", string_contains(output, "section .text"));
+    ASSERT("Output contains code fences for ASM", string_contains(output, "```\n; Simple ASM example"));
+    ASSERT("Output does NOT contain binary skipped placeholder for ASM", !string_contains(output, "[Binary file content skipped]"));
+}
+
+/* Test handling of a file with Latin-1 (ISO-8859-1) characters */
+TEST(test_cli_latin1_file) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __latin1.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains Latin-1 file header", string_contains(output, "File: __latin1.txt"));
+    // Expectation: Treated as text, content included (bytes 0x80-0xFF are ignored by heuristic).
+    ASSERT("Output contains Latin-1 content", string_contains(output, "Accénts: é à ç ©"));
+    ASSERT("Output contains code fences for Latin-1", string_contains(output, "```\nAccénts: é à ç ©"));
+    ASSERT("Output does NOT contain binary skipped placeholder for Latin-1", !string_contains(output, "[Binary file content skipped]"));
+}
+
+/* Test handling of a file with Windows-1252 specific characters */
+TEST(test_cli_windows1252_file) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __windows1252.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains Win-1252 file header", string_contains(output, "File: __windows1252.txt"));
+    // Expectation: Treated as text, content included (bytes 0x80-0xFF are ignored by heuristic).
+    ASSERT("Output contains Win-1252 content", string_contains(output, "Symbols: € ™ …"));
+    ASSERT("Output contains code fences for Win-1252", string_contains(output, "```\nSymbols: € ™ …"));
+    ASSERT("Output does NOT contain binary skipped placeholder for Win-1252", !string_contains(output, "[Binary file content skipped]"));
+}
+
+/* Test handling of a UTF-16 LE file (Expected: Detected as Binary) */
+TEST(test_cli_utf16le_file) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __utf16le.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains UTF-16 file header", string_contains(output, "File: __utf16le.txt"));
+    // Expectation: Treated as binary due to null bytes.
+    ASSERT("Output contains binary skipped placeholder for UTF-16", string_contains(output, "[Binary file content skipped]"));
+    ASSERT("Output does NOT contain code fences for UTF-16", !string_contains(output, "```"));
+    // Check it doesn't contain the raw bytes interpreted likely as garbage
+    ASSERT("Output does NOT contain raw UTF-16 content", !string_contains(output, "U T F 1 6"));
 }
 
 
