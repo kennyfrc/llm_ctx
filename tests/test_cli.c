@@ -398,12 +398,11 @@ TEST(test_cli_glob_question_mark) {
     snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '__test_?.txt'", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
-    // Should include __test_a.txt and __test_b.txt (matching '?')
-    // Should respect gitignore for __test_1.txt and __test_2.txt (which don't match anyway)
-    ASSERT("Output contains __test_a.txt", string_contains(output, "__test_a.txt"));
-    ASSERT("Output contains __test_b.txt", string_contains(output, "__test_b.txt"));
-    ASSERT("Output does not contain __regular.txt", !string_contains(output, "__regular.txt"));
-    ASSERT("Output does not contain __test_1.txt", !string_contains(output, "__test_1.txt")); // Ignored by gitignore
+    // Should NOT include __test_a.txt and __test_b.txt because they match '__test_*.txt' in .gitignore
+    ASSERT("Output does not contain __test_a.txt (ignored)", !string_contains(output, "__test_a.txt"));
+    ASSERT("Output does not contain __test_b.txt (ignored)", !string_contains(output, "__test_b.txt"));
+    ASSERT("Output does not contain __regular.txt", !string_contains(output, "__regular.txt")); // Doesn't match pattern
+    ASSERT("Output does not contain __test_1.log", !string_contains(output, "__test_1.log")); // Ignored by gitignore (*.log)
     ASSERT("Output does not contain __test_important.txt", !string_contains(output, "__test_important.txt")); // Doesn't match pattern
 }
 
@@ -414,11 +413,11 @@ TEST(test_cli_glob_brackets) {
     snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '__test_[ab].txt'", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
-    // Should include __test_a.txt and __test_b.txt (matching '[ab]')
-    ASSERT("Output contains __test_a.txt", string_contains(output, "__test_a.txt"));
-    ASSERT("Output contains __test_b.txt", string_contains(output, "__test_b.txt"));
-    ASSERT("Output does not contain __regular.txt", !string_contains(output, "__regular.txt"));
-    ASSERT("Output does not contain __test_1.txt", !string_contains(output, "__test_1.txt")); // Ignored by gitignore
+    // Should NOT include __test_a.txt and __test_b.txt because they match '__test_*.txt' in .gitignore
+    ASSERT("Output does not contain __test_a.txt (ignored)", !string_contains(output, "__test_a.txt"));
+    ASSERT("Output does not contain __test_b.txt (ignored)", !string_contains(output, "__test_b.txt"));
+    ASSERT("Output does not contain __regular.txt", !string_contains(output, "__regular.txt")); // Doesn't match pattern
+    ASSERT("Output does not contain __test_1.log", !string_contains(output, "__test_1.log")); // Ignored by gitignore (*.log)
 }
 
 /* Test glob pattern '[]' (character range) with --no-gitignore (prefixed) */

@@ -1074,9 +1074,10 @@ int main(int argc, char *argv[]) {
             /* -f flag provided but no files specified */
             fprintf(stderr, "Warning: -f flag provided but no files specified\n");
         } else {
-            /* Process each file argument */
+            /* Process each file argument (which could be a file path or a glob pattern) */
             for (i = file_args_start; i < argc; i++) {
-                collect_file(argv[i]);
+                // process_pattern handles both individual files and glob expansion
+                process_pattern(argv[i]);
             }
         }
     } else {
