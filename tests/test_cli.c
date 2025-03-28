@@ -104,9 +104,9 @@ void setup_test_env(void) {
     const char* win1252_content = "Symbols: € ™ …\n";
     f = fopen(TEST_DIR "/__windows1252.txt", "wb"); // Use wb for precise byte writing
     if (f) { fwrite(win1252_content, 1, strlen(win1252_content), f); fclose(f); } // Use strlen, not hardcoded 14
-
+ 
     /* UTF-16 LE file */
-    const char* utf16le_text = "UTF16LE";
+    /* const char* utf16le_text = "UTF16LE"; // Removed unused variable */
     f = fopen(TEST_DIR "/__utf16le.txt", "wb");
     if (f) {
         // Represents "UTF16LE" in UTF-16LE (including null bytes)
@@ -114,9 +114,9 @@ void setup_test_env(void) {
         fwrite(utf16le_content, 1, sizeof(utf16le_content), f);
         fclose(f);
     }
-
+ 
     /* UTF-16 BE file */
-    const char* utf16be_text = "UTF16BE";
+    /* const char* utf16be_text = "UTF16BE"; // Removed unused variable */
     f = fopen(TEST_DIR "/__utf16be.txt", "wb");
     if (f) {
         // Represents "UTF16BE" in UTF-16BE (including null bytes)
@@ -124,9 +124,9 @@ void setup_test_env(void) {
         fwrite(utf16be_content, 1, sizeof(utf16be_content), f);
         fclose(f);
     }
-
+ 
     /* UTF-32 LE file */
-    const char* utf32le_text = "UTF32LE";
+    /* const char* utf32le_text = "UTF32LE"; // Removed unused variable */
     f = fopen(TEST_DIR "/__utf32le.txt", "wb");
     if (f) {
         // Represents "UTF32LE" in UTF-32LE (including null bytes)
@@ -138,9 +138,9 @@ void setup_test_env(void) {
         fwrite(utf32le_content, 1, sizeof(utf32le_content), f);
         fclose(f);
     }
-
+ 
     /* UTF-32 BE file */
-    const char* utf32be_text = "UTF32BE";
+    /* const char* utf32be_text = "UTF32BE"; // Removed unused variable */
     f = fopen(TEST_DIR "/__utf32be.txt", "wb");
     if (f) {
         // Represents "UTF32BE" in UTF-32BE (including null bytes)
