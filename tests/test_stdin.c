@@ -321,7 +321,8 @@ TEST(test_stdin_binary_null_byte) {
     // Desired expectation: Header and placeholder, no raw content.
     ASSERT("Output contains stdin_content header", string_contains(output, "File: stdin_content"));
     ASSERT("Output contains binary skipped placeholder", string_contains(output, "[Binary file content skipped]"));
-    ASSERT("Output does NOT contain raw null byte content", !string_contains(output, "stdin\0test"));
+    /* Removed redundant/misleading check for raw null byte content, as string_contains(strstr) stops at null. */
+    /* The presence of the placeholder and absence of fences are sufficient checks. */
     ASSERT("Output does NOT contain code fences for binary", !string_contains(output, "```"));
 }
 
@@ -364,9 +365,9 @@ TEST(test_stdin_empty_file) {
     char *output = run_command_with_stdin(input_cmd, cmd);
 
     // Desired expectation: Output the header and empty fences, similar to an empty file via -f.
-    ASSERT("Output contains stdin_content header for empty input", string_contains(output, "File: stdin_content"));
-    ASSERT("Output contains empty code block for empty input", string_contains(output, "```\n```"));
-    ASSERT("Output contains separator after empty block", string_contains(output, "```\n----------------------------------------"));
+    ASSERT("Expected 'File: stdin_content' header for empty input", string_contains(output, "File: stdin_content"));
+    ASSERT("Expected empty code block '```\\n```' for empty input", string_contains(output, "```\n```"));
+    ASSERT("Expected separator after empty block", string_contains(output, "```\n----------------------------------------"));
 }
 
 /* Test stdin with UTF-8 characters (current behavior: include raw) */

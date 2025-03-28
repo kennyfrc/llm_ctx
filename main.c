@@ -141,17 +141,26 @@ void add_to_file_tree(const char *filepath) {
     assert(file_tree_count < MAX_FILES);
     
     if (file_tree_count < MAX_FILES) {
+        bool is_special = (strcmp(filepath, "stdin_content") == 0);
         struct stat statbuf;
-        
-        /* Get file information */
-        if (lstat(filepath, &statbuf) == 0) {
-            FileInfo new_file = {
-                .path = "",
-                .relative_path = NULL,
-                .is_dir = S_ISDIR(statbuf.st_mode)
-            };
-            
-            /* Store file path */
+        bool is_dir = false; /* Default to not a directory */
+
+        /* Only call lstat for actual file paths, not special names */
+        if (!is_special) {
+            if (lstat(filepath, &statbuf) == 0) {
+                is_dir = S_ISDIR(statbuf.st_mode);
+            }
+            /* If lstat fails, keep is_dir as false */
+        }
+        /* For special files like "stdin_content", is_dir remains false */
+
+        FileInfo new_file = {
+            .path = "",
+            .relative_path = NULL,
+            .is_dir = is_dir /* Use determined or default value */
+        };
+
+        /* Store file path */
             strncpy(new_file.path, filepath, MAX_PATH - 1);
             new_file.path[MAX_PATH - 1] = '\0';
             
@@ -166,7 +175,7 @@ void add_to_file_tree(const char *filepath) {
             assert(file_tree_count > 0);
         }
     }
-}
+/* Removed extraneous closing brace */
 
 /**
  * Compare function for sorting file paths
@@ -659,79 +668,85 @@ bool process_stdin_content(void) {
     }
     fclose(content_file_write); /* Close write handle */
 
-    /* Check if we actually got any content */
+    /* Check if we actually got any content. If not, treat as empty input. */
     if (!found_content) {
-        unlink(content_path);
-        return false; /* No content piped in */
-    }
-
-    /* Reopen the temp file for reading (binary mode) */
-    content_file_read = fopen(content_path, "rb");
-    if (!content_file_read) {
-        perror("Failed to reopen temporary file for reading");
-        unlink(content_path);
-        return false;
-    }
-
-    /* Check if the content is binary */
-    if (is_binary(content_file_read)) {
-        content_to_register = "[Binary file content skipped]";
-        strcpy(content_type, ""); /* No type for binary */
+        /* Register stdin_content with empty content */
+        content_to_register = "";
+        strcpy(content_type, ""); /* No type for empty */
+        /* Register stdin_content with empty content */
+        content_to_register = "";
+        strcpy(content_type, ""); /* No type for empty */
+        /* content_file_read remains NULL */
     } else {
-        /* Not binary, determine content type and read content */
-        rewind(content_file_read); /* Rewind after binary check */
-        char first_line[1024] = "";
-        if (fgets(first_line, sizeof(first_line), content_file_read) != NULL) {
-            /* Content type detection logic (same as before) */
-            if (strstr(first_line, "diff --git") == first_line ||
-                strstr(first_line, "commit ") == first_line ||
-                strstr(first_line, "index ") == first_line ||
-                strstr(first_line, "--- a/") == first_line) {
-                strcpy(content_type, "diff");
-            } else if (first_line[0] == '{' || first_line[0] == '[') {
-                strcpy(content_type, "json");
-            } else if (strstr(first_line, "<?xml") == first_line ||
-                       strstr(first_line, "<") != NULL) {
-                strcpy(content_type, "xml");
-            } else if (first_line[0] == '#' ||
-                       strstr(first_line, "```") != NULL) {
-                strcpy(content_type, "markdown");
-            }
-        }
-
-        /* Allocate buffer and read the full content */
-        rewind(content_file_read); /* Rewind again before full read */
-        stdin_content_buffer = malloc(STDIN_BUFFER_SIZE);
-        if (!stdin_content_buffer) {
-            perror("Failed to allocate memory for stdin content");
-            fclose(content_file_read);
+        /* Content was found, reopen the temp file for reading */
+        content_file_read = fopen(content_path, "rb");
+        if (!content_file_read) {
+            perror("Failed to reopen temporary file for reading");
             unlink(content_path);
             return false;
         }
 
-        size_t total_read = 0;
-        while (total_read < STDIN_BUFFER_SIZE - 1) {
-            size_t space_left = STDIN_BUFFER_SIZE - 1 - total_read;
-            size_t bytes_to_read = (space_left < sizeof(buffer)) ? space_left : sizeof(buffer);
-            bytes_read = fread(buffer, 1, bytes_to_read, content_file_read);
-            if (bytes_read > 0) {
-                memcpy(stdin_content_buffer + total_read, buffer, bytes_read);
-                total_read += bytes_read;
-            } else {
-                break; /* EOF or error */
+        /* Check if the content is binary */
+        if (is_binary(content_file_read)) {
+            content_to_register = "[Binary file content skipped]";
+            strcpy(content_type, ""); /* No type for binary */
+        } else {
+            /* Not binary, determine content type and read content */
+            rewind(content_file_read); /* Rewind after binary check */
+            char first_line[1024] = "";
+            if (fgets(first_line, sizeof(first_line), content_file_read) != NULL) {
+                /* Content type detection logic */
+                if (strstr(first_line, "diff --git") == first_line ||
+                    strstr(first_line, "commit ") == first_line ||
+                    strstr(first_line, "index ") == first_line ||
+                    strstr(first_line, "--- a/") == first_line) {
+                    strcpy(content_type, "diff");
+                } else if (first_line[0] == '{' || first_line[0] == '[') {
+                    strcpy(content_type, "json");
+                } else if (strstr(first_line, "<?xml") == first_line ||
+                           strstr(first_line, "<") != NULL) {
+                    strcpy(content_type, "xml");
+                } else if (first_line[0] == '#' ||
+                           strstr(first_line, "```") != NULL) {
+                    strcpy(content_type, "markdown");
+                }
             }
+
+            /* Allocate buffer and read the full content */
+            rewind(content_file_read); /* Rewind again before full read */
+            stdin_content_buffer = malloc(STDIN_BUFFER_SIZE);
+            if (!stdin_content_buffer) {
+                perror("Failed to allocate memory for stdin content");
+                fclose(content_file_read);
+                unlink(content_path);
+                return false;
+            }
+
+            size_t total_read = 0;
+            while (total_read < STDIN_BUFFER_SIZE - 1) {
+                size_t space_left = STDIN_BUFFER_SIZE - 1 - total_read;
+                size_t bytes_to_read = (space_left < sizeof(buffer)) ? space_left : sizeof(buffer);
+                bytes_read = fread(buffer, 1, bytes_to_read, content_file_read);
+                if (bytes_read > 0) {
+                    memcpy(stdin_content_buffer + total_read, buffer, bytes_read);
+                    total_read += bytes_read;
+                } else {
+                    break; /* EOF or error */
+                }
+            }
+            stdin_content_buffer[total_read] = '\0'; /* Null-terminate */
+            content_to_register = stdin_content_buffer;
         }
-        stdin_content_buffer[total_read] = '\0'; /* Null-terminate */
-        content_to_register = stdin_content_buffer;
     }
 
-    /* Register the special file (either placeholder or actual content) */
-    /* output_file_callback strdup's the content, so we can free our buffer */
+    /* Common path for registration and cleanup */
     output_file_callback("stdin_content", content_type, content_to_register);
 
-    /* Clean up */
-    fclose(content_file_read);
-    unlink(content_path);
+    /* Clean up resources */
+    if (content_file_read) { /* Only close if it was opened */
+        fclose(content_file_read);
+    }
+    unlink(content_path); /* Always remove temp file */
     if (stdin_content_buffer) {
         free(stdin_content_buffer); /* Free buffer if allocated */
     }
@@ -739,7 +754,7 @@ bool process_stdin_content(void) {
     /* Increment files found so we don't error out */
     files_found++;
 
-    return true;
+    return true; /* Indicate success */
 }
 
 /* Function to register a callback for a special file */
@@ -768,13 +783,17 @@ void output_file_callback(const char *name, const char *type, const char *conten
     /* Post-condition: file was added */
     assert(num_special_files > 0);
     
-    /* Add to processed files list for tree display */
+    /* Add to processed files list for content output and tree display */
     if (num_processed_files < MAX_FILES) {
         processed_files[num_processed_files] = strdup(name);
-        num_processed_files++;
-        
+        /* Ensure strdup succeeded before proceeding */
+        /* A failure here is critical, indicating severe memory issues. */
+        assert(processed_files[num_processed_files] != NULL && "strdup failed in output_file_callback");
+            
+        num_processed_files++; /* Increment count *after* successful allocation */
+            
         /* Also add to the file tree structure */
-        add_to_file_tree(name);
+        add_to_file_tree(name); /* Handles special "stdin_content" case */
     }
 }
 
