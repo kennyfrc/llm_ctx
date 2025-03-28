@@ -74,6 +74,22 @@ void setup_test_env(void) {
         fprintf(f, "%s/__sample.xml\n", TEST_DIR);   // Prefixed
         fclose(f);
     }
+
+    /* Files for binary detection tests (prefixed) */
+    f = fopen(TEST_DIR "/__binary_null.bin", "wb"); // Use "wb" for binary write
+    if (f) { fwrite("stdin\0test", 1, 10, f); fclose(f); } // Include null byte
+
+    f = fopen(TEST_DIR "/__binary_control.bin", "w");
+    if (f) { fprintf(f, "stdin\x01\x02\x03test"); fclose(f); } // Non-printable ASCII
+
+    f = fopen(TEST_DIR "/__image.png", "wb"); // Use "wb"
+    if (f) { fwrite("\x89PNG\r\n\x1a\n", 1, 8, f); fclose(f); } // PNG magic bytes
+
+    f = fopen(TEST_DIR "/__empty.txt", "w"); // Empty file
+    if (f) { fclose(f); }
+
+    f = fopen(TEST_DIR "/__utf8.txt", "w"); // UTF-8 content
+    if (f) { fprintf(f, "Stdin 你好 Test"); fclose(f); }
 }
 
 /* Clean up the test environment */
@@ -294,6 +310,78 @@ TEST(test_stdin_large_content_truncation) {
     ASSERT("Output contains closing fence", string_contains(output, "```\n----------------------------------------"));
 }
 
+/* Test stdin with null bytes (current behavior: include raw, potentially truncated) */
+TEST(test_stdin_binary_null_byte) {
+    char cmd[1024];
+    char input_cmd[1024];
+    snprintf(input_cmd, sizeof(input_cmd), "cat %s/__binary_null.bin", TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    char *output = run_command_with_stdin(input_cmd, cmd);
+
+    // Desired expectation: Header and placeholder, no raw content.
+    ASSERT("Output contains stdin_content header", string_contains(output, "File: stdin_content"));
+    ASSERT("Output contains binary skipped placeholder", string_contains(output, "[Binary file content skipped]"));
+    ASSERT("Output does NOT contain raw null byte content", !string_contains(output, "stdin\0test"));
+    ASSERT("Output does NOT contain code fences for binary", !string_contains(output, "```"));
+}
+
+/* Test stdin with control characters (current behavior: include raw) */
+TEST(test_stdin_binary_control_chars) {
+    char cmd[1024];
+    char input_cmd[1024];
+    snprintf(input_cmd, sizeof(input_cmd), "cat %s/__binary_control.bin", TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    char *output = run_command_with_stdin(input_cmd, cmd);
+
+    // Desired expectation: Header and placeholder, no raw content.
+    ASSERT("Output contains stdin_content header", string_contains(output, "File: stdin_content"));
+    ASSERT("Output contains binary skipped placeholder", string_contains(output, "[Binary file content skipped]"));
+    ASSERT("Output does NOT contain raw control char content", !string_contains(output, "stdin\x01\x02\x03test"));
+    ASSERT("Output does NOT contain code fences for binary", !string_contains(output, "```"));
+}
+
+/* Test stdin with image magic bytes (current behavior: include raw) */
+TEST(test_stdin_binary_image_magic) {
+    char cmd[1024];
+    char input_cmd[1024];
+    snprintf(input_cmd, sizeof(input_cmd), "cat %s/__image.png", TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    char *output = run_command_with_stdin(input_cmd, cmd);
+
+    // Desired expectation: Header and placeholder, no raw content.
+    ASSERT("Output contains stdin_content header", string_contains(output, "File: stdin_content"));
+    ASSERT("Output contains binary skipped placeholder", string_contains(output, "[Binary file content skipped]"));
+    ASSERT("Output does NOT contain raw PNG magic bytes", !string_contains(output, "\x89PNG\r\n\x1a\n"));
+    ASSERT("Output does NOT contain code fences for binary", !string_contains(output, "```"));
+}
+
+/* Test stdin with empty input (current behavior: no output, error message) */
+TEST(test_stdin_empty_file) {
+    char cmd[1024];
+    char input_cmd[1024];
+    snprintf(input_cmd, sizeof(input_cmd), "cat %s/__empty.txt", TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    char *output = run_command_with_stdin(input_cmd, cmd);
+
+    // Desired expectation: Output the header and empty fences, similar to an empty file via -f.
+    ASSERT("Output contains stdin_content header for empty input", string_contains(output, "File: stdin_content"));
+    ASSERT("Output contains empty code block for empty input", string_contains(output, "```\n```"));
+    ASSERT("Output contains separator after empty block", string_contains(output, "```\n----------------------------------------"));
+}
+
+/* Test stdin with UTF-8 characters (current behavior: include raw) */
+TEST(test_stdin_utf8_file) {
+    char cmd[1024];
+    char input_cmd[1024];
+    snprintf(input_cmd, sizeof(input_cmd), "cat %s/__utf8.txt", TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    char *output = run_command_with_stdin(input_cmd, cmd);
+
+    ASSERT("Output contains stdin_content header", string_contains(output, "File: stdin_content"));
+    // Current expectation: Raw UTF-8 content is included.
+    ASSERT("Output contains UTF-8 characters from stdin", string_contains(output, "Stdin 你好 Test"));
+}
+
 
 int main(void) {
     printf("Running llm_ctx stdin pipe integration tests\n");
@@ -310,7 +398,12 @@ int main(void) {
     RUN_TEST(test_stdin_file_list);
     RUN_TEST(test_stdin_with_instructions);
     RUN_TEST(test_stdin_large_content_truncation);
-    
+    RUN_TEST(test_stdin_binary_null_byte);
+    RUN_TEST(test_stdin_binary_control_chars);
+    RUN_TEST(test_stdin_binary_image_magic);
+    RUN_TEST(test_stdin_empty_file);
+    RUN_TEST(test_stdin_utf8_file);
+
     /* Clean up */
     teardown_test_env();
     

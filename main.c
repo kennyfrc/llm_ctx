@@ -22,9 +22,11 @@
 #include <ctype.h>    /* For isspace() */
 #include <stdbool.h>  /* For bool type */
 #include <stdint.h>   /* For fixed-width integer types */
+#include <ctype.h>    /* For isprint */
 #include "gitignore.h"
 
 #define MAX_PATH 4096
+#define BINARY_CHECK_SIZE 1024 /* Bytes to check for binary detection */
 #define TEMP_FILE_TEMPLATE "/tmp/llm_ctx_XXXXXX"
 #define MAX_PATTERNS 64   /* Maximum number of patterns to support */
 #define MAX_FILES 1024    /* Maximum number of files to process */
@@ -54,6 +56,7 @@ bool process_stdin(void);
 bool process_stdin_content(void);
 bool is_likely_filenames(FILE *input);
 void output_file_callback(const char *name, const char *type, const char *content);
+bool is_binary(FILE *file);
 
 /* Special file structure for stdin content */
 typedef struct {
@@ -435,6 +438,59 @@ void generate_file_tree(void) {
     }
 }
 
+
+/**
+ * Check if a file stream contains binary data.
+ * Reads the first BINARY_CHECK_SIZE bytes and looks for null bytes
+ * or a significant number of non-printable characters.
+ * Rewinds the file stream before returning.
+ *
+ * Returns true if the file is likely binary, false otherwise.
+ */
+bool is_binary(FILE *file) {
+    /* Pre-condition: file must be non-NULL and opened in binary read mode */
+    assert(file != NULL);
+
+    char buffer[BINARY_CHECK_SIZE];
+    size_t bytes_read;
+    long original_pos = ftell(file); /* Remember original position */
+    bool likely_binary = false;
+
+    /* Read a chunk from the beginning */
+    rewind(file);
+    bytes_read = fread(buffer, 1, sizeof(buffer), file);
+
+    if (bytes_read > 0) {
+        int non_printable_count = 0;
+        for (size_t i = 0; i < bytes_read; i++) {
+            /* Check for null byte */
+            if (buffer[i] == '\0') {
+                likely_binary = true;
+                break;
+            }
+            /* Check for non-printable characters (excluding common whitespace) */
+            if (!isprint(buffer[i]) && !isspace(buffer[i])) {
+                non_printable_count++;
+            }
+        }
+
+        /* If no null byte found, check percentage of non-printable chars */
+        /* Heuristic: If more than 10% are non-printable, consider it binary */
+        if (!likely_binary && bytes_read > 0 && (double)non_printable_count / bytes_read > 0.1) {
+            likely_binary = true;
+        }
+    }
+
+    /* Restore original file position */
+    fseek(file, original_pos, SEEK_SET);
+
+    /* Post-condition: file pointer is restored */
+    assert(ftell(file) == original_pos);
+
+    return likely_binary;
+}
+
+
 /**
  * Display help message with usage instructions and examples
  */
@@ -566,112 +622,117 @@ bool process_stdin(void) {
 bool process_stdin_content(void) {
     char buffer[4096];
     size_t bytes_read;
-    FILE *content_file;
+    FILE *content_file_write = NULL;
+    FILE *content_file_read = NULL;
     bool found_content = false;
-    
+    char *stdin_content_buffer = NULL; /* Buffer to hold content if not binary */
+    const char *content_to_register = NULL; /* Points to buffer or placeholder */
+    char content_type[32] = ""; /* Detected content type */
+
     /* Create a temporary file to store the content */
     char content_path[MAX_PATH];
     strcpy(content_path, "/tmp/llm_ctx_content_XXXXXX");
     int fd = mkstemp(content_path);
     if (fd == -1) {
+        perror("Failed to create temporary file for stdin");
         return false;
     }
-    
-    content_file = fdopen(fd, "w+");
-    if (!content_file) {
+
+    content_file_write = fdopen(fd, "wb"); /* Open in binary write mode */
+    if (!content_file_write) {
+        perror("Failed to open temporary file for writing");
         close(fd);
+        unlink(content_path);
         return false;
     }
-    
+
     /* Read all data from stdin and save to temp file */
     while ((bytes_read = fread(buffer, 1, sizeof(buffer), stdin)) > 0) {
-        fwrite(buffer, 1, bytes_read, content_file);
+        fwrite(buffer, 1, bytes_read, content_file_write);
         found_content = true;
     }
-    
+    fclose(content_file_write); /* Close write handle */
+
     /* Check if we actually got any content */
     if (!found_content) {
-        fclose(content_file);
+        unlink(content_path);
+        return false; /* No content piped in */
+    }
+
+    /* Reopen the temp file for reading (binary mode) */
+    content_file_read = fopen(content_path, "rb");
+    if (!content_file_read) {
+        perror("Failed to reopen temporary file for reading");
         unlink(content_path);
         return false;
     }
-    
-    /* Rewind the file so we can read it */
-    rewind(content_file);
-    
-    /* Try to determine the content type for proper formatting */
-    char content_type[32] = "";
-    char first_line[1024] = "";
-    
-    /* Read the first line to help detect content type */
-    if (fgets(first_line, sizeof(first_line), content_file) != NULL) {
-        /* Git diff detection */
-        if (strstr(first_line, "diff --git") == first_line || 
-            strstr(first_line, "commit ") == first_line ||
-            strstr(first_line, "index ") == first_line ||
-            strstr(first_line, "--- a/") == first_line) {
-            strcpy(content_type, "diff");
-        }
-        /* JSON detection */
-        else if (first_line[0] == '{' || first_line[0] == '[') {
-            strcpy(content_type, "json");
-        }
-        /* XML detection */
-        else if (strstr(first_line, "<?xml") == first_line || 
-                 strstr(first_line, "<") != NULL) {
-            strcpy(content_type, "xml");
-        }
-        /* Markdown detection */
-        else if (first_line[0] == '#' || 
-                 strstr(first_line, "```") != NULL) {
-            strcpy(content_type, "markdown");
-        }
-    }
-    
-    /* Rewind again to read the full content */
-    rewind(content_file);
-    
-    /* We need to store the content for later output */
-    char *stdin_content = malloc(STDIN_BUFFER_SIZE); 
-    if (!stdin_content) {
-        fclose(content_file);
-        unlink(content_path);
-        return 1;
-    }
-    
-    size_t total_read = 0;
-    stdin_content[0] = '\0'; /* Initialize as empty string */
 
-    /* Read from content_file into stdin_content, respecting STDIN_BUFFER_SIZE */
-    while (total_read < STDIN_BUFFER_SIZE - 1) { /* Leave space for null terminator */
-        size_t space_left = STDIN_BUFFER_SIZE - 1 - total_read;
-        /* Determine how much to read: either a full buffer chunk or just the remaining space */
-        size_t bytes_to_read = (space_left < sizeof(buffer)) ? space_left : sizeof(buffer);
-        
-        bytes_read = fread(buffer, 1, bytes_to_read, content_file);
-        
-        if (bytes_read > 0) {
-            /* Append read data to stdin_content */
-            memcpy(stdin_content + total_read, buffer, bytes_read);
-            total_read += bytes_read;
-        } else {
-            /* End of file reached or read error occurred */
-            break;
+    /* Check if the content is binary */
+    if (is_binary(content_file_read)) {
+        content_to_register = "[Binary file content skipped]";
+        strcpy(content_type, ""); /* No type for binary */
+    } else {
+        /* Not binary, determine content type and read content */
+        rewind(content_file_read); /* Rewind after binary check */
+        char first_line[1024] = "";
+        if (fgets(first_line, sizeof(first_line), content_file_read) != NULL) {
+            /* Content type detection logic (same as before) */
+            if (strstr(first_line, "diff --git") == first_line ||
+                strstr(first_line, "commit ") == first_line ||
+                strstr(first_line, "index ") == first_line ||
+                strstr(first_line, "--- a/") == first_line) {
+                strcpy(content_type, "diff");
+            } else if (first_line[0] == '{' || first_line[0] == '[') {
+                strcpy(content_type, "json");
+            } else if (strstr(first_line, "<?xml") == first_line ||
+                       strstr(first_line, "<") != NULL) {
+                strcpy(content_type, "xml");
+            } else if (first_line[0] == '#' ||
+                       strstr(first_line, "```") != NULL) {
+                strcpy(content_type, "markdown");
+            }
         }
+
+        /* Allocate buffer and read the full content */
+        rewind(content_file_read); /* Rewind again before full read */
+        stdin_content_buffer = malloc(STDIN_BUFFER_SIZE);
+        if (!stdin_content_buffer) {
+            perror("Failed to allocate memory for stdin content");
+            fclose(content_file_read);
+            unlink(content_path);
+            return false;
+        }
+
+        size_t total_read = 0;
+        while (total_read < STDIN_BUFFER_SIZE - 1) {
+            size_t space_left = STDIN_BUFFER_SIZE - 1 - total_read;
+            size_t bytes_to_read = (space_left < sizeof(buffer)) ? space_left : sizeof(buffer);
+            bytes_read = fread(buffer, 1, bytes_to_read, content_file_read);
+            if (bytes_read > 0) {
+                memcpy(stdin_content_buffer + total_read, buffer, bytes_read);
+                total_read += bytes_read;
+            } else {
+                break; /* EOF or error */
+            }
+        }
+        stdin_content_buffer[total_read] = '\0'; /* Null-terminate */
+        content_to_register = stdin_content_buffer;
     }
-    /* Ensure null termination */
-    stdin_content[total_read] = '\0'; 
-    
-    /* Register a special file output function */
-    output_file_callback("stdin_content", content_type, stdin_content);
-    
+
+    /* Register the special file (either placeholder or actual content) */
+    /* output_file_callback strdup's the content, so we can free our buffer */
+    output_file_callback("stdin_content", content_type, content_to_register);
+
     /* Clean up */
-    fclose(content_file);
+    fclose(content_file_read);
     unlink(content_path);
-    
+    if (stdin_content_buffer) {
+        free(stdin_content_buffer); /* Free buffer if allocated */
+    }
+
     /* Increment files found so we don't error out */
     files_found++;
-    
+
     return true;
 }
 
@@ -763,20 +824,20 @@ bool collect_file(const char *filepath) {
  * Returns true on success, false on failure
  */
 bool output_file_content(const char *filepath, FILE *output) {
-    /* Check if this is a special file (stdin content) */
+    /* Check if this is a special file (e.g., stdin content) */
     for (int i = 0; i < num_special_files; i++) {
         if (strcmp(filepath, special_files[i].filename) == 0) {
-            /* Format with a header showing the filename for context */
             fprintf(output, "File: %s\n", filepath);
-            fprintf(output, "```%s\n", special_files[i].type);
-            
-            /* Write the stored content */
-            fprintf(output, "%s", special_files[i].content);
-            
-            /* Close the code fence and add a separator for visual clarity */
-            fprintf(output, "```\n");
+            /* Check if the content is the binary placeholder */
+            if (strcmp(special_files[i].content, "[Binary file content skipped]") == 0) {
+                fprintf(output, "%s\n", special_files[i].content);
+            } else {
+                /* Format with code fences for non-binary special files */
+                fprintf(output, "```%s\n", special_files[i].type);
+                fprintf(output, "%s", special_files[i].content);
+                fprintf(output, "```\n");
+            }
             fprintf(output, "----------------------------------------\n");
-            
             return true;
         }
     }
@@ -791,28 +852,40 @@ bool output_file_content(const char *filepath, FILE *output) {
 
     /* Check if file exists and is readable before attempting to open */
     if (access(filepath, R_OK) != 0) {
-        return false;
+        /* Don't print error for non-readable files, just skip */
+        return true;
     }
 
-    FILE *file = fopen(filepath, "r");
+    /* Open in binary read mode for binary detection */
+    FILE *file = fopen(filepath, "rb");
     if (!file) {
-        return false;
+        /* Should not happen due to access check, but handle anyway */
+        return true;
     }
 
-    /* Format with a header showing the filename for context */
-    fprintf(output, "File: %s\n", filepath);
-    fprintf(output, "```\n");
+    /* Check if the file is binary */
+    if (is_binary(file)) {
+        fprintf(output, "File: %s\n", filepath);
+        fprintf(output, "[Binary file content skipped]\n");
+        fprintf(output, "----------------------------------------\n");
+    } else {
+        /* File is not binary, output its content with fences */
+        fprintf(output, "File: %s\n", filepath);
+        fprintf(output, "```\n");
 
-    /* Read and write the file contents in chunks for memory efficiency */
-    char buffer[4096];
-    size_t bytes_read;
-    while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-        fwrite(buffer, 1, bytes_read, output);
+        /* Read and write the file contents in chunks */
+        char buffer[4096];
+        size_t bytes_read;
+        /* Ensure we read from the beginning after the binary check */
+        rewind(file);
+        while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+            fwrite(buffer, 1, bytes_read, output);
+        }
+
+        /* Close the code fence and add a separator */
+        fprintf(output, "```\n");
+        fprintf(output, "----------------------------------------\n");
     }
-
-    /* Close the code fence and add a separator for visual clarity */
-    fprintf(output, "```\n");
-    fprintf(output, "----------------------------------------\n");
 
     fclose(file);
     return true;

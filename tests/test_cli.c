@@ -75,6 +75,22 @@ void setup_test_env(void) {
     f = fopen(TEST_DIR "/__brace_test.js", "w"); // Different extension, should not match {c,h}
     if (f) { fprintf(f, "Brace test JS file\n"); fclose(f); }
 
+    /* Files for binary detection tests (prefixed) */
+    f = fopen(TEST_DIR "/__binary_null.bin", "wb"); // Use "wb" for binary write
+    if (f) { fwrite("test\0test", 1, 9, f); fclose(f); } // Include null byte
+
+    f = fopen(TEST_DIR "/__binary_control.bin", "w");
+    if (f) { fprintf(f, "test\x01\x02\x03test"); fclose(f); } // Non-printable ASCII
+
+    f = fopen(TEST_DIR "/__image.png", "wb"); // Use "wb"
+    if (f) { fwrite("\x89PNG\r\n\x1a\n", 1, 8, f); fclose(f); } // PNG magic bytes
+
+    f = fopen(TEST_DIR "/__empty.txt", "w"); // Empty file
+    if (f) { fclose(f); }
+
+    f = fopen(TEST_DIR "/__utf8.txt", "w"); // UTF-8 content
+    if (f) { fprintf(f, "Hello 你好 World"); fclose(f); }
+
 
     /* Create nested directories for recursive glob testing (prefixed) */
     mkdir(TEST_DIR "/__src", 0755);
@@ -571,6 +587,69 @@ TEST(test_cli_recursive_glob_excludes_dot_git) {
     ASSERT("Output does not contain ./__app.log", !string_contains(output, "File: ./__app.log"));
 }
 
+/* Test handling of file containing null bytes (current behavior: include raw) */
+TEST(test_cli_binary_null_byte) {
+    char cmd[1024];
+    // Use --no-gitignore to ensure the file is processed
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore __binary_null.bin", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    // Desired expectation: Header and placeholder, no raw content.
+    ASSERT("Output contains binary file header", string_contains(output, "File: __binary_null.bin"));
+    ASSERT("Output contains binary skipped placeholder", string_contains(output, "[Binary file content skipped]"));
+    ASSERT("Output does NOT contain raw null byte content", !string_contains(output, "test\0test"));
+    ASSERT("Output does NOT contain code fences for binary", !string_contains(output, "```"));
+}
+
+/* Test handling of file containing control characters (current behavior: include raw) */
+TEST(test_cli_binary_control_chars) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore __binary_control.bin", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    // Desired expectation: Header and placeholder, no raw content.
+    ASSERT("Output contains control char file header", string_contains(output, "File: __binary_control.bin"));
+    ASSERT("Output contains binary skipped placeholder", string_contains(output, "[Binary file content skipped]"));
+    ASSERT("Output does NOT contain raw control char content", !string_contains(output, "test\x01\x02\x03test"));
+    ASSERT("Output does NOT contain code fences for binary", !string_contains(output, "```"));
+}
+
+/* Test handling of file with image magic bytes (current behavior: include raw) */
+TEST(test_cli_binary_image_magic) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore __image.png", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    // Desired expectation: Header and placeholder, no raw content.
+    ASSERT("Output contains image file header", string_contains(output, "File: __image.png"));
+    ASSERT("Output contains binary skipped placeholder", string_contains(output, "[Binary file content skipped]"));
+    ASSERT("Output does NOT contain raw PNG magic bytes", !string_contains(output, "\x89PNG\r\n\x1a\n"));
+    ASSERT("Output does NOT contain code fences for binary", !string_contains(output, "```"));
+}
+
+/* Test handling of an empty file (current behavior: include header and empty fence) */
+TEST(test_cli_empty_file) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore __empty.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains empty file header", string_contains(output, "File: __empty.txt"));
+    // Current expectation: Header, empty code block, separator.
+    ASSERT("Output contains empty code block", string_contains(output, "```\n```"));
+    ASSERT("Output contains separator after empty block", string_contains(output, "```\n----------------------------------------"));
+}
+
+/* Test handling of a file with UTF-8 characters (current behavior: include raw) */
+TEST(test_cli_utf8_file) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore __utf8.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains UTF8 file header", string_contains(output, "File: __utf8.txt"));
+    // Current expectation: Raw UTF-8 content is included.
+    ASSERT("Output contains UTF-8 characters", string_contains(output, "Hello 你好 World"));
+}
+
 
 // ============================================================================
 // Main Test Runner
@@ -604,6 +683,11 @@ int main(void) {
     RUN_TEST(test_cli_native_recursive_glob_specific);
     RUN_TEST(test_cli_native_recursive_glob_no_gitignore);
     RUN_TEST(test_cli_recursive_glob_excludes_dot_git);
+    RUN_TEST(test_cli_binary_null_byte);
+    RUN_TEST(test_cli_binary_control_chars);
+    RUN_TEST(test_cli_binary_image_magic);
+    RUN_TEST(test_cli_empty_file);
+    RUN_TEST(test_cli_utf8_file);
 
     /* Clean up */
     teardown_test_env();
