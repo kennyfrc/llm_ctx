@@ -16,48 +16,48 @@
  * - Testing proper formatting of content
  */
 
-/* Test directory for creating test files */
-#define TEST_DIR "/tmp/llm_ctx_stdin_test"
+/* Test directory for creating test files (prefixed) */
+#define TEST_DIR "/tmp/__llm_ctx_stdin_test"
 #define LARGE_CONTENT_SIZE (1024 * 1024 + 100) /* Slightly over 1MB */
-#define LARGE_CONTENT_FILE TEST_DIR "/large_content.txt"
+#define LARGE_CONTENT_FILE TEST_DIR "/__large_content.txt" // Prefixed
 #define TRUNCATION_MARKER "---END_OF_LARGE_INPUT---"
 
 /* Set up the test environment */
 void setup_test_env(void) {
     /* Create test directory */
     mkdir(TEST_DIR, 0755);
-    
-    /* Create test files of different types */
+
+    /* Create test files of different types (prefixed) */
     FILE *f;
-    
+
     /* JSON file */
-    f = fopen(TEST_DIR "/sample.json", "w");
+    f = fopen(TEST_DIR "/__sample.json", "w");
     if (f) {
         fprintf(f, "{\n  \"name\": \"test\",\n  \"version\": \"1.0.0\"\n}\n");
         fclose(f);
     }
-    
+
     /* Markdown file */
-    f = fopen(TEST_DIR "/sample.md", "w");
+    f = fopen(TEST_DIR "/__sample.md", "w");
     if (f) {
         fprintf(f, "# Test Markdown\n\nThis is a test markdown file.\n\n```\nCode block\n```\n");
         fclose(f);
     }
-    
+
     /* XML file */
-    f = fopen(TEST_DIR "/sample.xml", "w");
+    f = fopen(TEST_DIR "/__sample.xml", "w");
     if (f) {
         fprintf(f, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<root>\n  <element>content</element>\n</root>\n");
         fclose(f);
     }
-    
+
     /* Diff file */
-    f = fopen(TEST_DIR "/sample.diff", "w");
+    f = fopen(TEST_DIR "/__sample.diff", "w");
     if (f) {
-        fprintf(f, "diff --git a/file.txt b/file.txt\n");
+        fprintf(f, "diff --git a/__file.txt b/__file.txt\n"); // Prefixed paths in diff
         fprintf(f, "index 1234567..7654321 100644\n");
-        fprintf(f, "--- a/file.txt\n");
-        fprintf(f, "+++ b/file.txt\n");
+        fprintf(f, "--- a/__file.txt\n"); // Prefixed paths in diff
+        fprintf(f, "+++ b/__file.txt\n"); // Prefixed paths in diff
         fprintf(f, "@@ -1,5 +1,5 @@\n");
         fprintf(f, " line 1\n");
         fprintf(f, "-line 2\n");
@@ -65,13 +65,13 @@ void setup_test_env(void) {
         fprintf(f, " line 3\n");
         fclose(f);
     }
-    
-    /* File list */
-    f = fopen(TEST_DIR "/file_list.txt", "w");
+
+    /* File list (not used directly by tests anymore, but keep for potential future use) */
+    f = fopen(TEST_DIR "/__file_list.txt", "w");
     if (f) {
-        fprintf(f, "%s/sample.json\n", TEST_DIR);
-        fprintf(f, "%s/sample.md\n", TEST_DIR);
-        fprintf(f, "%s/sample.xml\n", TEST_DIR);
+        fprintf(f, "%s/__sample.json\n", TEST_DIR); // Prefixed
+        fprintf(f, "%s/__sample.md\n", TEST_DIR);   // Prefixed
+        fprintf(f, "%s/__sample.xml\n", TEST_DIR);   // Prefixed
         fclose(f);
     }
 }
@@ -150,10 +150,10 @@ char *run_command_with_stdin(const char *input_cmd, const char *cmd) {
 TEST(test_stdin_json_detection) {
     char cmd[1024];
     char input_cmd[1024];
-    
-    /* Create input command to cat the JSON file */
-    snprintf(input_cmd, sizeof(input_cmd), "cat %s/sample.json", TEST_DIR);
-    
+
+    /* Create input command to cat the JSON file (prefixed) */
+    snprintf(input_cmd, sizeof(input_cmd), "cat %s/__sample.json", TEST_DIR);
+
     /* Create llm_ctx command */
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
     
@@ -168,10 +168,10 @@ TEST(test_stdin_json_detection) {
 TEST(test_stdin_markdown_detection) {
     char cmd[1024];
     char input_cmd[1024];
-    
-    /* Create input command to cat the markdown file */
-    snprintf(input_cmd, sizeof(input_cmd), "cat %s/sample.md", TEST_DIR);
-    
+
+    /* Create input command to cat the markdown file (prefixed) */
+    snprintf(input_cmd, sizeof(input_cmd), "cat %s/__sample.md", TEST_DIR);
+
     /* Create llm_ctx command */
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
     
@@ -186,10 +186,10 @@ TEST(test_stdin_markdown_detection) {
 TEST(test_stdin_xml_detection) {
     char cmd[1024];
     char input_cmd[1024];
-    
-    /* Create input command to cat the XML file */
-    snprintf(input_cmd, sizeof(input_cmd), "cat %s/sample.xml", TEST_DIR);
-    
+
+    /* Create input command to cat the XML file (prefixed) */
+    snprintf(input_cmd, sizeof(input_cmd), "cat %s/__sample.xml", TEST_DIR);
+
     /* Create llm_ctx command */
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
     
@@ -204,10 +204,10 @@ TEST(test_stdin_xml_detection) {
 TEST(test_stdin_diff_detection) {
     char cmd[1024];
     char input_cmd[1024];
-    
-    /* Create input command to cat the diff file */
-    snprintf(input_cmd, sizeof(input_cmd), "cat %s/sample.diff", TEST_DIR);
-    
+
+    /* Create input command to cat the diff file (prefixed) */
+    snprintf(input_cmd, sizeof(input_cmd), "cat %s/__sample.diff", TEST_DIR);
+
     /* Create llm_ctx command */
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
     
@@ -221,12 +221,12 @@ TEST(test_stdin_diff_detection) {
 /* Test file list input (using direct paths for robust testing) */
 TEST(test_stdin_file_list) {
     char output_buffer[16384] = {0};
-    
-    /* Use direct llm_ctx calls for files */
+
+    /* Use direct llm_ctx calls for files (prefixed) */
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -f %s/sample.json %s/sample.md %s/sample.xml",
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -f %s/__sample.json %s/__sample.md %s/__sample.xml",
              getenv("PWD"), TEST_DIR, TEST_DIR, TEST_DIR);
-    
+
     /* Run the command and capture output */
     FILE *pipe = popen(cmd, "r");
     if (pipe) {
@@ -236,21 +236,21 @@ TEST(test_stdin_file_list) {
         }
         pclose(pipe);
     }
-    
-    /* Verify that it processes files correctly */
-    ASSERT("Output contains sample.json", string_contains(output_buffer, "sample.json"));
-    ASSERT("Output contains sample.md", string_contains(output_buffer, "sample.md"));
-    ASSERT("Output contains sample.xml", string_contains(output_buffer, "sample.xml"));
+
+    /* Verify that it processes files correctly (prefixed) */
+    ASSERT("Output contains __sample.json", string_contains(output_buffer, "__sample.json"));
+    ASSERT("Output contains __sample.md", string_contains(output_buffer, "__sample.md"));
+    ASSERT("Output contains __sample.xml", string_contains(output_buffer, "__sample.xml"));
 }
 
-/* Test with instruction flag */
+/* Test with instruction flag (prefixed) */
 TEST(test_stdin_with_instructions) {
     char cmd[1024];
     char input_cmd[1024];
-    
-    /* Create input command to cat the JSON file */
-    snprintf(input_cmd, sizeof(input_cmd), "cat %s/sample.json", TEST_DIR);
-    
+
+    /* Create input command to cat the JSON file (prefixed) */
+    snprintf(input_cmd, sizeof(input_cmd), "cat %s/__sample.json", TEST_DIR);
+
     /* Create llm_ctx command with instructions */
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c \"Test instruction\"", getenv("PWD"));
     
