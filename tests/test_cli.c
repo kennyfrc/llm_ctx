@@ -529,9 +529,9 @@ TEST(test_cli_native_recursive_glob_no_gitignore) {
     ASSERT("Output contains __build/__output.log", string_contains(output, "__build/__output.log")); // Included now
     ASSERT("Output contains __src/__main.c", string_contains(output, "__src/__main.c"));
     ASSERT("Output contains __brace_test.c", string_contains(output, "__brace_test.c")); // Included now
-    // .gitignore itself should NOT be included by '**/*' even with --no-gitignore,
-    // as globbing typically excludes dotfiles unless explicitly matched (e.g., '.*')
-    ASSERT("Output does not contain .gitignore", !string_contains(output, ".gitignore"));
+    // .gitignore itself SHOULD be included by '**/*' when --no-gitignore is used,
+    // because FNM_PERIOD is omitted, allowing '*' to match leading dots.
+    ASSERT("Output contains .gitignore", string_contains(output, ".gitignore"));
 }
 
 

@@ -727,11 +727,10 @@ bool collect_file(const char *filepath) {
         return true;
     }
 
-    /* Check if the file should be ignored based on gitignore patterns */
-    if (should_ignore_path(filepath)) {
+    /* Check if the file should be ignored based on gitignore patterns, *only* if gitignore is enabled */
+    if (respect_gitignore && should_ignore_path(filepath)) {
         return true;  /* Silently skip ignored files */
     }
-    
     /* Check if file exists and is readable before adding it */
     if (access(filepath, R_OK) != 0) {
         return false;
