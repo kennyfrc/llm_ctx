@@ -30,7 +30,8 @@
 #define TEMP_FILE_TEMPLATE "/tmp/llm_ctx_XXXXXX"
 #define MAX_PATTERNS 64   /* Maximum number of patterns to support */
 #define MAX_FILES 1024    /* Maximum number of files to process */
-#define STDIN_BUFFER_SIZE (1024 * 1024) /* 1MB buffer for stdin content */
+/* Increased buffer size to 8MB, aligning better with typical LLM context limits (e.g., ~2M tokens) */
+#define STDIN_BUFFER_SIZE (8 * 1024 * 1024) /* 8MB buffer for stdin content */
 
 /* Structure to hold file information for the tree */
 typedef struct {
@@ -643,6 +644,8 @@ bool process_stdin_content(void) {
     char *stdin_content_buffer = NULL; /* Buffer to hold content if not binary */
     const char *content_to_register = NULL; /* Points to buffer or placeholder */
     char content_type[32] = ""; /* Detected content type */
+    bool buffer_filled_completely = false; /* Flag to detect truncation */
+    bool truncation_warning_issued = false; /* Ensure warning is printed only once */
 
     /* Create a temporary file to store the content */
     char content_path[MAX_PATH];
@@ -716,6 +719,8 @@ bool process_stdin_content(void) {
             rewind(content_file_read); /* Rewind again before full read */
             stdin_content_buffer = malloc(STDIN_BUFFER_SIZE);
             if (!stdin_content_buffer) {
+                /* Post-condition: Allocation failed */
+                assert(stdin_content_buffer == NULL);
                 perror("Failed to allocate memory for stdin content");
                 fclose(content_file_read);
                 unlink(content_path);
@@ -725,16 +730,51 @@ bool process_stdin_content(void) {
             size_t total_read = 0;
             while (total_read < STDIN_BUFFER_SIZE - 1) {
                 size_t space_left = STDIN_BUFFER_SIZE - 1 - total_read;
+                /* Read either a full buffer or just enough to fill stdin_content_buffer */
                 size_t bytes_to_read = (space_left < sizeof(buffer)) ? space_left : sizeof(buffer);
+
                 bytes_read = fread(buffer, 1, bytes_to_read, content_file_read);
+
                 if (bytes_read > 0) {
                     memcpy(stdin_content_buffer + total_read, buffer, bytes_read);
                     total_read += bytes_read;
+
+                    /* Check if we've filled the buffer exactly */
+                    if (total_read == STDIN_BUFFER_SIZE - 1) {
+                        buffer_filled_completely = true;
+                        break; /* Exit loop to check if there's more data */
+                    }
                 } else {
-                    break; /* EOF or error */
+                    /* Check for read error */
+                    if (ferror(content_file_read)) {
+                        perror("Error reading from temporary stdin file");
+                        /* Consider this a failure, cleanup will happen below */
+                        if (stdin_content_buffer) free(stdin_content_buffer);
+                        fclose(content_file_read);
+                        unlink(content_path);
+                        return false;
+                    }
+                    /* EOF reached before buffer was full */
+                    break;
                 }
             }
             stdin_content_buffer[total_read] = '\0'; /* Null-terminate */
+
+            /* Check for truncation if the buffer was filled */
+            if (buffer_filled_completely) {
+                /* Try reading one more byte to see if input was longer */
+                int next_char = fgetc(content_file_read);
+                if (next_char != EOF) {
+                    /* More data exists - input was truncated */
+                    fprintf(stderr, "Warning: Standard input exceeded buffer size (%d MB) and was truncated.\n", STDIN_BUFFER_SIZE / (1024 * 1024));
+                    truncation_warning_issued = true;
+                    /* Put the character back (optional, but good practice) */
+                    ungetc(next_char, content_file_read);
+                }
+                /* Post-condition: Checked for data beyond buffer limit */
+                assert(truncation_warning_issued == (next_char != EOF));
+            }
+
             content_to_register = stdin_content_buffer;
         }
     }
