@@ -53,9 +53,7 @@ int compare_file_paths(const void *a, const void *b);
 char *find_common_prefix(void);
 void print_tree_node(const char *path, int level, bool is_last, const char *prefix);
 void build_tree_recursive(char **paths, int count, int level, char *prefix, const char *path_prefix);
-bool process_stdin(void);
 bool process_stdin_content(void);
-bool is_likely_filenames(FILE *input);
 void output_file_callback(const char *name, const char *type, const char *content);
 bool is_binary(FILE *file);
 
@@ -534,98 +532,6 @@ void show_help(void) {
     printf("  # Pipe to clipboard\n");
     printf("  git diff | llm_ctx -c \"Review these changes\" | pbcopy\n");
     exit(0);
-}
-
-/**
- * Determine if input is likely filenames or raw content
- * Checks the first few lines of input to see if they look like valid files
- * 
- * Returns true if likely filenames, false if likely content
- */
-bool is_likely_filenames(FILE *input) {
-    char line[MAX_PATH];
-    int line_count = 0;
-    int valid_file_count = 0;
-    
-    /* Remember current position */
-    long pos = ftell(input);
-    
-    /* Check first few lines */
-    while (fgets(line, sizeof(line), input) != NULL && line_count < 5) {
-        /* Remove trailing newline */
-        size_t len = strlen(line);
-        if (len > 0 && line[len - 1] == '\n') {
-            line[len - 1] = '\0';
-        }
-        
-        /* Skip empty lines */
-        if (strlen(line) == 0) {
-            continue;
-        }
-        
-        /* Content type detection heuristics */
-        if (line[0] == '{' || line[0] == '[' || 
-            strstr(line, "<?xml") == line || 
-            strstr(line, "<") != NULL ||
-            line[0] == '#' || 
-            strstr(line, "```") != NULL ||
-            strstr(line, "diff --git") == line || 
-            strstr(line, "commit ") == line ||
-            strstr(line, "index ") == line ||
-            strstr(line, "--- a/") == line) {
-            /* If it looks like content, immediately return false */
-            fseek(input, pos, SEEK_SET);
-            return 0;
-        }
-        
-        /* Check if line looks like a valid file */
-        if (access(line, F_OK) == 0) {
-            valid_file_count++;
-        }
-        
-        line_count++;
-    }
-    
-    /* Restore position */
-    fseek(input, pos, SEEK_SET);
-    
-    /* If at least half the lines are valid files, assume filenames */
-    /* If no files were found, assume this is content */
-    if (line_count > 0 && valid_file_count == 0) {
-        return false;  /* No valid files found, assume content */
-    }
-    
-    /* If at least one valid file found, assume filenames */
-    return (valid_file_count > 0) ? true : false;
-}
-
-/**
- * Process lines from stdin
- * Each line is treated as a filename to process
- * 
- * Returns true if files were processed, false otherwise
- */
-bool process_stdin(void) {
-    char line[MAX_PATH];
-    int initial_files_found = files_found;
-    
-    while (fgets(line, sizeof(line), stdin)) {
-        /* Remove trailing newline */
-        size_t len = strlen(line);
-        if (len > 0 && line[len - 1] == '\n') {
-            line[len - 1] = '\0';
-        }
-        
-        /* Skip empty lines */
-        if (strlen(line) == 0) {
-            continue;
-        }
-        
-        /* Process the file */
-        collect_file(line);
-    }
-    
-    return (files_found > initial_files_found);
 }
 
 /**
