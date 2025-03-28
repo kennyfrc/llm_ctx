@@ -9,5 +9,19 @@ test_*
 tests/test_cli
 tests/test_gitignore
 tests/test_stdin
+
+# OS-specific artifacts
+.DS_Store
+Thumbs.db
+
+# Editor directories
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*~
+
+# Aider specific files (if used)
 .aider*
 *.plan
