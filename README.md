@@ -30,7 +30,7 @@
 *   [Tutorials](#tutorials)
 *   [How-To Guides](#how-to-guides)
 *   [Reference](#reference)
-*   [Explanation](#explanation)
+*   [Design Decisions](#design-decisions)
 *   [Testing](#testing)
 *   [License](#license)
 
@@ -398,13 +398,13 @@ When using the `-f` flag, `llm_ctx` supports standard glob patterns:
     *   Negation patterns (`!`) always override ignore patterns for a matching file.
 *   **Disabling:** Use the `--no-gitignore` flag to completely skip loading and checking `.gitignore` files.
 
-## Explanation
+## Design Decisions
 
 This section provides context and clarifies design choices.
 
 ### Project Philosophy
 
-`llm_ctx` adheres to the Unix philosophy: do one thing well. It focuses solely on gathering and formatting context for LLMs, acting as a composable component in command-line workflows. It suggests to use existing tools (`git`, `find`, `.gitignore`) rather than reimplementing their logic.
+We designed `llm_ctx` following the Unix philosophy: do one thing well. Its sole focus is gathering and formatting context for LLMs, acting as a composable component in command-line workflows. We chose to use existing tools like `git`, `find`, and `.gitignore` rather than reimplementing their logic within `llm_ctx`.
 
 ### File Selection and Filtering
 
