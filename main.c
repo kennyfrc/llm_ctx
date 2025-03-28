@@ -461,26 +461,32 @@ bool is_binary(FILE *file) {
     bytes_read = fread(buffer, 1, sizeof(buffer), file);
 
     if (bytes_read > 0) {
-        int non_printable_count = 0;
+        /* Pass 1: Check for Null Bytes */
+        /* This is the strongest indicator and catches many binary files quickly. */
         for (size_t i = 0; i < bytes_read; i++) {
-            /* Check for null byte */
             if (buffer[i] == '\0') {
                 likely_binary = true;
-                break;
-            }
-            /* Check for non-printable characters (excluding common whitespace) */
-            if (!isprint(buffer[i]) && !isspace(buffer[i])) {
-                non_printable_count++;
+                goto end_check; /* Found null byte, definitely binary */
             }
         }
 
-        /* If no null byte found, check percentage of non-printable chars */
-        /* Heuristic: If more than 10% are non-printable, consider it binary */
-        if (!likely_binary && bytes_read > 0 && (double)non_printable_count / bytes_read > 0.1) {
-            likely_binary = true;
+        /* Pass 2: Check for specific non-whitespace C0 control codes */
+        /* If no null bytes were found, check for codes 0x01-0x1F, excluding */
+        /* common whitespace TAB (0x09), LF (0x0A), CR (0x0D). */
+        /* These are rare in text/code but common in binary data. */
+        /* This avoids locale issues with isprint() and high-bit UTF-8 chars. */
+        for (size_t i = 0; i < bytes_read; i++) {
+            unsigned char current_byte = (unsigned char)buffer[i];
+            if (current_byte > 0 && current_byte < 0x20) { /* Range 1-31 */
+                if (current_byte != '\t' && current_byte != '\n' && current_byte != '\r') {
+                    likely_binary = true;
+                    goto end_check; /* Found suspicious control code */
+                }
+            }
         }
     }
 
+end_check:
     /* Restore original file position */
     fseek(file, original_pos, SEEK_SET);
 
