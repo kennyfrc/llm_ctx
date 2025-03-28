@@ -1,5 +1,7 @@
 # llm_ctx
 
+*Format your codebase for LLMs using Unix-style commands*
+
 `llm_ctx` is a CLI tool for developers who like to compose command-line tools (like `grep`, `find`, `git diff`) using pipes (`|`). It formats code/text from files or stdin into structured context for LLMs (like Claude.ai, ChatGPT, or Gemini AI Studio). Key features include generating file trees, respecting `.gitignore`, and seamless integration with these command-line pipelines.
 
 **Quick Examples:**
