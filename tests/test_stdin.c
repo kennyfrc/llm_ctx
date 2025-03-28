@@ -18,9 +18,14 @@
 
 /* Test directory for creating test files (prefixed) */
 #define TEST_DIR "/tmp/__llm_ctx_stdin_test"
-#define LARGE_CONTENT_SIZE (1024 * 1024 + 100) /* Slightly over 1MB */
-#define LARGE_CONTENT_FILE TEST_DIR "/__large_content.txt" // Prefixed
-#define TRUNCATION_MARKER "---END_OF_LARGE_INPUT---"
+/* Define sizes relative to the 8MB buffer */
+#define STDIN_BUFFER_SIZE_ACTUAL (8 * 1024 * 1024)
+#define FITS_CONTENT_SIZE (STDIN_BUFFER_SIZE_ACTUAL - 1024) /* Slightly less than 8MB */
+#define EXCEEDS_CONTENT_SIZE (STDIN_BUFFER_SIZE_ACTUAL + 100) /* Slightly more than 8MB */
+#define FITS_CONTENT_FILE TEST_DIR "/__fits_content.txt" // Prefixed
+#define EXCEEDS_CONTENT_FILE TEST_DIR "/__exceeds_content.txt" // Prefixed
+#define TRUNCATION_MARKER "---END_OF_INPUT_MARKER---"
+#define TRUNCATION_WARNING "Warning: Standard input exceeded buffer size"
 
 /* Set up the test environment */
 void setup_test_env(void) {
@@ -130,9 +135,10 @@ char *run_command_with_stdin(const char *input_cmd, const char *cmd) {
     }
     
     fprintf(script, "#!/bin/sh\n");
-    fprintf(script, "%s | %s\n", input_cmd, cmd);
+    /* Redirect stderr to stdout to capture warnings */
+    fprintf(script, "%s | %s 2>&1\n", input_cmd, cmd);
     fclose(script);
-    
+
     /* Make the script executable */
     chmod(script_file, 0755);
     
@@ -278,37 +284,76 @@ TEST(test_stdin_with_instructions) {
     ASSERT("Output contains stdin_content header", string_contains(output, "File: stdin_content"));
 }
 
-/* Test stdin processing with input larger than the internal buffer */
-TEST(test_stdin_large_content_truncation) {
-    /* 1. Create the large file */
-    FILE *large_file = fopen(LARGE_CONTENT_FILE, "w");
-    ASSERT("Failed to create large content file", large_file != NULL);
-    if (!large_file) return;
+/* Test stdin processing when input fits entirely within the buffer */
+TEST(test_stdin_content_fits_in_buffer) {
+    /* 1. Create the file that fits */
+    FILE *fits_file = fopen(FITS_CONTENT_FILE, "w");
+    ASSERT("Failed to create fits content file", fits_file != NULL);
+    if (!fits_file) return;
 
     /* Write repeating pattern */
-    size_t bytes_to_write = LARGE_CONTENT_SIZE - strlen(TRUNCATION_MARKER);
+    size_t bytes_to_write = FITS_CONTENT_SIZE - strlen(TRUNCATION_MARKER);
     const char pattern[] = "0123456789ABCDEF";
     size_t pattern_len = strlen(pattern);
     for (size_t i = 0; i < bytes_to_write; ++i) {
-        fputc(pattern[i % pattern_len], large_file);
+        fputc(pattern[i % pattern_len], fits_file);
     }
     /* Write the marker at the very end */
-    fprintf(large_file, "%s", TRUNCATION_MARKER);
-    fclose(large_file);
+    fprintf(fits_file, "%s", TRUNCATION_MARKER);
+    fclose(fits_file);
+
+    /* 2. Run llm_ctx with the file piped to stdin */
+    char cmd[1024];
+    char input_cmd[1024];
+    snprintf(input_cmd, sizeof(input_cmd), "cat %s", FITS_CONTENT_FILE);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    char *output = run_command_with_stdin(input_cmd, cmd);
+
+    /* 3. Assertions for content fitting */
+    ASSERT("Output contains stdin_content header", string_contains(output, "File: stdin_content"));
+    ASSERT("Output contains start of content", string_contains(output, "0123456789ABCDEF0123"));
+    /* The marker SHOULD be present as the input fits */
+    ASSERT("Output CONTAINS the end marker (fits)", string_contains(output, TRUNCATION_MARKER));
+    ASSERT("Output contains closing fence", string_contains(output, "```\n----------------------------------------"));
+    /* The warning message should NOT be present */
+    ASSERT("Output does NOT contain truncation warning", !string_contains(output, TRUNCATION_WARNING));
+}
+
+/* Test stdin processing when input exceeds the buffer, causing truncation */
+TEST(test_stdin_content_exceeds_buffer_truncation) {
+    /* 1. Create the file that exceeds the buffer */
+    FILE *exceeds_file = fopen(EXCEEDS_CONTENT_FILE, "w");
+    ASSERT("Failed to create exceeds content file", exceeds_file != NULL);
+    if (!exceeds_file) return;
+
+    /* Write repeating pattern */
+    size_t bytes_to_write = EXCEEDS_CONTENT_SIZE - strlen(TRUNCATION_MARKER);
+    const char pattern[] = "FEDCBA9876543210";
+    size_t pattern_len = strlen(pattern);
+    for (size_t i = 0; i < bytes_to_write; ++i) {
+        fputc(pattern[i % pattern_len], exceeds_file);
+    }
+    /* Write the marker at the very end */
+    fprintf(exceeds_file, "%s", TRUNCATION_MARKER);
+    fclose(exceeds_file);
 
     /* 2. Run llm_ctx with the large file piped to stdin */
     char cmd[1024];
     char input_cmd[1024];
-    snprintf(input_cmd, sizeof(input_cmd), "cat %s", LARGE_CONTENT_FILE);
+    snprintf(input_cmd, sizeof(input_cmd), "cat %s", EXCEEDS_CONTENT_FILE);
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
     char *output = run_command_with_stdin(input_cmd, cmd);
 
-    /* 3. Assertions */
+    /* 3. Assertions for truncation */
     ASSERT("Output contains stdin_content header", string_contains(output, "File: stdin_content"));
-    ASSERT("Output contains start of large content", string_contains(output, "0123456789ABCDEF0123"));
+    ASSERT("Output contains start of large content", string_contains(output, "FEDCBA9876543210FEDC"));
+    /* The marker should NOT be present as the input was truncated */
     ASSERT("Output does NOT contain the end marker (truncated)", !string_contains(output, TRUNCATION_MARKER));
     ASSERT("Output contains closing fence", string_contains(output, "```\n----------------------------------------"));
+    /* The warning message SHOULD be present */
+    ASSERT("Output CONTAINS truncation warning", string_contains(output, TRUNCATION_WARNING));
 }
+
 
 /* Test stdin with null bytes (current behavior: include raw, potentially truncated) */
 TEST(test_stdin_binary_null_byte) {
@@ -398,7 +443,8 @@ int main(void) {
     RUN_TEST(test_stdin_diff_detection);
     RUN_TEST(test_stdin_file_list);
     RUN_TEST(test_stdin_with_instructions);
-    RUN_TEST(test_stdin_large_content_truncation);
+    RUN_TEST(test_stdin_content_fits_in_buffer); /* Renamed test */
+    RUN_TEST(test_stdin_content_exceeds_buffer_truncation); /* New test */
     RUN_TEST(test_stdin_binary_null_byte);
     RUN_TEST(test_stdin_binary_control_chars);
     RUN_TEST(test_stdin_binary_image_magic);
