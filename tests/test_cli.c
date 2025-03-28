@@ -108,6 +108,19 @@ void setup_test_env(void) {
         fprintf(gitignore, "__build/\n"); // Prefixed
         fclose(gitignore);
     }
+
+    /* Create a dummy .git directory structure */
+    mkdir(TEST_DIR "/.git", 0755);
+    mkdir(TEST_DIR "/.git/objects", 0755); // Example subdirectory
+
+    f = fopen(TEST_DIR "/.git/HEAD", "w");
+    if (f) { fprintf(f, "ref: refs/heads/main\n"); fclose(f); }
+
+    f = fopen(TEST_DIR "/.git/config", "w");
+    if (f) { fprintf(f, "[core]\n\trepositoryformatversion = 0\n"); fclose(f); }
+
+    f = fopen(TEST_DIR "/.git/objects/dummy", "w"); // Example file inside subdir
+    if (f) { fprintf(f, "dummy object\n"); fclose(f); }
 }
 
 /* Clean up the test environment */
@@ -492,10 +505,10 @@ TEST(test_cli_native_recursive_glob_all) {
     ASSERT("Output does not contain __test_1.txt", !string_contains(output, "__test_1.txt"));
     ASSERT("Output does not contain __secrets/__secret.txt", !string_contains(output, "__secrets/__secret.txt")); // Should be ignored by __secrets/
     ASSERT("Output does not contain __build/__output.log", !string_contains(output, "__build/__output.log"));
-    // .gitignore itself should NOT be included by '**/*' unless explicitly listed or --no-gitignore is used
-    ASSERT("Output does not contain .gitignore", !string_contains(output, ".gitignore"));
+    // .gitignore itself *should* be included by '**/*' because it's matched by '*' and not ignored by default rules.
+    ASSERT("Output contains .gitignore", string_contains(output, ".gitignore"));
 }
-
+ 
 /* Test specific native recursive glob for C files in __src (prefixed) */
 TEST(test_cli_native_recursive_glob_specific) {
     char cmd[1024];
@@ -534,6 +547,30 @@ TEST(test_cli_native_recursive_glob_no_gitignore) {
     ASSERT("Output contains .gitignore", string_contains(output, ".gitignore"));
 }
 
+/* Test that the recursive glob pattern excludes the .git directory by default */
+TEST(test_cli_recursive_glob_excludes_dot_git) {
+    char cmd[1024];
+    // Use single quotes around the recursive glob pattern to ensure llm_ctx handles it
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '**/*'", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+ 
+    // Should include regular files (with ./ prefix from find_recursive starting at '.')
+    ASSERT("Output contains ./__regular.txt", string_contains(output, "File: ./__regular.txt"));
+    ASSERT("Output contains ./__src/__main.c", string_contains(output, "File: ./__src/__main.c"));
+ 
+    // Should NOT include anything from the .git directory
+    ASSERT("Output does not contain File: .git/HEAD", !string_contains(output, "File: .git/HEAD"));
+    ASSERT("Output does not contain File: .git/config", !string_contains(output, "File: .git/config"));
+    ASSERT("Output does not contain File: .git/objects/dummy", !string_contains(output, "File: .git/objects/dummy"));
+
+    // Check the file tree as well
+    ASSERT("File tree does not contain '├── .git' or '└── .git'",
+           !string_contains(output, "├── .git") && !string_contains(output, "└── .git"));
+ 
+    // Ensure ignored files (by .gitignore) are still ignored (path includes ./)
+    ASSERT("Output does not contain ./__app.log", !string_contains(output, "File: ./__app.log"));
+}
+
 
 // ============================================================================
 // Main Test Runner
@@ -566,6 +603,7 @@ int main(void) {
     RUN_TEST(test_cli_native_recursive_glob_all);
     RUN_TEST(test_cli_native_recursive_glob_specific);
     RUN_TEST(test_cli_native_recursive_glob_no_gitignore);
+    RUN_TEST(test_cli_recursive_glob_excludes_dot_git);
 
     /* Clean up */
     teardown_test_env();

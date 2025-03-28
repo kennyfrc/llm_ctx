@@ -119,10 +119,7 @@ void add_to_processed_files(const char *filepath) {
         assert(processed_files[num_processed_files] != NULL);
         
         num_processed_files++;
-        
-        /* Also add to the file tree structure */
-        add_to_file_tree(filepath);
-        
+
         /* Post-condition: file was added successfully */
         assert(num_processed_files > 0);
         assert(strcmp(processed_files[num_processed_files-1], filepath) == 0);
@@ -718,59 +715,44 @@ void output_file_callback(const char *name, const char *type, const char *conten
  * Collect a file to be processed but don't output its content yet
  * 
  * Only adds the file to our tracking lists if it hasn't been processed yet
+ * Only adds regular, readable files to the processed_files list for content output.
+ * Assumes ignore checks and path validation happened before calling.
+ * Increments files_found for files added.
  * 
- * Returns true on success, false on failure
+ * Returns true if the file was processed (added or skipped), false on error (e.g., memory).
  */
 bool collect_file(const char *filepath) {
-    /* Check if we've already processed this file to avoid duplicates */
+    // Avoid duplicates in content output
     if (file_already_processed(filepath)) {
         return true;
     }
 
-    /* Check if the file should be ignored based on gitignore patterns, *only* if gitignore is enabled */
-    if (respect_gitignore && should_ignore_path(filepath)) {
-        return true;  /* Silently skip ignored files */
-    }
-    /* Check if file exists and is readable before adding it */
-    if (access(filepath, R_OK) != 0) {
-        return false;
-    }
-    
     struct stat statbuf;
-    if (lstat(filepath, &statbuf) == 0 && S_ISDIR(statbuf.st_mode)) {
-        /* This is a directory, so we need to add it and then process its contents */
-        add_to_processed_files(filepath);
-        files_found++;
-        
-        /* Process all files in the directory */
-        DIR *dir = opendir(filepath);
-        if (dir) {
-            struct dirent *entry;
-            char path[MAX_PATH];
-            
-            while ((entry = readdir(dir)) != NULL) {
-                /* Skip the special directory entries */
-                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-                    continue;
-                
-                /* Construct the full path */
-                snprintf(path, sizeof(path), "%s/%s", filepath, entry->d_name);
-                
-                /* Recursively collect this file/directory */
-                collect_file(path);
-            }
-            closedir(dir);
-        }
-    } else {
-        /* Regular file */
-        add_to_processed_files(filepath);
-        files_found++;
+    // Check if it's a regular file and readable
+    // lstat check is slightly redundant as caller likely did it, but safe.
+    if (lstat(filepath, &statbuf) == 0 && S_ISREG(statbuf.st_mode) && access(filepath, R_OK) == 0) {
+         if (num_processed_files < MAX_FILES) {
+             // Add to the list of files whose content will be outputted
+             processed_files[num_processed_files] = strdup(filepath);
+             if (processed_files[num_processed_files] != NULL) {
+                 num_processed_files++;
+                 files_found++; // Increment count only for files we will output content for
+                 return true;
+             } else {
+                 // strdup failed - memory allocation error
+                 perror("Failed to allocate memory for file path");
+                 return false; // Indicate error
+             }
+         } else {
+             // Too many files - log warning?
+             fprintf(stderr, "Warning: Maximum number of files (%d) exceeded. Skipping %s\n", MAX_FILES, filepath);
+             return false; // Indicate that we couldn't process it
+         }
     }
-    
+    // Not a regular readable file, don't add to processed_files for content output.
+    // Return true because it's not an error, just skipping content for this path.
     return true;
 }
-
-/* Output file content implementation continues below */
 
 /**
  * Output a file's content to the specified output file
@@ -858,16 +840,9 @@ void find_recursive(const char *base_dir, const char *pattern) {
     struct stat statbuf;
     char path[MAX_PATH];
     int fnmatch_flags = FNM_PATHNAME; // Basic flag for matching path components
-
-    /* Adjust fnmatch flags based on gitignore setting */
-    if (respect_gitignore) {
-        /* When respecting gitignore, a wildcard '*' at the start of the pattern
-           should not match a leading '.' in the filename, unless the pattern
-           explicitly starts with '.'. This mirrors standard shell/gitignore behavior. */
-        fnmatch_flags |= FNM_PERIOD;
-    }
-    // If not respecting gitignore, FNM_PERIOD is omitted, allowing '*' to match leading dots.
-
+    // We removed FNM_PERIOD logic here. Let '*' match dotfiles.
+    // Filtering based on actual .gitignore rules happens in should_ignore_path.
+ 
     /* Try to open directory - silently return if can't access */
     if (!(dir = opendir(base_dir)))
         return;
@@ -877,10 +852,16 @@ void find_recursive(const char *base_dir, const char *pattern) {
         /* Skip the special directory entries */
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
             continue;
-        
+
+        /* Always skip the .git directory to mirror Git's behavior */
+        /* This prevents descending into the Git internal directory structure. */
+        if (strcmp(entry->d_name, ".git") == 0) {
+            continue; // Skip .git entirely
+        }
+
         /* Construct the full path of the current entry */
         snprintf(path, sizeof(path), "%s/%s", base_dir, entry->d_name);
-        
+
         /* Get entry information - skip if can't stat */
         if (lstat(path, &statbuf) == -1)
             continue;
@@ -890,6 +871,9 @@ void find_recursive(const char *base_dir, const char *pattern) {
             continue; /* Skip ignored files/directories */
         }
 
+        // Add any non-ignored entry to the file tree structure
+        add_to_file_tree(path);
+
         /* If entry is a directory, recurse into it */
         if (S_ISDIR(statbuf.st_mode)) {
             find_recursive(path, pattern);
@@ -898,7 +882,8 @@ void find_recursive(const char *base_dir, const char *pattern) {
         else if (S_ISREG(statbuf.st_mode)) {
             /* Match filename against the pattern using appropriate flags */
             if (fnmatch(pattern, entry->d_name, fnmatch_flags) == 0) {
-                /* Collect the file only if it matches and wasn't ignored */
+                // Collect the file for content output ONLY if it matches and is readable
+                // collect_file now handles adding to processed_files and files_found
                 collect_file(path);
             }
         }
@@ -969,9 +954,31 @@ bool process_pattern(const char *pattern) {
         
         /* Process each matched file */
         for (size_t i = 0; i < glob_result.gl_pathc; i++) {
-            collect_file(glob_result.gl_pathv[i]);
-        }
-        
+            const char *path = glob_result.gl_pathv[i];
+
+            // Check ignore rules before adding
+            if (respect_gitignore && should_ignore_path(path)) {
+                continue;
+            }
+
+            // Add to tree structure
+            add_to_file_tree(path);
+
+            // Collect file content if it's a regular file
+            struct stat statbuf;
+            if (lstat(path, &statbuf) == 0 && S_ISREG(statbuf.st_mode)) {
+                // collect_file now handles adding to processed_files and files_found,
+                // and checks for readability.
+                collect_file(path);
+           }
+           // If it's a directory matched by glob, descend into it
+           else if (S_ISDIR(statbuf.st_mode)) {
+                // Recursively find all files within this directory, respecting gitignore
+                // Use "*" as the pattern to match all files within.
+                find_recursive(path, "*");
+           }
+       }
+
         globfree(&glob_result);
     }
     
