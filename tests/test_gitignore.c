@@ -162,6 +162,45 @@ TEST(test_negation_override) {
     ASSERT_EQUALS(0, should_ignore_path("config.ini"));
 }
 
+/* Test that a later negation pattern correctly overrides an earlier ignore pattern */
+TEST(test_negation_precedence_over_ignore) {
+    reset_gitignore_patterns();
+
+    char pattern1[] = "*.log";      // Ignore all .log files
+    char pattern2[] = "!debug.log"; // BUT, do not ignore debug.log
+
+    add_ignore_pattern(pattern1);
+    add_ignore_pattern(pattern2);
+
+    /* Expected: debug.log should NOT be ignored because the last matching pattern is a negation */
+    /* Current buggy behavior: Returns 1 (ignored) because it stops at *.log */
+    ASSERT_EQUALS(0, should_ignore_path("debug.log"));
+
+    /* Other .log files should still be ignored */
+    ASSERT_EQUALS(1, should_ignore_path("trace.log"));
+}
+
+/* Test that a later ignore pattern correctly overrides an earlier negation pattern */
+TEST(test_ignore_precedence_over_negation) {
+    reset_gitignore_patterns();
+
+    char pattern1[] = "!important.txt"; // Do not ignore important.txt
+    char pattern2[] = "*.txt";         // BUT, ignore all .txt files (takes precedence)
+
+    add_ignore_pattern(pattern1);
+    add_ignore_pattern(pattern2);
+
+    /* Expected: important.txt SHOULD be ignored because the last matching pattern (*.txt) is an ignore rule */
+    /* Current buggy behavior: Returns 0 (not ignored) because it stops at !important.txt */
+    ASSERT_EQUALS(1, should_ignore_path("important.txt"));
+
+    /* Other .txt files should also be ignored */
+    ASSERT_EQUALS(1, should_ignore_path("another.txt"));
+
+    /* Non-.txt files should not be ignored */
+    ASSERT_EQUALS(0, should_ignore_path("config.ini"));
+}
+
 
 int main(void) {
     printf("Running gitignore pattern tests\n");
@@ -178,7 +217,9 @@ int main(void) {
     RUN_TEST(test_should_ignore_path_directory_only);
     RUN_TEST(test_respect_gitignore_flag);
     RUN_TEST(test_pattern_precedence);
-    RUN_TEST(test_negation_override);
-    
+    RUN_TEST(test_negation_override); // This test might be redundant or overlap now
+    RUN_TEST(test_negation_precedence_over_ignore); // New test
+    RUN_TEST(test_ignore_precedence_over_negation); // New test
+
     PRINT_TEST_SUMMARY();
 }
