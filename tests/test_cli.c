@@ -95,13 +95,15 @@ void setup_test_env(void) {
     f = fopen(TEST_DIR "/__test.asm", "w");
     if (f) { fprintf(f, "; Simple ASM example\nsection .text\nglobal _start\n_start:\n mov eax, 1\n mov ebx, 0\n int 0x80\n"); fclose(f); }
 
-    /* Latin-1 (ISO-8859-1) file */
+    /* Latin-1 (ISO-8859-1) file - Add newline for fgets compatibility */
+    const char* latin1_content = "Accénts: é à ç ©\n";
     f = fopen(TEST_DIR "/__latin1.txt", "wb"); // Use wb for precise byte writing
-    if (f) { fwrite("Accénts: é à ç ©", 1, 17, f); fclose(f); } // Example bytes: 0xE9, 0xE0, 0xE7, 0xA9
+    if (f) { fwrite(latin1_content, 1, strlen(latin1_content), f); fclose(f); }
 
-    /* Windows-1252 file */
+    /* Windows-1252 file - Use strlen and add newline */
+    const char* win1252_content = "Symbols: € ™ …\n";
     f = fopen(TEST_DIR "/__windows1252.txt", "wb"); // Use wb for precise byte writing
-    if (f) { fwrite("Symbols: € ™ …", 1, 14, f); fclose(f); } // Example bytes: 0x80, 0x99, 0x85
+    if (f) { fwrite(win1252_content, 1, strlen(win1252_content), f); fclose(f); } // Use strlen, not hardcoded 14
 
     /* UTF-16 LE file */
     f = fopen(TEST_DIR "/__utf16le.txt", "wb"); // Use wb for precise byte writing
@@ -692,9 +694,9 @@ TEST(test_cli_latin1_file) {
     char *output = run_command(cmd);
 
     ASSERT("Output contains Latin-1 file header", string_contains(output, "File: __latin1.txt"));
-    // Expectation: Treated as text, content included (bytes 0x80-0xFF are ignored by heuristic).
-    ASSERT("Output contains Latin-1 content", string_contains(output, "Accénts: é à ç ©"));
-    ASSERT("Output contains code fences for Latin-1", string_contains(output, "```\nAccénts: é à ç ©"));
+    // Expectation: Treated as text, content included (bytes 0x80-0xFF are ignored by heuristic). Check includes newline.
+    ASSERT("Output contains Latin-1 content", string_contains(output, "Accénts: é à ç ©\n"));
+    ASSERT("Output contains code fences for Latin-1", string_contains(output, "```\nAccénts: é à ç ©\n"));
     ASSERT("Output does NOT contain binary skipped placeholder for Latin-1", !string_contains(output, "[Binary file content skipped]"));
 }
 
@@ -705,9 +707,9 @@ TEST(test_cli_windows1252_file) {
     char *output = run_command(cmd);
 
     ASSERT("Output contains Win-1252 file header", string_contains(output, "File: __windows1252.txt"));
-    // Expectation: Treated as text, content included (bytes 0x80-0xFF are ignored by heuristic).
-    ASSERT("Output contains Win-1252 content", string_contains(output, "Symbols: € ™ …"));
-    ASSERT("Output contains code fences for Win-1252", string_contains(output, "```\nSymbols: € ™ …"));
+    // Expectation: Treated as text, content included (bytes 0x80-0xFF are ignored by heuristic). Check includes newline.
+    ASSERT("Output contains Win-1252 content", string_contains(output, "Symbols: € ™ …\n"));
+    ASSERT("Output contains code fences for Win-1252", string_contains(output, "```\nSymbols: € ™ …\n"));
     ASSERT("Output does NOT contain binary skipped placeholder for Win-1252", !string_contains(output, "[Binary file content skipped]"));
 }
 
