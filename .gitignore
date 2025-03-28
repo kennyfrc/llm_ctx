@@ -9,3 +9,4 @@ tests/test_cli
 tests/test_gitignore
 tests/test_stdin
 .aider*
+*.plan
