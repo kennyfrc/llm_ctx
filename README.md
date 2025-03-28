@@ -408,7 +408,7 @@ We designed `llm_ctx` following the Unix philosophy: do one thing well. Its sole
 
 ### File Selection and Filtering
 
-Unlike some tools with explicit `--include` and `--exclude` flags (like `code2prompt`, `llm_ctx` uses a simpler approach:
+Unlike some tools with explicit `--include` and `--exclude` flags (like `code2prompt`), `llm_ctx` uses a simpler approach:
 
 *   **Inclusion:** Determined *only* by the file paths and glob patterns provided via the `-f` flag, or the content piped via stdin.
 *   **Exclusion:** Determined *only* by `.gitignore` rules (unless disabled by `--no-gitignore`).
