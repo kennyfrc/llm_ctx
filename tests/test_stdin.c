@@ -112,8 +112,8 @@ int string_contains(const char *str, const char *substr) {
 
 /* Run a command with stdin coming from a pipe */
 char *run_command_with_stdin(const char *input_cmd, const char *cmd) {
-    /* Increased buffer size to handle potentially large output (e.g., from large stdin test) */
-    static char buffer[2 * 1024 * 1024]; /* 2MB */
+    /* Increased buffer size significantly to handle large output from llm_ctx (up to ~8MB + overhead) */
+    static char buffer[10 * 1024 * 1024]; /* 10MB */
     buffer[0] = '\0';
     size_t buffer_capacity = sizeof(buffer);
     size_t buffer_len = 0;
