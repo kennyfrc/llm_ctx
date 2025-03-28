@@ -106,11 +106,50 @@ void setup_test_env(void) {
     if (f) { fwrite(win1252_content, 1, strlen(win1252_content), f); fclose(f); } // Use strlen, not hardcoded 14
 
     /* UTF-16 LE file */
-    f = fopen(TEST_DIR "/__utf16le.txt", "wb"); // Use wb for precise byte writing
+    const char* utf16le_text = "UTF16LE";
+    f = fopen(TEST_DIR "/__utf16le.txt", "wb");
     if (f) {
-        // Represents "UTF16" in UTF-16LE (including null bytes)
-        unsigned char utf16_content[] = { 0x55, 0x00, 0x54, 0x00, 0x46, 0x00, 0x31, 0x00, 0x36, 0x00 };
-        fwrite(utf16_content, 1, sizeof(utf16_content), f);
+        // Represents "UTF16LE" in UTF-16LE (including null bytes)
+        unsigned char utf16le_content[] = { 0x55, 0x00, 0x54, 0x00, 0x46, 0x00, 0x31, 0x00, 0x36, 0x00, 0x4C, 0x00, 0x45, 0x00 };
+        fwrite(utf16le_content, 1, sizeof(utf16le_content), f);
+        fclose(f);
+    }
+
+    /* UTF-16 BE file */
+    const char* utf16be_text = "UTF16BE";
+    f = fopen(TEST_DIR "/__utf16be.txt", "wb");
+    if (f) {
+        // Represents "UTF16BE" in UTF-16BE (including null bytes)
+        unsigned char utf16be_content[] = { 0x00, 0x55, 0x00, 0x54, 0x00, 0x46, 0x00, 0x31, 0x00, 0x36, 0x00, 0x42, 0x00, 0x45 };
+        fwrite(utf16be_content, 1, sizeof(utf16be_content), f);
+        fclose(f);
+    }
+
+    /* UTF-32 LE file */
+    const char* utf32le_text = "UTF32LE";
+    f = fopen(TEST_DIR "/__utf32le.txt", "wb");
+    if (f) {
+        // Represents "UTF32LE" in UTF-32LE (including null bytes)
+        unsigned char utf32le_content[] = {
+            0x55, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x00, 0x46, 0x00, 0x00, 0x00,
+            0x33, 0x00, 0x00, 0x00, 0x32, 0x00, 0x00, 0x00, 0x4C, 0x00, 0x00, 0x00,
+            0x45, 0x00, 0x00, 0x00
+        };
+        fwrite(utf32le_content, 1, sizeof(utf32le_content), f);
+        fclose(f);
+    }
+
+    /* UTF-32 BE file */
+    const char* utf32be_text = "UTF32BE";
+    f = fopen(TEST_DIR "/__utf32be.txt", "wb");
+    if (f) {
+        // Represents "UTF32BE" in UTF-32BE (including null bytes)
+        unsigned char utf32be_content[] = {
+            0x00, 0x00, 0x00, 0x55, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x00, 0x46,
+            0x00, 0x00, 0x00, 0x33, 0x00, 0x00, 0x00, 0x32, 0x00, 0x00, 0x00, 0x42,
+            0x00, 0x00, 0x00, 0x45
+        };
+        fwrite(utf32be_content, 1, sizeof(utf32be_content), f);
         fclose(f);
     }
 
@@ -719,12 +758,51 @@ TEST(test_cli_utf16le_file) {
     snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __utf16le.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
-    ASSERT("Output contains UTF-16 file header", string_contains(output, "File: __utf16le.txt"));
-    // Expectation: Treated as binary due to null bytes.
-    ASSERT("Output contains binary skipped placeholder for UTF-16", string_contains(output, "[Binary file content skipped]"));
-    ASSERT("Output does NOT contain code fences for UTF-16", !string_contains(output, "```"));
-    // Check it doesn't contain the raw bytes interpreted likely as garbage
-    ASSERT("Output does NOT contain raw UTF-16 content", !string_contains(output, "U T F 1 6"));
+    ASSERT("Output contains UTF-16LE file header", string_contains(output, "File: __utf16le.txt"));
+    /* EXPECTED FAILURE: Current heuristic incorrectly identifies UTF-16LE as binary due to null bytes. */
+    /* This test asserts the *desired* behavior (treat as text), thus it should fail. */
+    ASSERT("Output contains UTF-16LE content (EXPECTED FAILURE)", string_contains(output, "UTF16LE"));
+    ASSERT("Output contains code fences for UTF-16LE (EXPECTED FAILURE)", string_contains(output, "```\nUTF16LE"));
+    ASSERT("Output does NOT contain binary skipped placeholder for UTF-16LE (EXPECTED FAILURE)", !string_contains(output, "[Binary file content skipped]"));
+}
+
+/* Test handling of a UTF-16 BE file (Expected Failure) */
+TEST(test_cli_utf16be_file) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __utf16be.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains UTF-16BE file header", string_contains(output, "File: __utf16be.txt"));
+    /* EXPECTED FAILURE: Current heuristic incorrectly identifies UTF-16BE as binary due to null bytes. */
+    ASSERT("Output contains UTF-16BE content (EXPECTED FAILURE)", string_contains(output, "UTF16BE"));
+    ASSERT("Output contains code fences for UTF-16BE (EXPECTED FAILURE)", string_contains(output, "```\nUTF16BE"));
+    ASSERT("Output does NOT contain binary skipped placeholder for UTF-16BE (EXPECTED FAILURE)", !string_contains(output, "[Binary file content skipped]"));
+}
+
+/* Test handling of a UTF-32 LE file (Expected Failure) */
+TEST(test_cli_utf32le_file) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __utf32le.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains UTF-32LE file header", string_contains(output, "File: __utf32le.txt"));
+    /* EXPECTED FAILURE: Current heuristic incorrectly identifies UTF-32LE as binary due to null bytes. */
+    ASSERT("Output contains UTF-32LE content (EXPECTED FAILURE)", string_contains(output, "UTF32LE"));
+    ASSERT("Output contains code fences for UTF-32LE (EXPECTED FAILURE)", string_contains(output, "```\nUTF32LE"));
+    ASSERT("Output does NOT contain binary skipped placeholder for UTF-32LE (EXPECTED FAILURE)", !string_contains(output, "[Binary file content skipped]"));
+}
+
+/* Test handling of a UTF-32 BE file (Expected Failure) */
+TEST(test_cli_utf32be_file) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __utf32be.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains UTF-32BE file header", string_contains(output, "File: __utf32be.txt"));
+    /* EXPECTED FAILURE: Current heuristic incorrectly identifies UTF-32BE as binary due to null bytes. */
+    ASSERT("Output contains UTF-32BE content (EXPECTED FAILURE)", string_contains(output, "UTF32BE"));
+    ASSERT("Output contains code fences for UTF-32BE (EXPECTED FAILURE)", string_contains(output, "```\nUTF32BE"));
+    ASSERT("Output does NOT contain binary skipped placeholder for UTF-32BE (EXPECTED FAILURE)", !string_contains(output, "[Binary file content skipped]"));
 }
 
 
@@ -768,7 +846,10 @@ int main(void) {
     RUN_TEST(test_cli_assembly_file);
     RUN_TEST(test_cli_latin1_file);
     RUN_TEST(test_cli_windows1252_file);
-    RUN_TEST(test_cli_utf16le_file);
+    RUN_TEST(test_cli_utf16le_file); // Expected to fail
+    RUN_TEST(test_cli_utf16be_file); // Expected to fail
+    RUN_TEST(test_cli_utf32le_file); // Expected to fail
+    RUN_TEST(test_cli_utf32be_file); // Expected to fail
 
     /* Clean up */
     teardown_test_env();
