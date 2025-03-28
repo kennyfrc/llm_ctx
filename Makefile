@@ -1,5 +1,9 @@
 CC = gcc
-CFLAGS = -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes
+# CFLAGS for development/debug builds (stricter checks)
+CFLAGS = -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -g # Added -g for debug symbols
+# RELEASE_CFLAGS for optimized release builds
+RELEASE_CFLAGS = -std=c99 -Wall -Wextra -O2 -DNDEBUG # -O2 optimization, NDEBUG disables asserts
+
 TARGET = llm_ctx
 SRC = main.c gitignore.c
 TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c
@@ -14,6 +18,14 @@ all: $(TARGET)
 
 $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) -o $@ $^
+
+# New target for release build
+release: $(SRC)
+	@echo "Building release version ($(TARGET))..."
+	$(CC) $(RELEASE_CFLAGS) -o $(TARGET) $^
+	@echo "Stripping debug symbols from $(TARGET)..."
+	strip $(TARGET)
+	@echo "Release build complete: $(TARGET)"
 
 tests/test_gitignore: tests/test_gitignore.c gitignore.c
 	$(CC) $(CFLAGS) -o $@ $^
