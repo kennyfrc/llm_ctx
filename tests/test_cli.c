@@ -91,6 +91,27 @@ void setup_test_env(void) {
     f = fopen(TEST_DIR "/__utf8.txt", "w"); // UTF-8 content
     if (f) { fprintf(f, "Hello 你好 World"); fclose(f); }
 
+    /* Assembly file */
+    f = fopen(TEST_DIR "/__test.asm", "w");
+    if (f) { fprintf(f, "; Simple ASM example\nsection .text\nglobal _start\n_start:\n mov eax, 1\n mov ebx, 0\n int 0x80\n"); fclose(f); }
+
+    /* Latin-1 (ISO-8859-1) file */
+    f = fopen(TEST_DIR "/__latin1.txt", "wb"); // Use wb for precise byte writing
+    if (f) { fwrite("Accénts: é à ç ©", 1, 17, f); fclose(f); } // Example bytes: 0xE9, 0xE0, 0xE7, 0xA9
+
+    /* Windows-1252 file */
+    f = fopen(TEST_DIR "/__windows1252.txt", "wb"); // Use wb for precise byte writing
+    if (f) { fwrite("Symbols: € ™ …", 1, 14, f); fclose(f); } // Example bytes: 0x80, 0x99, 0x85
+
+    /* UTF-16 LE file */
+    f = fopen(TEST_DIR "/__utf16le.txt", "wb"); // Use wb for precise byte writing
+    if (f) {
+        // Represents "UTF16" in UTF-16LE (including null bytes)
+        unsigned char utf16_content[] = { 0x55, 0x00, 0x54, 0x00, 0x46, 0x00, 0x31, 0x00, 0x36, 0x00 };
+        fwrite(utf16_content, 1, sizeof(utf16_content), f);
+        fclose(f);
+    }
+
 
     /* Create nested directories for recursive glob testing (prefixed) */
     mkdir(TEST_DIR "/__src", 0755);
@@ -688,6 +709,10 @@ int main(void) {
     RUN_TEST(test_cli_binary_image_magic);
     RUN_TEST(test_cli_empty_file);
     RUN_TEST(test_cli_utf8_file);
+    RUN_TEST(test_cli_assembly_file);
+    RUN_TEST(test_cli_latin1_file);
+    RUN_TEST(test_cli_windows1252_file);
+    RUN_TEST(test_cli_utf16le_file);
 
     /* Clean up */
     teardown_test_env();
