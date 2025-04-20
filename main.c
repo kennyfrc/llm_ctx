@@ -139,7 +139,17 @@ char tree_file_path[MAX_PATH]; /* Path to the tree file */
 SpecialFile special_files[10]; /* Support up to 10 special files */
 int num_special_files = 0;
 char *user_instructions = NULL;   /* malloc'd / strdup'd – free in cleanup() */
+static const char *DEFAULT_SYSTEM_MSG = "You are a senior programmer.";
+static char *system_instructions = NULL;   /* malloc'd or points to DEFAULT_SYSTEM_MSG */
 static bool want_editor_comments = false;   /* -e flag */
+
+/**
+ * Add system instructions to the output if provided
+ */
+static void add_system_instructions(const char *msg) {
+    if (!msg || !*msg) return;
+    fprintf(temp_file, "<system_instructions>\n%s\n</system_instructions>\n\n", msg);
+}
 
 /**
  * Add the response guide block to the output
@@ -601,6 +611,9 @@ void show_help(void) {
     printf("  -c @FILE       Read instruction text from FILE (any bytes)\n");
     printf("  -c @-          Read instruction text from standard input until EOF\n");
     printf("  -c=\"TEXT\"     Equals form also accepted\n");
+    printf("  -s             Use default system prompt (\"%s\")\n", DEFAULT_SYSTEM_MSG);
+    printf("  -s @FILE       Read system prompt from FILE\n");
+    printf("  -s @-          Read system prompt from standard input\n");
     printf("  -e             Instruct the LLM to append PR-style review comments\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
     printf("  -h             Show this help message\n");
@@ -1124,6 +1137,10 @@ bool process_pattern(const char *pattern) {
  * Cleanup function to free memory before exit
  */
 void cleanup(void) {
+    /* Free dynamically allocated system instructions (if not the default literal) */
+    if (system_instructions && system_instructions != DEFAULT_SYSTEM_MSG) {
+        free(system_instructions);
+    }
     /* Free dynamically allocated user instructions */
     if (user_instructions) free(user_instructions);
 
@@ -1180,6 +1197,39 @@ int main(int argc, char *argv[]) {
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             show_help(); /* Exits */
+        } else if (strcmp(argv[i], "-s") == 0) {
+            // Check the *next* argument for @FILE or @-
+            if (i + 1 < argc && argv[i+1][0] == '@') {
+                /* Form 2: -s @file / -s @- */
+                const char *arg = argv[++i]; // Consume next token
+                if (strcmp(arg, "@-") == 0) {
+                    /* Read system instructions from stdin */
+                    if (isatty(STDIN_FILENO)) {
+                        fprintf(stderr, "Reading system instructions from terminal. Enter text and press Ctrl+D when done.\n");
+                    }
+                    system_instructions = slurp_stream(stdin);
+                    if (!system_instructions) die("Error reading system instructions from stdin: %s", ferror(stdin) ? strerror(errno) : "Out of memory");
+                    /* Using -s @- implies file mode */
+                    if (!file_mode) {
+                         fprintf(stderr, "Warning: Using -s @- implies file mode (-f). Subsequent arguments will be treated as files.\n");
+                         file_mode = 1;
+                         if (file_args_start == 0) file_args_start = i + 1;
+                    }
+                } else {
+                    /* Read system instructions from file */
+                    system_instructions = slurp_file(arg + 1); // skip '@'
+                    if (!system_instructions)
+                        die("Cannot open or read system prompt file '%s': %s", arg + 1, strerror(errno));
+                }
+            } else {
+                /* Form 1: bare -s -> use default */
+                system_instructions = (char *)DEFAULT_SYSTEM_MSG; // Use literal directly
+                /* Ensure allocation succeeded (not strictly needed for literal, but good practice) */
+                assert(system_instructions != NULL);
+            }
+        } else if (strncmp(argv[i], "-s", 2) == 0 && argv[i][2] != '\0') {
+             /* Catch invalid forms like -sfoo, -s=foo */
+             die("Error: -s accepts only no argument or '@file/@-' form");
         } else if (strncmp(argv[i], "-c", 2) == 0 || strncmp(argv[i], "--command=", 10) == 0) {
             const char *arg = NULL;
             bool is_long_opt = (strncmp(argv[i], "--command=", 10) == 0);
@@ -1256,9 +1306,12 @@ int main(int argc, char *argv[]) {
         /* If it's a file argument in file_mode, the loop continues */
     }
 
-    /* Add user instructions if provided (now happens *after* parsing all args) */
+    /* Add system instructions first, if provided */
+    add_system_instructions(system_instructions);
+    /* Add user instructions if provided */
     add_user_instructions(user_instructions);
-    add_response_guide(user_instructions); /* Add response guide based on instructions */
+    /* Add response guide (depends on user instructions and -e flag) */
+    add_response_guide(user_instructions);
     
     /* Load gitignore files if enabled */
     if (respect_gitignore) {

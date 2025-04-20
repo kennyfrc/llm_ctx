@@ -1025,6 +1025,87 @@ TEST(test_cli_e_flag_response_guide) {
     ASSERT("Output (no -c) does NOT contain Response header", !string_contains(output_no_c, expected_response_header));
 }
 
+// ============================================================================
+// Tests for -s (system instructions)
+// ============================================================================
+
+/* Test bare -s flag (default system prompt) */
+TEST(test_cli_s_default) {
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -s -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    char *output = run_command(cmd);
+
+    const char *default_prompt = "You are a senior programmer.";
+    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains default system prompt", string_contains(output, default_prompt));
+    ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
+    // Ensure user instructions are not present unless -c is also used
+    ASSERT("Output does NOT contain <user_instructions>", !string_contains(output, "<user_instructions>"));
+    // Ensure file content is still present
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+}
+
+/* Test -s @file: Read system instructions from a file */
+TEST(test_cli_s_at_file) {
+    char cmd[2048];
+    char sys_msg_file_path[1024];
+    snprintf(sys_msg_file_path, sizeof(sys_msg_file_path), "%s/__sys_msg.txt", TEST_DIR);
+    const char *custom_sys_prompt = "System prompt from file.\nLine two.";
+
+    // Create the system message file
+    FILE *sys_msg_file = fopen(sys_msg_file_path, "w");
+    ASSERT("System message file created", sys_msg_file != NULL);
+    if (!sys_msg_file) return;
+    fprintf(sys_msg_file, "%s", custom_sys_prompt);
+    fclose(sys_msg_file);
+
+    // Run llm_ctx with -s @file
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -s @__sys_msg.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt from file", string_contains(output, custom_sys_prompt));
+    ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+
+    // Clean up
+    unlink(sys_msg_file_path);
+}
+
+/* Test -s @-: Read system instructions from stdin */
+TEST(test_cli_s_at_stdin) {
+    char cmd[2048];
+    const char *stdin_sys_prompt = "System prompt from stdin.\nSecond line.";
+    // Pipe instructions via echo to llm_ctx running with -s @-
+    snprintf(cmd, sizeof(cmd), "echo '%s' | %s/llm_ctx -s @- -f %s/__regular.txt", stdin_sys_prompt, getenv("PWD"), TEST_DIR);
+    char *output = run_command(cmd);
+
+    // Check for system instructions block (Note: echo adds a trailing newline)
+    char expected_output[1024];
+    snprintf(expected_output, sizeof(expected_output), "%s\n", stdin_sys_prompt); // Add newline echo adds
+
+    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt from stdin", string_contains(output, expected_output));
+    ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+    // Check for the warning message
+    ASSERT("Output contains '@- implies file mode' warning for -s", string_contains(output, "Warning: Using -s @- implies file mode"));
+}
+
+/* Test error: Invalid -s usage (e.g., -sfoo, -s=bar) */
+TEST(test_cli_s_error_bad_usage) {
+    char cmd1[2048], cmd2[2048];
+    snprintf(cmd1, sizeof(cmd1), "%s/llm_ctx -sfoo -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    snprintf(cmd2, sizeof(cmd2), "%s/llm_ctx -s=bar -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+
+    char *output1 = run_command(cmd1);
+    char *output2 = run_command(cmd2);
+    const char *expected_error = "Error: -s accepts only no argument or '@file/@-' form";
+
+    ASSERT("Output for -sfoo contains correct error", string_contains(output1, expected_error));
+    ASSERT("Output for -s=bar contains correct error", string_contains(output2, expected_error));
+}
+
 
 // ============================================================================
 // Main Test Runner
@@ -1082,7 +1163,13 @@ int main(void) {
     RUN_TEST(test_cli_error_c_no_arg);
     RUN_TEST(test_cli_error_c_equals_empty);
     RUN_TEST(test_cli_error_command_equals_empty);
-    RUN_TEST(test_cli_e_flag_response_guide); /* New test */
+    RUN_TEST(test_cli_e_flag_response_guide);
+
+    /* Tests for -s */
+    RUN_TEST(test_cli_s_default);
+    RUN_TEST(test_cli_s_at_file);
+    RUN_TEST(test_cli_s_at_stdin);
+    RUN_TEST(test_cli_s_error_bad_usage);
 
     /* Temporarily skipped tests for UTF-16/32 handling, as the current heuristic */
     /* correctly identifies them as binary (due to null bytes), but the ideal */

@@ -358,6 +358,15 @@ Options:
                  Useful for multi-line instructions or heredocs.
                  Example: echo "Instructions" | llm_ctx -c @- -f file.c
 
+  -s             Use the default system prompt: "You are a senior programmer."
+                 Adds a <system_instructions> block before user instructions.
+
+  -s @FILE       Read system prompt text from FILE. Overrides the default.
+                 Example: -s @/path/to/system_prompt.txt
+
+  -s @-          Read system prompt text from standard input until EOF (Ctrl+D).
+                 Example: echo "Be concise" | llm_ctx -s @- -f file.c
+
   -e, --editor-comments
                  Instruct the LLM to append PR-style review comments to its
                  response. Adds specific instructions to the <response_guide>.
@@ -384,7 +393,8 @@ Options:
 
 The output is structured using simple XML-like tags for clarity:
 
-*   **`<user_instructions>` (Optional):** Contains the text provided via the `-c` flag. Appears first if present.
+*   **`<system_instructions>` (Optional):** Contains the text provided via the `-s` flag (either the default or custom from `@FILE`/`@-`). Appears first if present.
+*   **`<user_instructions>` (Optional):** Contains the text provided via the `-c` flag. Appears after system instructions if both are present.
 *   **`<response_guide>` (Optional):** Appears if `-c` was used. Contains guidance for the LLM on how to structure its response. Includes an initial comment instructing the LLM to follow the guide.
     *   **`<problem_statement>`:** Contains a fixed instruction for the LLM to summarize the user's request based on the overall context provided (including `<user_instructions>` and file content). This ensures the LLM actively processes the request context.
     *   **`<reply_format>`:** Instructions for the LLM's reply structure. If the `-e` or `--editor-comments` flag was used, this section explicitly asks for PR-style code review comments (e.g., using GitHub inline diff syntax) in addition to the main solution/explanation. Otherwise, it indicates that no code review block is needed.
@@ -394,9 +404,13 @@ The output is structured using simple XML-like tags for clarity:
     *   **```` ```[type] ````:** Standard Markdown fenced code blocks containing the file content. `[type]` is automatically detected for stdin content (e.g., `diff`, `json`) if possible, otherwise it's empty.
     *   **`----------------------------------------`:** A separator line between files within the `<file_context>`.
 
-**Example Structure (with `-c` and `-e`):**
+**Example Structure (with `-s`, `-c` and `-e`):**
 
 ```
+<system_instructions>
+You are a senior programmer.
+</system_instructions>
+
 <user_instructions>
 Review this C code for potential memory leaks and suggest improvements.
 </user_instructions>
