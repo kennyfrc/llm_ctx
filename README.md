@@ -9,13 +9,21 @@
     git diff HEAD~1 | llm_ctx -c "Review the changes in this commit" | pbcopy
     ```
 
-2.  **Analyze specific React component files** in the `src` directory and copy (macOS):
+2.  **Paste text directly** for analysis and copy (macOS):
+    ```bash
+    llm_ctx -c @- | pbcopy
+    # --> Paste your text here...
+    # --> Press Ctrl+D when finished
+    ```
+    *(This reads instructions directly from your terminal input until EOF)*
+
+3.  **Analyze specific React component files** in the `src` directory and copy (macOS):
     ```bash
     llm_ctx -f 'src/components/Button.{js,jsx,css}' -c "Analyze this React Button component and its styles." | pbcopy
     ```
     *(Note: `{}` expansion might depend on your shell)*
 
-3.  **Provide context for the entire project** (respecting `.gitignore`) and copy (macOS):
+4.  **Provide context for the entire project** (respecting `.gitignore`) and copy (macOS):
     ```bash
     # Use a recursive glob. Assuming that .gitignore has node_modules/, build/, *.log etc., these will be skipped.
     llm_ctx -f '**/*' -c "Please conduct a code review of this project, and find any potential bugs." | pbcopy
