@@ -214,13 +214,20 @@ int string_contains(const char *str, const char *substr) {
     return strstr(str, substr) != NULL;
 }
 
-/* Run a command and capture its output */
+/* Run a command, capturing stdout and stderr, and return output */
 char *run_command(const char *cmd) {
-    static char buffer[16384];
+    // Increased buffer size to handle potentially large outputs + stderr
+    static char buffer[32768]; 
     buffer[0] = '\0';
-    
-    FILE *pipe = popen(cmd, "r");
+    char cmd_redir[2048]; // Buffer for command + redirection
+
+    // Redirect stderr to stdout
+    snprintf(cmd_redir, sizeof(cmd_redir), "%s 2>&1", cmd);
+
+    FILE *pipe = popen(cmd_redir, "r");
     if (!pipe) {
+        perror("popen failed");
+        snprintf(buffer, sizeof(buffer), "Error: popen failed for command: %s", cmd);
         return buffer;
     }
     
@@ -229,7 +236,15 @@ char *run_command(const char *cmd) {
         strcat(buffer, tmp);
     }
     
-    pclose(pipe);
+    int status = pclose(pipe);
+    if (status == -1) {
+        perror("pclose failed");
+        // Append pclose error message? Might be too noisy.
+    } else {
+        // Optional: Check WIFEXITED(status) and WEXITSTATUS(status) for command exit code
+        // Could be useful for asserting successful vs. failed command execution
+    }
+
     return buffer;
 }
 
@@ -805,6 +820,157 @@ TEST(test_cli_utf32be_file) {
     ASSERT("Output does NOT contain binary skipped placeholder for UTF-32BE (EXPECTED FAILURE)", !string_contains(output, "[Binary file content skipped]"));
 }
 
+// ============================================================================
+// Tests for -c @file / @- / = variants
+// ============================================================================
+
+/* Test -c @file: Read instructions from a file */
+TEST(test_cli_c_at_file) {
+    char cmd[2048];
+    char msg_file_path[1024];
+    snprintf(msg_file_path, sizeof(msg_file_path), "%s/__msg.txt", TEST_DIR);
+
+    // Create the message file
+    FILE *msg_file = fopen(msg_file_path, "w");
+    ASSERT("Message file created", msg_file != NULL);
+    if (!msg_file) return;
+    fprintf(msg_file, "Instructions from file.\nWith multiple lines.");
+    fclose(msg_file);
+
+    // Run llm_ctx with -c @file
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -c @__msg.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    // Check for user instructions block
+    ASSERT("Output contains user_instructions tag", string_contains(output, "<user_instructions>"));
+    ASSERT("Output contains instructions from file", string_contains(output, "Instructions from file.\nWith multiple lines."));
+    ASSERT("Output contains closing user_instructions tag", string_contains(output, "</user_instructions>"));
+    // Check that file content is also present
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+
+    // Clean up
+    unlink(msg_file_path);
+}
+
+/* Test -c @-: Read instructions from stdin */
+TEST(test_cli_c_at_stdin) {
+    char cmd[2048];
+    // Pipe instructions via echo to llm_ctx running with -c @-
+    // Use single quotes around the echo string to handle newlines and special chars
+    snprintf(cmd, sizeof(cmd), "echo 'Instructions from stdin.\nLine 2.' | %s/llm_ctx -c @- -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    char *output = run_command(cmd);
+
+    // Check for user instructions block (Note: echo adds a trailing newline)
+    ASSERT("Output contains user_instructions tag", string_contains(output, "<user_instructions>"));
+    ASSERT("Output contains instructions from stdin", string_contains(output, "Instructions from stdin.\nLine 2.\n"));
+    ASSERT("Output contains closing user_instructions tag", string_contains(output, "</user_instructions>"));
+    // Check that file content is also present
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+    // Check for the warning message (since stdin is used for instructions)
+    ASSERT("Output contains '@- implies file mode' warning", string_contains(output, "Warning: Using -c @- implies file mode"));
+}
+
+/* Test -c=inline: Use inline instructions with equals sign */
+TEST(test_cli_c_equals_inline) {
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c=\"Inline instructions with equals\" -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains user_instructions tag", string_contains(output, "<user_instructions>"));
+    ASSERT("Output contains inline instructions", string_contains(output, "Inline instructions with equals"));
+    ASSERT("Output contains closing user_instructions tag", string_contains(output, "</user_instructions>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+}
+
+/* Test --command=@file: Long option for reading from file */
+TEST(test_cli_command_at_file) {
+    char cmd[2048];
+    char msg_file_path[1024];
+    snprintf(msg_file_path, sizeof(msg_file_path), "%s/__msg_long.txt", TEST_DIR);
+
+    FILE *msg_file = fopen(msg_file_path, "w");
+    ASSERT("Long message file created", msg_file != NULL);
+    if (!msg_file) return;
+    fprintf(msg_file, "Long option file instructions.");
+    fclose(msg_file);
+
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --command=@__msg_long.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains user_instructions tag", string_contains(output, "<user_instructions>"));
+    ASSERT("Output contains long option file instructions", string_contains(output, "Long option file instructions."));
+    ASSERT("Output contains closing user_instructions tag", string_contains(output, "</user_instructions>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+
+    unlink(msg_file_path);
+}
+
+/* Test --command=@-: Long option for reading from stdin */
+TEST(test_cli_command_at_stdin) {
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "echo 'Long option stdin.' | %s/llm_ctx --command=@- -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    char *output = run_command(cmd);
+
+    // Check for user instructions block (echo adds trailing newline)
+    ASSERT("Output contains user_instructions tag", string_contains(output, "<user_instructions>"));
+    ASSERT("Output contains long option stdin instructions", string_contains(output, "Long option stdin.\n"));
+    ASSERT("Output contains closing user_instructions tag", string_contains(output, "</user_instructions>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+    ASSERT("Output contains '@- implies file mode' warning", string_contains(output, "Warning: Using -c @- implies file mode"));
+}
+
+/* Test --command=inline: Long option for inline instructions */
+TEST(test_cli_command_equals_inline) {
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx --command=\"Long option inline instructions\" -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains user_instructions tag", string_contains(output, "<user_instructions>"));
+    ASSERT("Output contains long option inline instructions", string_contains(output, "Long option inline instructions"));
+    ASSERT("Output contains closing user_instructions tag", string_contains(output, "</user_instructions>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+}
+
+
+/* Test error: -c @nonexistent_file */
+TEST(test_cli_error_c_at_nonexistent) {
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c @/tmp/this_file_should_not_exist_ever -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    char *output = run_command(cmd);
+
+    // Check for the die() error message (captured via stderr redirection)
+    ASSERT("Output contains 'Cannot open or read' error", string_contains(output, "Cannot open or read instruction file"));
+    ASSERT("Output contains 'No such file or directory'", string_contains(output, "No such file or directory"));
+}
+
+/* Test error: -c with no argument */
+TEST(test_cli_error_c_no_arg) {
+    char cmd[2048];
+    // Need to run within the test dir context if files are expected, but here we expect error before file processing.
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c", getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains 'requires an argument' error", string_contains(output, "Error: -c requires an argument"));
+}
+
+/* Test error: -c= with empty argument */
+TEST(test_cli_error_c_equals_empty) {
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c=", getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains 'non-empty argument' error", string_contains(output, "Error: -c requires a non-empty argument"));
+}
+
+/* Test error: --command= with empty argument */
+TEST(test_cli_error_command_equals_empty) {
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx --command=", getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains 'non-empty argument' error", string_contains(output, "Error: -c requires a non-empty argument"));
+}
+
 
 // ============================================================================
 // Main Test Runner
@@ -846,6 +1012,23 @@ int main(void) {
     RUN_TEST(test_cli_assembly_file);
     RUN_TEST(test_cli_latin1_file);
     RUN_TEST(test_cli_windows1252_file);
+    // RUN_TEST(test_cli_utf16le_file); // Expected to fail - Current heuristic detects as binary
+    // RUN_TEST(test_cli_utf16be_file); // Expected to fail - Current heuristic detects as binary
+    // RUN_TEST(test_cli_utf32le_file); // Expected to fail - Current heuristic detects as binary
+    // RUN_TEST(test_cli_utf32be_file); // Expected to fail - Current heuristic detects as binary
+
+    /* New tests for -c variants */
+    RUN_TEST(test_cli_c_at_file);
+    RUN_TEST(test_cli_c_at_stdin);
+    RUN_TEST(test_cli_c_equals_inline);
+    RUN_TEST(test_cli_command_at_file);
+    RUN_TEST(test_cli_command_at_stdin);
+    RUN_TEST(test_cli_command_equals_inline);
+    RUN_TEST(test_cli_error_c_at_nonexistent);
+    RUN_TEST(test_cli_error_c_no_arg);
+    RUN_TEST(test_cli_error_c_equals_empty);
+    RUN_TEST(test_cli_error_command_equals_empty);
+
     /* Temporarily skipped tests for UTF-16/32 handling, as the current heuristic */
     /* correctly identifies them as binary (due to null bytes), but the ideal */
     /* behavior would be to treat them as text. These tests assert the ideal */
