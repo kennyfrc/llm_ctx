@@ -23,7 +23,69 @@
 #include <stdbool.h>  /* For bool type */
 #include <stdint.h>   /* For fixed-width integer types */
 #include <ctype.h>    /* For isprint */
+#include <errno.h>    /* For strerror */
+#include <stdarg.h>   /* For va_list, va_start, va_end */
 #include "gitignore.h"
+
+/* ========================= NEW HELPERS ========================= */
+
+/* Simple fatal-error helper */
+static void die(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    fputc('\n', stderr);
+    va_end(ap);
+    exit(EXIT_FAILURE);
+}
+
+/* Read entire FILE* into a NUL-terminated buffer.
+ * Caller must free().  Returns NULL on OOM or read error. */
+static char *slurp_stream(FILE *fp) {
+    size_t cap = 4096, len = 0;
+    char *buf = malloc(cap);
+    if (!buf) return NULL;
+
+    int c;
+    while ((c = fgetc(fp)) != EOF) {
+        if (len + 1 >= cap) {
+            /* Double buffer size, check for overflow */
+            size_t new_cap = cap * 2;
+            if (new_cap <= cap) { /* Overflow check */
+                free(buf);
+                return NULL;
+            }
+            cap = new_cap;
+            char *tmp = realloc(buf, cap);
+            if (!tmp) { free(buf); return NULL; }
+            buf = tmp;
+        }
+        buf[len++] = (char)c;
+    }
+    buf[len] = '\0';
+
+    /* Check for read errors */
+    if (ferror(fp)) {
+        free(buf);
+        return NULL;
+    }
+    return buf;
+}
+
+
+/* Convenience: slurp a *file*.  Returns NULL (and sets errno) on error. */
+static char *slurp_file(const char *path) {
+    FILE *fp = fopen(path, "r");
+    if (!fp) return NULL;
+    char *txt = slurp_stream(fp);
+    /* fclose preserves errno if slurp_stream failed */
+    int saved_errno = errno;
+    fclose(fp);
+    errno = saved_errno; /* Restore errno from fopen or slurp_stream */
+    return txt;
+}
+
+/* ========================= EXISTING CODE ======================= */
 
 #define MAX_PATH 4096
 #define BINARY_CHECK_SIZE 1024 /* Bytes to check for binary detection */
@@ -76,6 +138,7 @@ FILE *tree_file = NULL;        /* For the file tree output */
 char tree_file_path[MAX_PATH]; /* Path to the tree file */
 SpecialFile special_files[10]; /* Support up to 10 special files */
 int num_special_files = 0;
+char *user_instructions = NULL;   /* malloc'd / strdup'd – free in cleanup() */
 
 /**
  * Check if a file has already been processed to avoid duplicates
@@ -512,7 +575,10 @@ void show_help(void) {
     printf("Usage: llm_ctx [OPTIONS] [FILE...]\n");
     printf("Format files for LLM code analysis with appropriate tags.\n\n");
     printf("Options:\n");
-    printf("  -c TEXT        Add user instructions wrapped in <user_instructions> tags\n");
+    printf("  -c TEXT        Add instruction text wrapped in <user_instructions> tags\n");
+    printf("  -c @FILE       Read instruction text from FILE (any bytes)\n");
+    printf("  -c @-          Read instruction text from standard input until EOF\n");
+    printf("  -c=\"TEXT\"     Equals form also accepted\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
     printf("  -h             Show this help message\n");
     printf("  --no-gitignore Ignore .gitignore files when collecting files\n\n");
@@ -1035,6 +1101,9 @@ bool process_pattern(const char *pattern) {
  * Cleanup function to free memory before exit
  */
 void cleanup(void) {
+    /* Free dynamically allocated user instructions */
+    if (user_instructions) free(user_instructions);
+
     /* Free the processed files list */
     for (int i = 0; i < num_processed_files; i++) {
         free(processed_files[i]);
@@ -1061,7 +1130,7 @@ void cleanup(void) {
  */
 int main(int argc, char *argv[]) {
     /* Parse command line arguments */
-    char *user_instructions = NULL;
+    /* user_instructions is now a global variable */
     int i;
     int file_mode = 0;  /* Default to stdin mode */
     int file_args_start = 0;  /* Where file arguments start */
@@ -1083,46 +1152,86 @@ int main(int argc, char *argv[]) {
         close(fd);
         return 1;
     }
-    
+
     /* Process command line options */
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            show_help();
-        } else if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--command") == 0) {
-            if (i + 1 < argc) {
-                user_instructions = argv[i + 1];
-                i++;  /* Skip the next argument */
+            show_help(); /* Exits */
+        } else if (strncmp(argv[i], "-c", 2) == 0 || strncmp(argv[i], "--command=", 10) == 0) {
+            const char *arg = NULL;
+            bool is_long_opt = (strncmp(argv[i], "--command=", 10) == 0);
+
+            /* Support -cFOO | -c FOO | -c=FOO | --command=FOO */
+            if (!is_long_opt && argv[i][2] == '\0') { /* "-c" form */
+                if (i + 1 >= argc) die("Error: -c requires an argument");
+                arg = argv[++i];
+            } else if (!is_long_opt && argv[i][2] == '=') { /* "-c=FOO" */
+                arg = argv[i] + 3;
+            } else if (!is_long_opt && argv[i][2] != '\0') { /* "-cFOO" */
+                 /* Note: This form "-cFOO" is less common but supported */
+                arg = argv[i] + 2;
+            } else if (is_long_opt) { /* "--command=FOO" */
+                arg = argv[i] + 10; /* Skip "--command=" */
             } else {
-                fprintf(stderr, "Error: -c requires an argument\n");
-                fclose(temp_file);
-                unlink(temp_file_path);
-                return 1;
+                /* Should not happen based on outer if, but defensive */
+                die("Internal error parsing option: %s", argv[i]);
+            }
+
+
+            if (!arg || *arg == '\0') die("Error: -c requires a non-empty argument");
+
+            /* ----- @file / @- decoding ----- */
+            if (arg[0] == '@') {
+                if (strcmp(arg, "@-") == 0) {               /* read from STDIN */
+                    /* Ensure stdin is not a TTY unless explicitly using @- */
+                    if (isatty(STDIN_FILENO)) {
+                        fprintf(stderr, "Reading instructions from terminal. Enter text and press Ctrl+D when done.\n");
+                    }
+                    user_instructions = slurp_stream(stdin);
+                    if (!user_instructions) die("Error reading instructions from stdin: %s", ferror(stdin) ? strerror(errno) : "Out of memory");
+                    /* After reading from stdin for -c @-, subsequent file processing expects stdin to be closed or irrelevant. */
+                    /* If file_mode is not set, we might have issues if process_stdin_content is called later. */
+                    /* Let's prevent mixing -c @- with implicit stdin reading. */
+                    if (!file_mode) {
+                         fprintf(stderr, "Warning: Using -c @- implies file mode (-f). Subsequent arguments will be treated as files.\n");
+                         file_mode = 1;
+                         /* If file_args_start wasn't set by -f, assume files start after @- */
+                         if (file_args_start == 0) file_args_start = i + 1;
+                    }
+
+                } else {                                    /* read from file */
+                    user_instructions = slurp_file(arg + 1);
+                    if (!user_instructions)
+                        die("Cannot open or read instruction file '%s': %s", arg + 1, strerror(errno));
+                }
+            } else {
+                user_instructions = strdup(arg);            /* old behaviour */
+                if (!user_instructions) die("Out of memory duplicating -c argument");
             }
         } else if (strcmp(argv[i], "-f") == 0) {
             file_mode = 1;  /* Switch to file mode */
-            file_args_start = i + 1;  /* Files start after the -f flag */
+            /* Only set file_args_start if it hasn't been set by -c @- logic */
+            if (file_args_start == 0) {
+                file_args_start = i + 1;  /* Files start after the -f flag */
+            }
         } else if (strcmp(argv[i], "--no-gitignore") == 0) {
-            respect_gitignore = 0;
+            respect_gitignore = false; /* Use bool directly */
         } else if (file_mode && argv[i][0] != '-') {
-            /* If in file mode and not an option, it's a file */
+            /* If in file mode and not an option, it's a file/pattern */
+            /* Argument processing happens later */
             continue;
         } else if (argv[i][0] == '-') {
             /* Unknown option */
-            fprintf(stderr, "Error: Unknown option %s\n", argv[i]);
-            fclose(temp_file);
-            unlink(temp_file_path);
-            return 1;
-        } else {
+             die("Error: Unknown option %s", argv[i]);
+        } else if (!file_mode) {
             /* Not in file mode but saw a non-option - error */
-            fprintf(stderr, "Error: File arguments must be specified with -f flag\n");
-            fprintf(stderr, "Example: llm_ctx -f file1.c file2.c\n");
-            fclose(temp_file);
-            unlink(temp_file_path);
-            return 1;
+            /* This case should only be reachable if no -f and no -c @- was used */
+             die("Error: File arguments must be specified with -f flag or use -c @-");
         }
+        /* If it's a file argument in file_mode, the loop continues */
     }
-    
-    /* Add user instructions if provided */
+
+    /* Add user instructions if provided (now happens *after* parsing all args) */
     add_user_instructions(user_instructions);
     
     /* Load gitignore files if enabled */
