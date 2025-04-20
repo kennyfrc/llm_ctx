@@ -284,18 +284,20 @@ Use the `-c` flag to provide instructions. There are several ways:
 
 3.  **From Standard Input (`-c @-`):** Read instructions from stdin until EOF (Ctrl+D). This is great for multi-line instructions directly in the terminal or via heredocs in scripts.
     ```bash
-    # Type instructions directly (press Ctrl+D when done)
-    llm_ctx -f main.c -c @-
+    # Type instructions directly, then pipe output to clipboard (macOS example)
+    llm_ctx -f main.c -c @- | pbcopy
     # --> Enter instructions here...
-    # --> Press Ctrl+D
+    # --> Press Ctrl+D (output goes to clipboard)
 
-    # Use a heredoc in a script or shell
-    ./llm_ctx -c @- -f src/utils.c <<'EOF'
+    # Use a heredoc in a script or shell and pipe to clipboard
+    ./llm_ctx -c @- -f src/utils.c <<'EOF' | pbcopy
     Please perform the following actions:
     1. Identify potential memory leaks.
     2. Suggest improvements for error handling.
     EOF
+    # (Output goes to clipboard)
     ```
+    *(See [Piping to Clipboard](#piping-to-clipboard) for Linux/Windows commands)*
 
 All these methods add a `<user_instructions>` block to the output.
 
