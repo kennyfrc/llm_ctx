@@ -386,7 +386,7 @@ The output is structured using simple XML-like tags for clarity:
 
 *   **`<user_instructions>` (Optional):** Contains the text provided via the `-c` flag. Appears first if present.
 *   **`<response_guide>` (Optional):** Appears if `-c` was used. Contains guidance for the LLM on how to structure its response.
-    *   **`<problem_statement>`:** A copy of the text provided via `-c`. Ensures the original request context is preserved.
+    *   **`<problem_statement>`:** Contains a fixed instruction for the LLM to summarize the user's request (found in `<user_instructions>`) in its own words. This ensures the LLM actively processes the request context.
     *   **`<reply_format>`:** Instructions for the LLM's reply structure. If the `-e` or `--editor-comments` flag was used, this section explicitly asks for PR-style code review comments (e.g., using GitHub inline diff syntax) in addition to the main solution/explanation. Otherwise, it indicates that no code review block is needed.
 *   **`<file_tree>`:** Shows a tree structure representing the relative paths of the files included in the context. The root of the tree is the common parent directory.
 *   **`<file_context>`:** Wraps the content of all processed files.
@@ -403,7 +403,7 @@ Review this C code for potential memory leaks and suggest improvements.
 
 <response_guide>
   <problem_statement>
-Review this C code for potential memory leaks and suggest improvements.
+Summarize the user's request or problem based on the <user_instructions> block and the provided context.
   </problem_statement>
   <reply_format>
     1. Provide a clear, step-by-step solution or explanation.

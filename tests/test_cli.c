@@ -982,9 +982,11 @@ TEST(test_cli_e_flag_response_guide) {
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
     char *output_no_e = run_command(cmd);
 
+    const char *expected_problem_statement = "Summarize the user's request or problem based on the <user_instructions> block and the provided context.";
     ASSERT("Output (no -e) contains <response_guide>", string_contains(output_no_e, "<response_guide>"));
     ASSERT("Output (no -e) contains <problem_statement>", string_contains(output_no_e, "<problem_statement>"));
-    ASSERT("Output (no -e) contains original instructions", string_contains(output_no_e, instructions));
+    ASSERT("Output (no -e) contains correct problem statement instruction", string_contains(output_no_e, expected_problem_statement));
+    ASSERT("Output (no -e) does NOT contain original instructions inside problem_statement", !string_contains(output_no_e, instructions)); // Verify original instructions are NOT copied here
     ASSERT("Output (no -e) contains 'No code-review block'", string_contains(output_no_e, "No code-review block is required."));
     ASSERT("Output (no -e) does NOT contain 'PR-style'", !string_contains(output_no_e, "PR-style code review comments"));
 
@@ -994,7 +996,8 @@ TEST(test_cli_e_flag_response_guide) {
 
     ASSERT("Output (with -e) contains <response_guide>", string_contains(output_with_e, "<response_guide>"));
     ASSERT("Output (with -e) contains <problem_statement>", string_contains(output_with_e, "<problem_statement>"));
-    ASSERT("Output (with -e) contains original instructions", string_contains(output_with_e, instructions));
+    ASSERT("Output (with -e) contains correct problem statement instruction", string_contains(output_with_e, expected_problem_statement));
+    ASSERT("Output (with -e) does NOT contain original instructions inside problem_statement", !string_contains(output_with_e, instructions)); // Verify original instructions are NOT copied here
     ASSERT("Output (with -e) contains 'PR-style'", string_contains(output_with_e, "PR-style code review comments"));
     ASSERT("Output (with -e) does NOT contain 'No code-review block'", !string_contains(output_with_e, "No code-review block is required."));
 

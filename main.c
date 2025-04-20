@@ -149,7 +149,7 @@ static void add_response_guide(const char *problem) {
     fprintf(temp_file,
         "<response_guide>\n"
         "  <problem_statement>\n"
-        "%s\n"
+        "Summarize the user's request or problem based on the <user_instructions> block and the provided context.\n"
         "  </problem_statement>\n"
         "  <reply_format>\n"
         "    1. Provide a clear, step-by-step solution or explanation.\n"
