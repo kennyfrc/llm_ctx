@@ -139,6 +139,29 @@ char tree_file_path[MAX_PATH]; /* Path to the tree file */
 SpecialFile special_files[10]; /* Support up to 10 special files */
 int num_special_files = 0;
 char *user_instructions = NULL;   /* malloc'd / strdup'd – free in cleanup() */
+static bool want_editor_comments = false;   /* -e flag */
+
+/**
+ * Add the response guide block to the output
+ */
+static void add_response_guide(const char *problem) {
+    if (!problem || !*problem) return;
+    fprintf(temp_file,
+        "<response_guide>\n"
+        "  <problem_statement>\n"
+        "%s\n"
+        "  </problem_statement>\n"
+        "  <reply_format>\n"
+        "    1. Provide a clear, step-by-step solution or explanation.\n"
+        "    2. %s\n"
+        "  </reply_format>\n"
+        "</response_guide>\n\n",
+        problem,
+        want_editor_comments ?
+          "Return **PR-style code review comments**: use GitHub inline-diff syntax, group notes per file, justify each change, and suggest concrete refactors."
+          : "No code-review block is required.");
+}
+
 
 /**
  * Check if a file has already been processed to avoid duplicates
@@ -579,6 +602,7 @@ void show_help(void) {
     printf("  -c @FILE       Read instruction text from FILE (any bytes)\n");
     printf("  -c @-          Read instruction text from standard input until EOF\n");
     printf("  -c=\"TEXT\"     Equals form also accepted\n");
+    printf("  -e             Instruct the LLM to append PR-style review comments\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
     printf("  -h             Show this help message\n");
     printf("  --no-gitignore Ignore .gitignore files when collecting files\n\n");
@@ -1214,6 +1238,8 @@ int main(int argc, char *argv[]) {
             if (file_args_start == 0) {
                 file_args_start = i + 1;  /* Files start after the -f flag */
             }
+        } else if (strcmp(argv[i], "-e") == 0 || strcmp(argv[i], "--editor-comments") == 0) {
+            want_editor_comments = true;
         } else if (strcmp(argv[i], "--no-gitignore") == 0) {
             respect_gitignore = false; /* Use bool directly */
         } else if (file_mode && argv[i][0] != '-') {
@@ -1233,6 +1259,7 @@ int main(int argc, char *argv[]) {
 
     /* Add user instructions if provided (now happens *after* parsing all args) */
     add_user_instructions(user_instructions);
+    add_response_guide(user_instructions); /* Add response guide based on instructions */
     
     /* Load gitignore files if enabled */
     if (respect_gitignore) {

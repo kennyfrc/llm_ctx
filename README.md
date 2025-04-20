@@ -371,18 +371,31 @@ Options:
 The output is structured using simple XML-like tags for clarity:
 
 *   **`<user_instructions>` (Optional):** Contains the text provided via the `-c` flag. Appears first if present.
+*   **`<response_guide>` (Optional):** Appears if `-c` was used. Contains guidance for the LLM on how to structure its response.
+    *   **`<problem_statement>`:** A copy of the text provided via `-c`. Ensures the original request context is preserved.
+    *   **`<reply_format>`:** Instructions for the LLM's reply structure. If the `-e` or `--editor-comments` flag was used, this section explicitly asks for PR-style code review comments (e.g., using GitHub inline diff syntax) in addition to the main solution/explanation. Otherwise, it indicates that no code review block is needed.
 *   **`<file_tree>`:** Shows a tree structure representing the relative paths of the files included in the context. The root of the tree is the common parent directory.
 *   **`<file_context>`:** Wraps the content of all processed files.
     *   **`File: <filepath>`:** A header indicating the start of a file's content. The `<filepath>` is relative to the common parent directory identified for the tree.
     *   **```` ```[type] ````:** Standard Markdown fenced code blocks containing the file content. `[type]` is automatically detected for stdin content (e.g., `diff`, `json`) if possible, otherwise it's empty.
     *   **`----------------------------------------`:** A separator line between files within the `<file_context>`.
 
-**Example Structure:**
+**Example Structure (with `-c` and `-e`):**
 
 ```
 <user_instructions>
-Review this code.
+Review this C code for potential memory leaks and suggest improvements.
 </user_instructions>
+
+<response_guide>
+  <problem_statement>
+Review this C code for potential memory leaks and suggest improvements.
+  </problem_statement>
+  <reply_format>
+    1. Provide a clear, step-by-step solution or explanation.
+    2. Return **PR-style code review comments**: use GitHub inline-diff syntax, group notes per file, justify each change, and suggest concrete refactors.
+  </reply_format>
+</response_guide>
 
 <file_tree>
 project_root

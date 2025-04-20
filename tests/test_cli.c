@@ -339,6 +339,8 @@ TEST(test_cli_help_message) {
            string_contains(output, "--no-gitignore"));
     ASSERT("Help message includes -f flag",
            string_contains(output, "-f"));
+    ASSERT("Help message includes -e flag",
+           string_contains(output, "-e"));
 }
 
 /* Test directory handling - should process files in directory but not show directory itself (prefixed) */
@@ -971,6 +973,43 @@ TEST(test_cli_error_command_equals_empty) {
     ASSERT("Output contains 'non-empty argument' error", string_contains(output, "Error: -c requires a non-empty argument"));
 }
 
+/* Test -e flag and <response_guide> content */
+TEST(test_cli_e_flag_response_guide) {
+    char cmd[2048];
+    const char *instructions = "Test instructions for response guide.";
+
+    // Test without -e flag
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
+    char *output_no_e = run_command(cmd);
+
+    ASSERT("Output (no -e) contains <response_guide>", string_contains(output_no_e, "<response_guide>"));
+    ASSERT("Output (no -e) contains <problem_statement>", string_contains(output_no_e, "<problem_statement>"));
+    ASSERT("Output (no -e) contains original instructions", string_contains(output_no_e, instructions));
+    ASSERT("Output (no -e) contains 'No code-review block'", string_contains(output_no_e, "No code-review block is required."));
+    ASSERT("Output (no -e) does NOT contain 'PR-style'", !string_contains(output_no_e, "PR-style code review comments"));
+
+    // Test with -e flag
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -e -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
+    char *output_with_e = run_command(cmd);
+
+    ASSERT("Output (with -e) contains <response_guide>", string_contains(output_with_e, "<response_guide>"));
+    ASSERT("Output (with -e) contains <problem_statement>", string_contains(output_with_e, "<problem_statement>"));
+    ASSERT("Output (with -e) contains original instructions", string_contains(output_with_e, instructions));
+    ASSERT("Output (with -e) contains 'PR-style'", string_contains(output_with_e, "PR-style code review comments"));
+    ASSERT("Output (with -e) does NOT contain 'No code-review block'", !string_contains(output_with_e, "No code-review block is required."));
+
+    // Test with --editor-comments flag
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx --editor-comments -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
+    char *output_with_long_e = run_command(cmd);
+    ASSERT("Output (with --editor-comments) contains 'PR-style'", string_contains(output_with_long_e, "PR-style code review comments"));
+
+    // Test case where -c is not provided (no response guide expected)
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    char *output_no_c = run_command(cmd);
+    ASSERT("Output (no -c) does NOT contain <response_guide>", !string_contains(output_no_c, "<response_guide>"));
+    ASSERT("Output (no -c) does NOT contain <problem_statement>", !string_contains(output_no_c, "<problem_statement>"));
+}
+
 
 // ============================================================================
 // Main Test Runner
@@ -1028,6 +1067,7 @@ int main(void) {
     RUN_TEST(test_cli_error_c_no_arg);
     RUN_TEST(test_cli_error_c_equals_empty);
     RUN_TEST(test_cli_error_command_equals_empty);
+    RUN_TEST(test_cli_e_flag_response_guide); /* New test */
 
     /* Temporarily skipped tests for UTF-16/32 handling, as the current heuristic */
     /* correctly identifies them as binary (due to null bytes), but the ideal */
