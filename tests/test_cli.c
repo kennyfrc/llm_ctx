@@ -982,38 +982,47 @@ TEST(test_cli_e_flag_response_guide) {
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
     char *output_no_e = run_command(cmd);
 
-    const char *expected_guide_instruction = "<!-- LLM: Follow the instructions within this response guide -->";
-    const char *expected_problem_statement = "Summarize the user's request or problem based on the overall context provided.";
+    // Updated expected strings for Markdown format
+    const char *expected_guide_instruction = "LLM: Please respond using the markdown format below.";
+    const char *expected_problem_statement_header = "## Problem Statement";
+    const char *expected_problem_statement_text = "Summarize the user's request or problem based on the overall context provided.";
+    const char *expected_response_header = "## Response";
+    const char *expected_reply_no_review = "    2. No code-review block is required.";
+    const char *expected_reply_with_review_start = "    2. Return **PR-style code review comments**"; // Check start only
+
     ASSERT("Output (no -e) contains <response_guide>", string_contains(output_no_e, "<response_guide>"));
-    ASSERT("Output (no -e) contains guide instruction comment", string_contains(output_no_e, expected_guide_instruction));
-    ASSERT("Output (no -e) contains <problem_statement>", string_contains(output_no_e, "<problem_statement>"));
-    ASSERT("Output (no -e) contains correct problem statement instruction", string_contains(output_no_e, expected_problem_statement));
-    /* Removed redundant check: instructions *are* present in <user_instructions> */
-    ASSERT("Output (no -e) contains 'No code-review block'", string_contains(output_no_e, "No code-review block is required."));
-    ASSERT("Output (no -e) does NOT contain 'PR-style'", !string_contains(output_no_e, "PR-style code review comments"));
+    ASSERT("Output (no -e) contains guide instruction line", string_contains(output_no_e, expected_guide_instruction));
+    ASSERT("Output (no -e) contains Problem Statement header", string_contains(output_no_e, expected_problem_statement_header));
+    ASSERT("Output (no -e) contains correct problem statement text", string_contains(output_no_e, expected_problem_statement_text));
+    ASSERT("Output (no -e) contains Response header", string_contains(output_no_e, expected_response_header));
+    ASSERT("Output (no -e) contains correct 'No code-review' reply format", string_contains(output_no_e, expected_reply_no_review));
+    ASSERT("Output (no -e) does NOT contain 'PR-style' reply format", !string_contains(output_no_e, expected_reply_with_review_start));
 
     // Test with -e flag
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx -e -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
     char *output_with_e = run_command(cmd);
 
     ASSERT("Output (with -e) contains <response_guide>", string_contains(output_with_e, "<response_guide>"));
-    ASSERT("Output (with -e) contains guide instruction comment", string_contains(output_with_e, expected_guide_instruction));
-    ASSERT("Output (with -e) contains <problem_statement>", string_contains(output_with_e, "<problem_statement>"));
-    ASSERT("Output (with -e) contains correct problem statement instruction", string_contains(output_with_e, expected_problem_statement));
-    /* Removed redundant check: instructions *are* present in <user_instructions> */
-    ASSERT("Output (with -e) contains 'PR-style'", string_contains(output_with_e, "PR-style code review comments"));
-    ASSERT("Output (with -e) does NOT contain 'No code-review block'", !string_contains(output_with_e, "No code-review block is required."));
+    ASSERT("Output (with -e) contains guide instruction line", string_contains(output_with_e, expected_guide_instruction));
+    ASSERT("Output (with -e) contains Problem Statement header", string_contains(output_with_e, expected_problem_statement_header));
+    ASSERT("Output (with -e) contains correct problem statement text", string_contains(output_with_e, expected_problem_statement_text));
+    ASSERT("Output (with -e) contains Response header", string_contains(output_with_e, expected_response_header));
+    ASSERT("Output (with -e) contains correct 'PR-style' reply format", string_contains(output_with_e, expected_reply_with_review_start));
+    ASSERT("Output (with -e) does NOT contain 'No code-review' reply format", !string_contains(output_with_e, expected_reply_no_review));
 
-    // Test with --editor-comments flag
+
+    // Test with --editor-comments flag (long form)
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx --editor-comments -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
     char *output_with_long_e = run_command(cmd);
-    ASSERT("Output (with --editor-comments) contains 'PR-style'", string_contains(output_with_long_e, "PR-style code review comments"));
+    ASSERT("Output (with --editor-comments) contains correct 'PR-style' reply format", string_contains(output_with_long_e, expected_reply_with_review_start));
+    ASSERT("Output (with --editor-comments) does NOT contain 'No code-review' reply format", !string_contains(output_with_long_e, expected_reply_no_review));
 
     // Test case where -c is not provided (no response guide expected)
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
     char *output_no_c = run_command(cmd);
     ASSERT("Output (no -c) does NOT contain <response_guide>", !string_contains(output_no_c, "<response_guide>"));
-    ASSERT("Output (no -c) does NOT contain <problem_statement>", !string_contains(output_no_c, "<problem_statement>"));
+    ASSERT("Output (no -c) does NOT contain Problem Statement header", !string_contains(output_no_c, expected_problem_statement_header));
+    ASSERT("Output (no -c) does NOT contain Response header", !string_contains(output_no_c, expected_response_header));
 }
 
 
