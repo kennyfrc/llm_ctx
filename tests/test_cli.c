@@ -952,7 +952,9 @@ TEST(test_cli_error_c_no_arg) {
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c", getenv("PWD"));
     char *output = run_command(cmd);
 
-    ASSERT("Output contains 'requires an argument' error", string_contains(output, "Error: -c requires an argument"));
+    // getopt_long prints its own error message. Check for the standard phrase.
+    ASSERT("Output contains getopt_long missing argument error for -c", string_contains(output, "option requires an argument -- 'c'"));
+    ASSERT("Output contains 'Try --help' suggestion", string_contains(output, "Try './llm_ctx --help' for more information."));
 }
 
 /* Test error: -c= with empty argument */
@@ -961,7 +963,8 @@ TEST(test_cli_error_c_equals_empty) {
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c=", getenv("PWD"));
     char *output = run_command(cmd);
 
-    ASSERT("Output contains 'non-empty argument' error", string_contains(output, "Error: -c requires a non-empty argument"));
+    // Expect the exact fatal error message string from handle_command_arg.
+    ASSERT("Output contains exact 'requires a non-empty argument' fatal error", string_contains(output, "Error: -c/--command requires a non-empty argument"));
 }
 
 /* Test error: --command= with empty argument */
@@ -970,7 +973,8 @@ TEST(test_cli_error_command_equals_empty) {
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx --command=", getenv("PWD"));
     char *output = run_command(cmd);
 
-    ASSERT("Output contains 'non-empty argument' error", string_contains(output, "Error: -c requires a non-empty argument"));
+    // Expect the fatal error message from handle_command_arg
+    ASSERT("Output contains 'requires a non-empty argument' fatal error", string_contains(output, "Error: -c/--command requires a non-empty argument"));
 }
 
 /* Test -e flag and <response_guide> content */
@@ -1060,8 +1064,8 @@ TEST(test_cli_s_at_file) {
     fprintf(sys_msg_file, "%s", custom_sys_prompt);
     fclose(sys_msg_file);
 
-    // Run llm_ctx with -s @file
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -s @__sys_msg.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
+    // Run llm_ctx with -s@file (attached form)
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -s@__sys_msg.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
@@ -1077,8 +1081,8 @@ TEST(test_cli_s_at_file) {
 TEST(test_cli_s_at_stdin) {
     char cmd[2048];
     const char *stdin_sys_prompt = "System prompt from stdin.\nSecond line.";
-    // Pipe instructions via echo to llm_ctx running with -s @-
-    snprintf(cmd, sizeof(cmd), "echo '%s' | %s/llm_ctx -s @- -f %s/__regular.txt", stdin_sys_prompt, getenv("PWD"), TEST_DIR);
+    // Pipe instructions via echo to llm_ctx running with -s@- (attached form)
+    snprintf(cmd, sizeof(cmd), "echo '%s' | %s/llm_ctx -s@- -f %s/__regular.txt", stdin_sys_prompt, getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     // Check for system instructions block (Note: echo adds a trailing newline)

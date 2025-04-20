@@ -369,11 +369,12 @@ Options:
   -s             Use the default system prompt: "You are a senior programmer."
                  Adds a <system_instructions> block before user instructions.
 
-  -s @FILE       Read system prompt text from FILE. Overrides the default.
-                 Example: -s @/path/to/system_prompt.txt
+  -s@FILE        Read system prompt text from FILE (no space after -s).
+                 Overrides the default.
+                 Example: -s@/path/to/system_prompt.txt
 
-  -s @-          Read system prompt text from standard input until EOF (Ctrl+D).
-                 Example: echo "Be concise" | llm_ctx -s @- -f file.c
+  -s@-           Read system prompt text from stdin until EOF (no space after -s).
+                 Example: echo "Be concise" | llm_ctx -s@- -f file.c
 
   -e, --editor-comments
                  Instruct the LLM to append PR-style review comments to its

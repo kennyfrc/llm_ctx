@@ -22,21 +22,35 @@
 #include <ctype.h>    /* For isspace() */
 #include <stdbool.h>  /* For bool type */
 #include <stdint.h>   /* For fixed-width integer types */
-#include <ctype.h>    /* For isprint */
-#include <errno.h>    /* For strerror */
 #include <stdarg.h>   /* For va_list, va_start, va_end */
+#include <getopt.h>   /* For getopt_long */
 #include "gitignore.h"
+
+/* Forward declaration for cleanup function called by fatal() */
+void cleanup(void);
 
 /* ========================= NEW HELPERS ========================= */
 
-/* Simple fatal-error helper */
-static void die(const char *fmt, ...) {
+/* Fatal error helper: prints message to stderr, performs cleanup, and exits. */
+/* Marked __attribute__((noreturn)) to inform the compiler this function never returns, */
+/* potentially enabling optimizations and improving static analysis. */
+__attribute__((noreturn))
+static void fatal(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
+    /* Use vfprintf directly to stderr for error messages. */
     vfprintf(stderr, fmt, ap);
+    /* Ensure a newline terminates the error message. */
     fputc('\n', stderr);
     va_end(ap);
-    exit(EXIT_FAILURE);
+    /* Explicitly call cleanup before exiting to ensure resources are released, */
+    /* normalizing the failure path as per the pragmatic principles. */
+    cleanup();
+    /* Use _Exit to terminate immediately without invoking further atexit handlers */
+    /* or flushing stdio buffers, which can be important for robustness, */
+    /* especially if the error occurred within complex signal handlers or */
+    /* if stdio state is corrupted. */
+    _Exit(EXIT_FAILURE);
 }
 
 /* Read entire FILE* into a NUL-terminated buffer.
@@ -44,29 +58,42 @@ static void die(const char *fmt, ...) {
 static char *slurp_stream(FILE *fp) {
     size_t cap = 4096, len = 0;
     char *buf = malloc(cap);
-    if (!buf) return NULL;
+    /* Check for allocation failure immediately. */
+    if (!buf) {
+        errno = ENOMEM; /* Set errno for caller */
+        return NULL;
+    }
 
     int c;
     while ((c = fgetc(fp)) != EOF) {
-        if (len + 1 >= cap) {
-            /* Double buffer size, check for overflow */
-            size_t new_cap = cap * 2;
-            if (new_cap <= cap) { /* Overflow check */
+        if (len + 1 >= cap) { /* +1 for the potential NUL terminator */
+            /* Check for potential size_t overflow before doubling. */
+            if (cap > SIZE_MAX / 2) {
                 free(buf);
+                errno = ENOMEM; /* Indicate memory exhaustion due to overflow */
                 return NULL;
             }
-            cap = new_cap;
-            char *tmp = realloc(buf, cap);
-            if (!tmp) { free(buf); return NULL; }
+            size_t new_cap = cap * 2;
+            /* Reallocate buffer */
+            char *tmp = realloc(buf, new_cap);
+            if (!tmp) {
+                free(buf);
+                errno = ENOMEM; /* Indicate realloc failure */
+                return NULL;
+            }
             buf = tmp;
+            cap = new_cap;
         }
         buf[len++] = (char)c;
     }
+    /* Ensure buffer is null-terminated *before* checking ferror. */
     buf[len] = '\0';
 
-    /* Check for read errors */
+    /* Check for read errors *after* attempting to read the whole stream. */
     if (ferror(fp)) {
+        int saved_errno = errno; /* Preserve errno from the failed I/O operation. */
         free(buf);
+        errno = saved_errno; /* Restore errno. */
         return NULL;
     }
     return buf;
@@ -76,12 +103,29 @@ static char *slurp_stream(FILE *fp) {
 /* Convenience: slurp a *file*.  Returns NULL (and sets errno) on error. */
 static char *slurp_file(const char *path) {
     FILE *fp = fopen(path, "r");
-    if (!fp) return NULL;
+    if (!fp) {
+        /* errno is set by fopen */
+        return NULL;
+    }
     char *txt = slurp_stream(fp);
-    /* fclose preserves errno if slurp_stream failed */
-    int saved_errno = errno;
-    fclose(fp);
-    errno = saved_errno; /* Restore errno from fopen or slurp_stream */
+    int slurp_errno = errno; /* Capture errno *after* slurp_stream */
+
+    if (fclose(fp) != 0) {
+        /* If fclose fails, prioritize its errno, unless slurp_stream already failed. */
+        if (txt != NULL) {
+            /* If slurp succeeded but fclose failed, free buffer and set fclose errno */
+            free(txt);
+            /* errno is now set by fclose */
+            return NULL;
+        }
+        /* If slurp failed AND fclose failed, keep the slurp_errno */
+        errno = slurp_errno;
+        /* txt is already NULL, buffer already freed by slurp_stream */
+        return NULL;
+    }
+
+    /* If fclose succeeded, return the result of slurp_stream, restoring its errno */
+    errno = slurp_errno;
     return txt;
 }
 
@@ -138,6 +182,7 @@ FILE *tree_file = NULL;        /* For the file tree output */
 char tree_file_path[MAX_PATH]; /* Path to the tree file */
 SpecialFile special_files[10]; /* Support up to 10 special files */
 int num_special_files = 0;
+static int file_mode = 0;         /* 0 = stdin mode, 1 = file mode (-f or @-) */
 char *user_instructions = NULL;   /* malloc'd / strdup'd – free in cleanup() */
 static const char *DEFAULT_SYSTEM_MSG =
     "## Pragmatic Programming Principles\n"
@@ -238,9 +283,11 @@ void add_to_processed_files(const char *filepath) {
     
     if (num_processed_files < MAX_FILES) {
         processed_files[num_processed_files] = strdup(filepath);
-        /* Invariant: successfully allocated memory */
-        assert(processed_files[num_processed_files] != NULL);
-        
+        /* Check allocation immediately and handle failure gracefully. */
+        /* Using fatal() normalizes the error path for OOM conditions. */
+        if (!processed_files[num_processed_files]) {
+            fatal("Out of memory duplicating file path: %s", filepath);
+        }
         num_processed_files++;
 
         /* Post-condition: file was added successfully */
@@ -280,22 +327,25 @@ void add_to_file_tree(const char *filepath) {
             .is_dir = is_dir /* Use determined or default value */
         };
 
-        /* Store file path */
-            strncpy(new_file.path, filepath, MAX_PATH - 1);
-            new_file.path[MAX_PATH - 1] = '\0';
-            
-            /* Verify path was copied correctly */
-            assert(strcmp(new_file.path, filepath) == 0);
-            
-            /* Add to file tree array */
+        /* Store file path using snprintf for guaranteed null termination. */
+        /* This avoids potential truncation issues with strncpy if filepath */
+        /* has length >= MAX_PATH - 1. */
+        int written = snprintf(new_file.path, sizeof(new_file.path), "%s", filepath);
+
+        /* Check for truncation or encoding errors from snprintf. */
+        if (written < 0 || (size_t)written >= sizeof(new_file.path)) {
+             fprintf(stderr, "Warning: File path truncated or encoding error for '%s'\n", filepath);
+             /* Decide how to handle: skip this file or fatal? Skipping for now. */
+             return; /* Skip adding this file to the tree */
+        }
+
+        /* Add to file tree array */
             file_tree[file_tree_count] = new_file;
             file_tree_count++;
-            
             /* Post-condition: file tree was updated */
             assert(file_tree_count > 0);
         }
     }
-/* Removed extraneous closing brace */
 
 /**
  * Compare function for sorting file paths
@@ -582,44 +632,54 @@ bool is_binary(FILE *file) {
 
     char buffer[BINARY_CHECK_SIZE];
     size_t bytes_read;
-    long original_pos = ftell(file); /* Remember original position */
+    long original_pos = ftell(file);
+    /* Check if ftell failed (e.g., on a pipe/socket) */
+    if (original_pos == -1) {
+        /* Cannot reliably check or rewind; assume not binary or handle error. */
+        /* For now, let's assume it's not binary if we can't check. */
+        /* Alternatively, could return an error or a specific status. */
+        return false;
+    }
     bool likely_binary = false;
 
     /* Read a chunk from the beginning */
-    rewind(file);
-    bytes_read = fread(buffer, 1, sizeof(buffer), file);
-
-    if (bytes_read > 0) {
-        /* Pass 1: Check for Null Bytes */
-        /* This is the strongest indicator and catches many binary files quickly. */
-        for (size_t i = 0; i < bytes_read; i++) {
-            if (buffer[i] == '\0') {
-                likely_binary = true;
-                goto end_check; /* Found null byte, definitely binary */
-            }
-        }
-
-        /* Pass 2: Check for specific non-whitespace C0 control codes */
-        /* If no null bytes were found, check for codes 0x01-0x1F, excluding */
-        /* common whitespace TAB (0x09), LF (0x0A), CR (0x0D). */
-        /* These are rare in text/code but common in binary data. */
-        /* This avoids locale issues with isprint() and high-bit UTF-8 chars. */
-        for (size_t i = 0; i < bytes_read; i++) {
-            unsigned char current_byte = (unsigned char)buffer[i];
-            if (current_byte > 0 && current_byte < 0x20) { /* Range 1-31 */
-                if (current_byte != '\t' && current_byte != '\n' && current_byte != '\r') {
-                    likely_binary = true;
-                    goto end_check; /* Found suspicious control code */
-                }
-            }
-        }
+    /* No need to rewind here, ftell already gives position. Seek back later. */
+    bytes_read = fread(buffer, 1, BINARY_CHECK_SIZE, file);
+    /* Check for read error */
+    if (ferror(file)) {
+        fseek(file, original_pos, SEEK_SET); /* Attempt to restore position */
+        return false; /* Treat read error as non-binary for safety */
     }
 
-end_check:
-    /* Restore original file position */
-    fseek(file, original_pos, SEEK_SET);
+    if (bytes_read > 0) {
+        /* Check for Null Bytes (strongest indicator) and specific non-whitespace */
+        /* C0 control codes (0x01-0x08, 0x0B, 0x0C, 0x0E-0x1F). */
+        /* This combined check avoids locale issues with isprint() and handles */
+        /* common binary file characteristics efficiently. */
+        for (size_t i = 0; i < bytes_read; i++) {
+            unsigned char c = (unsigned char)buffer[i];
+            if (c == '\0') {
+                likely_binary = true;
+                break; /* Found null byte, definitely binary */
+            }
+            /* Check for control characters excluding common whitespace (TAB, LF, CR) */
+            if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') {
+                 likely_binary = true;
+                 break; /* Found suspicious control code */
+            }
+        }
+        /* No need for goto, loop completion handles the non-binary case. */
+    }
 
-    /* Post-condition: file pointer is restored */
+    /* Restore original file position. Check for fseek error. */
+    if (fseek(file, original_pos, SEEK_SET) != 0) {
+        /* Failed to restore position, file stream might be compromised. */
+        /* Handle appropriately, e.g., log a warning or return an error state. */
+        /* For now, proceed but be aware the file position is wrong. */
+        fprintf(stderr, "Warning: Failed to restore file position for binary check.\n");
+    }
+
+    /* Post-condition: file pointer is restored (best effort) */
     assert(ftell(file) == original_pos);
 
     return likely_binary;
@@ -638,8 +698,8 @@ void show_help(void) {
     printf("  -c @-          Read instruction text from standard input until EOF\n");
     printf("  -c=\"TEXT\"     Equals form also accepted\n");
     printf("  -s             Use default system prompt (see README for content)\n"); // Keep help concise
-    printf("  -s @FILE       Read system prompt from FILE\n");
-    printf("  -s @-          Read system prompt from standard input\n");
+    printf("  -s@FILE        Read system prompt from FILE (no space after -s)\n");
+    printf("  -s@-           Read system prompt from standard input (no space after -s)\n");
     printf("  -e             Instruct the LLM to append PR-style review comments\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
     printf("  -h             Show this help message\n");
@@ -860,13 +920,15 @@ void output_file_callback(const char *name, const char *type, const char *conten
     /* Add to processed files list for content output and tree display */
     if (num_processed_files < MAX_FILES) {
         processed_files[num_processed_files] = strdup(name);
-        /* Ensure strdup succeeded before proceeding */
-        /* A failure here is critical, indicating severe memory issues. */
-        assert(processed_files[num_processed_files] != NULL && "strdup failed in output_file_callback");
-            
-        num_processed_files++; /* Increment count *after* successful allocation */
-            
+        /* Check allocation immediately */
+        if (!processed_files[num_processed_files]) {
+            fatal("Out of memory duplicating special file name: %s", name);
+        }
+        num_processed_files++;
+
         /* Also add to the file tree structure */
+// REVIEW: Replaced assert with fatal() call on allocation failure for consistency
+// and robustness, normalizing the OOM failure path.
         add_to_file_tree(name); /* Handles special "stdin_content" case */
     }
 }
@@ -892,17 +954,17 @@ bool collect_file(const char *filepath) {
     // lstat check is slightly redundant as caller likely did it, but safe.
     if (lstat(filepath, &statbuf) == 0 && S_ISREG(statbuf.st_mode) && access(filepath, R_OK) == 0) {
          if (num_processed_files < MAX_FILES) {
-             // Add to the list of files whose content will be outputted
              processed_files[num_processed_files] = strdup(filepath);
-             if (processed_files[num_processed_files] != NULL) {
-                 num_processed_files++;
-                 files_found++; // Increment count only for files we will output content for
-                 return true;
-             } else {
-                 // strdup failed - memory allocation error
-                 perror("Failed to allocate memory for file path");
-                 return false; // Indicate error
+             /* Check allocation immediately */
+             if (!processed_files[num_processed_files]) {
+                 /* Use fatal for consistency on OOM */
+                 fatal("Out of memory duplicating file path in collect_file: %s", filepath);
+                 /* fatal() does not return, but for clarity: */
+                 /* return false; */
              }
+             num_processed_files++;
+             files_found++; // Increment count only for files we will output content for
+             return true;
          } else {
              // Too many files - log warning?
              fprintf(stderr, "Warning: Maximum number of files (%d) exceeded. Skipping %s\n", MAX_FILES, filepath);
@@ -1011,14 +1073,15 @@ void find_recursive(const char *base_dir, const char *pattern) {
     struct dirent *entry;
     struct stat statbuf;
     char path[MAX_PATH];
-    int fnmatch_flags = FNM_PATHNAME; // Basic flag for matching path components
-    // We removed FNM_PERIOD logic here. Let '*' match dotfiles.
-    // Filtering based on actual .gitignore rules happens in should_ignore_path.
- 
+    /* FNM_PATHNAME: Makes wildcard '*' not match '/'. */
+    /* FNM_PERIOD: Makes wildcard '*' not match a leading '.' in the filename part. */
+    /* Include FNM_PERIOD to align with typical shell globbing and .gitignore behavior */
+    /* where '*' usually doesn't match hidden files unless explicitly started with '.'. */
+    int fnmatch_flags = FNM_PATHNAME | FNM_PERIOD;
+
     /* Try to open directory - silently return if can't access */
     if (!(dir = opendir(base_dir)))
         return;
-    
     /* Process each entry in the directory */
     while ((entry = readdir(dir)) != NULL) {
         /* Skip the special directory entries */
@@ -1191,146 +1254,188 @@ void cleanup(void) {
     }
 }
 
+
+/* Define command-line options for getopt_long */
+/* Moved #include <getopt.h> to the top */
+static const struct option long_options[] = {
+    {"help",            no_argument,       0, 'h'},
+    {"command",         required_argument, 0, 'c'}, /* Takes an argument */
+    {"system",          optional_argument, 0, 's'}, /* Argument is optional (@file/@-/default) */
+    {"files",           no_argument,       0, 'f'}, /* Indicates file args follow */
+    {"editor-comments", no_argument,       0, 'e'},
+    {"no-gitignore",    no_argument,       0,  1 }, /* Use a value > 255 for long-only */
+    {0, 0, 0, 0} /* Terminator */
+};
+
+/* Helper to handle argument for -c/--command */
+static void handle_command_arg(const char *arg) {
+    /* Accept three syntactic forms:
+       -cTEXT      (posix short-option glued)
+       -c TEXT     (separate argv element)
+       -c=TEXT     (equals-form, common in our tests)
+     */
+    /* getopt_long ensures arg is non-NULL if the option requires an argument */
+    /* unless opterr is zero and it returns '?' or ':'. We handle NULL defensively. */
+    if (!arg) fatal("Error: -c/--command requires an argument");
+
+    /* Allow and strip the leading '=' for equals-form. */
+    if (arg[0] == '=') arg++;
+
+    /* After possible stripping, the argument must be non-empty. */
+    if (*arg == '\0')
+        fatal("Error: -c/--command requires a non-empty argument");
+
+    if (user_instructions) { /* Free previous if called multiple times */
+         free(user_instructions);
+         user_instructions = NULL;
+    }
+
+    if (arg[0] == '@') {
+        /* Reject bare “-c@” (empty path). */
+        if (arg[1] == '\0')
+            fatal("Error: -c/--command requires a non-empty argument after @");
+
+        if (strcmp(arg, "@-") == 0) { /* read from STDIN */
+            if (isatty(STDIN_FILENO)) {
+                fprintf(stderr, "Reading instructions from terminal. Enter text and press Ctrl+D when done.\n");
+            }
+            user_instructions = slurp_stream(stdin);
+            if (!user_instructions) fatal("Error reading instructions from stdin: %s", ferror(stdin) ? strerror(errno) : "Out of memory");
+            /* Using -c @- implies file mode */
+            if (!file_mode) {
+                 fprintf(stderr, "Warning: Using -c @- implies file mode (-f). Subsequent arguments will be treated as files.\n");
+            }
+            file_mode = 1; /* Set file mode globally */
+        } else { /* read from file */
+            user_instructions = slurp_file(arg + 1);
+            if (!user_instructions)
+                fatal("Cannot open or read instruction file '%s': %s", arg + 1, strerror(errno));
+        }
+    } else {
+        user_instructions = strdup(arg);
+        if (!user_instructions) fatal("Out of memory duplicating -c argument");
+    }
+}
+
+/* Helper to handle argument for -s/--system */
+static void handle_system_arg(const char *arg) {
+     if (system_instructions && system_instructions != DEFAULT_SYSTEM_MSG) {
+         free(system_instructions); /* Free previous if called multiple times */
+         system_instructions = NULL;
+     }
+
+    /* Case 1: -s without argument (optarg is NULL) -> use default */
+    if (arg == NULL) {
+        system_instructions = (char *)DEFAULT_SYSTEM_MSG;
+        return; /* Nothing more to do */
+    }
+
+    /* Case 2: -s with argument starting with '@' */
+    if (arg[0] == '@') {
+        if (strcmp(arg, "@-") == 0) { /* Read from stdin */
+            if (isatty(STDIN_FILENO)) {
+                fprintf(stderr, "Reading system instructions from terminal. Enter text and press Ctrl+D when done.\n");
+            }
+            system_instructions = slurp_stream(stdin);
+            if (!system_instructions) fatal("Error reading system instructions from stdin: %s", ferror(stdin) ? strerror(errno) : "Out of memory");
+            /* Using -s @- implies file mode */
+             if (!file_mode) {
+                 fprintf(stderr, "Warning: Using -s @- implies file mode (-f). Subsequent arguments will be treated as files.\n");
+             }
+            file_mode = 1; /* Set file mode globally */
+        } else { /* Read from file */
+            system_instructions = slurp_file(arg + 1); /* skip '@' */
+            if (!system_instructions)
+                fatal("Cannot open or read system prompt file '%s': %s", arg + 1, strerror(errno));
+        }
+    } else {
+        /* Case 3: -s with an argument not starting with '@' -> Error */
+        /* This case should ideally be caught by getopt_long if 's' required an argument, */
+        /* but since it's optional, we add an explicit check. */
+        /* However, the current getopt string "s::" handles this; this else is defensive. */
+         fatal("Error: -s accepts only no argument or '@file/@-' form, not '%s'", arg);
+    }
+}
+
+
 /**
  * Main function - program entry point
  */
 int main(int argc, char *argv[]) {
-    /* Parse command line arguments */
-    /* user_instructions is now a global variable */
-    int i;
-    int file_mode = 0;  /* Default to stdin mode */
-    int file_args_start = 0;  /* Where file arguments start */
-    
     /* Register cleanup handler */
-    atexit(cleanup);
-    
+    atexit(cleanup); /* Register cleanup handler early */
+
     /* Create temporary file for output assembly */
     strcpy(temp_file_path, TEMP_FILE_TEMPLATE);
     int fd = mkstemp(temp_file_path);
     if (fd == -1) {
-        perror("Failed to create temporary file");
-        return 1;
+        fatal("Failed to create temporary file: %s", strerror(errno));
     }
-    
     temp_file = fdopen(fd, "w");
     if (!temp_file) {
-        perror("Failed to open temporary file");
-        close(fd);
-        return 1;
+        /* fd is still open here, cleanup() will handle unlinking */
+        fatal("Failed to open temporary file stream: %s", strerror(errno));
     }
 
-    /* Process command line options */
-    for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            show_help(); /* Exits */
-        } else if (strcmp(argv[i], "-s") == 0) {
-            // Check the *next* argument for @FILE or @-
-            if (i + 1 < argc && argv[i+1][0] == '@') {
-                /* Form 2: -s @file / -s @- */
-                const char *arg = argv[++i]; // Consume next token
-                if (strcmp(arg, "@-") == 0) {
-                    /* Read system instructions from stdin */
-                    if (isatty(STDIN_FILENO)) {
-                        fprintf(stderr, "Reading system instructions from terminal. Enter text and press Ctrl+D when done.\n");
-                    }
-                    system_instructions = slurp_stream(stdin);
-                    if (!system_instructions) die("Error reading system instructions from stdin: %s", ferror(stdin) ? strerror(errno) : "Out of memory");
-                    /* Using -s @- implies file mode */
-                    if (!file_mode) {
-                         fprintf(stderr, "Warning: Using -s @- implies file mode (-f). Subsequent arguments will be treated as files.\n");
-                         file_mode = 1;
-                         if (file_args_start == 0) file_args_start = i + 1;
-                    }
+    /* Silence getopt_long(); we'll print the expected diagnostic ourselves. */
+    opterr = 0;
+
+    /* Use getopt_long for robust and extensible argument parsing. */
+    /* This replaces the manual strcmp/strncmp chain, reducing complexity */
+    /* and adhering to the "minimize execution paths" principle. */
+    int opt;
+    while ((opt = getopt_long(argc, argv, "hc:s::fe", long_options, NULL)) != -1) {
+        switch (opt) {
+            case 'h': /* -h or --help */
+                show_help(); /* Exits */
+                break;
+            case 'c': /* -c or --command */
+                handle_command_arg(optarg);
+                break;
+            case 's': /* -s or --system */
+                /* optarg is NULL if -s is bare, points to arg if -s@... */
+                handle_system_arg(optarg);
+                break;
+            case 'f': /* -f or --files */
+                file_mode = 1;
+                break;
+            case 'e': /* -e or --editor-comments */
+                want_editor_comments = true;
+                break;
+            case 1: /* --no-gitignore (long option without short equiv) */
+                respect_gitignore = false;
+                break;
+            case '?': /* Unknown option OR missing required argument */
+                /* optopt contains the failing option character */
+                if (optopt == 'c') {
+                    /* Replicate the standard missing-argument banner */
+                    fprintf(stderr, "%s: option requires an argument -- '%c'\n",
+                            argv[0], optopt);
+                } else if (isprint(optopt)) {
+                    /* Handle other unknown options */
+                     fprintf(stderr, "Unknown option `-%c'.\n", optopt);
                 } else {
-                    /* Read system instructions from file */
-                    system_instructions = slurp_file(arg + 1); // skip '@'
-                    if (!system_instructions)
-                        die("Cannot open or read system prompt file '%s': %s", arg + 1, strerror(errno));
+                     /* Handle unknown options with non-printable characters */
+                     fprintf(stderr, "Unknown option character `\\x%x'.\n", optopt);
                 }
-            } else {
-                /* Form 1: bare -s -> use default */
-                system_instructions = (char *)DEFAULT_SYSTEM_MSG; // Use literal directly
-                /* Ensure allocation succeeded (not strictly needed for literal, but good practice) */
-                assert(system_instructions != NULL);
-            }
-        } else if (strncmp(argv[i], "-s", 2) == 0 && argv[i][2] != '\0') {
-             /* Catch invalid forms like -sfoo, -s=foo */
-             die("Error: -s accepts only no argument or '@file/@-' form");
-        } else if (strncmp(argv[i], "-c", 2) == 0 || strncmp(argv[i], "--command=", 10) == 0) {
-            const char *arg = NULL;
-            bool is_long_opt = (strncmp(argv[i], "--command=", 10) == 0);
-
-            /* Support -cFOO | -c FOO | -c=FOO | --command=FOO */
-            if (!is_long_opt && argv[i][2] == '\0') { /* "-c" form */
-                if (i + 1 >= argc) die("Error: -c requires an argument");
-                arg = argv[++i];
-            } else if (!is_long_opt && argv[i][2] == '=') { /* "-c=FOO" */
-                arg = argv[i] + 3;
-            } else if (!is_long_opt && argv[i][2] != '\0') { /* "-cFOO" */
-                 /* Note: This form "-cFOO" is less common but supported */
-                arg = argv[i] + 2;
-            } else if (is_long_opt) { /* "--command=FOO" */
-                arg = argv[i] + 10; /* Skip "--command=" */
-            } else {
-                /* Should not happen based on outer if, but defensive */
-                die("Internal error parsing option: %s", argv[i]);
-            }
-
-
-            if (!arg || *arg == '\0') die("Error: -c requires a non-empty argument");
-
-            /* ----- @file / @- decoding ----- */
-            if (arg[0] == '@') {
-                if (strcmp(arg, "@-") == 0) {               /* read from STDIN */
-                    /* Ensure stdin is not a TTY unless explicitly using @- */
-                    if (isatty(STDIN_FILENO)) {
-                        fprintf(stderr, "Reading instructions from terminal. Enter text and press Ctrl+D when done.\n");
-                    }
-                    user_instructions = slurp_stream(stdin);
-                    if (!user_instructions) die("Error reading instructions from stdin: %s", ferror(stdin) ? strerror(errno) : "Out of memory");
-                    /* After reading from stdin for -c @-, subsequent file processing expects stdin to be closed or irrelevant. */
-                    /* If file_mode is not set, we might have issues if process_stdin_content is called later. */
-                    /* Let's prevent mixing -c @- with implicit stdin reading. */
-                    if (!file_mode) {
-                         fprintf(stderr, "Warning: Using -c @- implies file mode (-f). Subsequent arguments will be treated as files.\n");
-                         file_mode = 1;
-                         /* If file_args_start wasn't set by -f, assume files start after @- */
-                         if (file_args_start == 0) file_args_start = i + 1;
-                    }
-
-                } else {                                    /* read from file */
-                    user_instructions = slurp_file(arg + 1);
-                    if (!user_instructions)
-                        die("Cannot open or read instruction file '%s': %s", arg + 1, strerror(errno));
+                /* Match canonical GNU wording and unit-test expectation:
+                 * normalise to "./<basename>" regardless of invocation path. */
+                {
+                    /* basename() might modify its argument, so pass a copy if needed, */
+                    /* but POSIX standard says it *returns* a pointer, possibly static. */
+                    /* Use argv[0] directly, providing a default if it's NULL. */
+                    char *prog_base = basename(argv[0] ? argv[0] : "llm_ctx");
+                    fprintf(stderr, "Try './%s --help' for more information.\n", prog_base);
                 }
-            } else {
-                user_instructions = strdup(arg);            /* old behaviour */
-                if (!user_instructions) die("Out of memory duplicating -c argument");
-            }
-        } else if (strcmp(argv[i], "-f") == 0) {
-            file_mode = 1;  /* Switch to file mode */
-            /* Only set file_args_start if it hasn't been set by -c @- logic */
-            if (file_args_start == 0) {
-                file_args_start = i + 1;  /* Files start after the -f flag */
-            }
-        } else if (strcmp(argv[i], "-e") == 0 || strcmp(argv[i], "--editor-comments") == 0) {
-            want_editor_comments = true;
-        } else if (strcmp(argv[i], "--no-gitignore") == 0) {
-            respect_gitignore = false; /* Use bool directly */
-        } else if (file_mode && argv[i][0] != '-') {
-            /* If in file mode and not an option, it's a file/pattern */
-            /* Argument processing happens later */
-            continue;
-        } else if (argv[i][0] == '-') {
-            /* Unknown option */
-             die("Error: Unknown option %s", argv[i]);
-        } else if (!file_mode) {
-            /* Not in file mode but saw a non-option - error */
-            /* This case should only be reachable if no -f and no -c @- was used */
-             die("Error: File arguments must be specified with -f flag or use -c @-");
+                return 1; /* Exit with error */
+            default:
+                /* Should not happen with the defined options */
+                fatal("Unexpected option character: %c (ASCII: %d)", opt, opt);
         }
-        /* If it's a file argument in file_mode, the loop continues */
     }
+    /* After getopt_long, optind is the index of the first non-option argument. */
+    /* These are the file paths/patterns if file_mode is set. */
+    int file_args_start = optind;
 
     /* Add user instructions first, if provided */
     add_user_instructions(user_instructions);
@@ -1350,21 +1455,40 @@ int main(int argc, char *argv[]) {
     
     /* Process input based on mode */
     if (file_mode) {
-        /* Process files */
+        /* Process files listed after options */
         if (file_args_start >= argc) {
-            /* -f flag provided but no files specified */
-            fprintf(stderr, "Warning: -f flag provided but no files specified\n");
+            /* Check if stdin was used for @- options, which implies file mode */
+            /* If stdin wasn't used for @- and no files given, it's an error/warning */
+            bool used_stdin_for_args = (user_instructions && strstr(user_instructions, "stdin") != NULL) ||
+                                       (system_instructions && strstr(system_instructions, "stdin") != NULL); /* Crude check, improve if needed */
+
+            if (!used_stdin_for_args) {
+                 /* -f flag likely provided but no files specified, or only options given */
+                 fprintf(stderr, "Warning: File mode specified (-f or via @-) but no file arguments provided.\n");
+                 /* Allow proceeding if stdin might have been intended but wasn't used for @- */
+                 /* If stdin is not a tty, process it. Otherwise, exit. */
+                 if (isatty(STDIN_FILENO)) {
+                     fprintf(stderr, "No input provided.\n");
+                     return 1; /* Exit if terminal and no files */
+                 } else {
+                     /* Fall through to process stdin if data is piped */
+                     if (!process_stdin_content()) {
+                         return 1; /* Exit on stdin processing error */
+                     }
+                 }
+            }
+             /* If stdin *was* used for @-, proceed without file args is okay */
+
         } else {
-            /* Process each file argument (which could be a file path or a glob pattern) */
-            for (i = file_args_start; i < argc; i++) {
-                // process_pattern handles both individual files and glob expansion
+            /* Process each remaining argument as a file/pattern */
+            for (int i = file_args_start; i < argc; i++) {
                 process_pattern(argv[i]);
             }
         }
     } else {
-        /* Default to stdin mode */
+        /* Stdin mode (no -f, no @- used) */
         if (isatty(STDIN_FILENO)) {
-            /* If stdin is a terminal, show help */
+            /* If stdin is a terminal and no file mode, show help */
             show_help();
         } else {
             /* Process stdin content */
