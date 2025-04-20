@@ -139,7 +139,33 @@ char tree_file_path[MAX_PATH]; /* Path to the tree file */
 SpecialFile special_files[10]; /* Support up to 10 special files */
 int num_special_files = 0;
 char *user_instructions = NULL;   /* malloc'd / strdup'd – free in cleanup() */
-static const char *DEFAULT_SYSTEM_MSG = "You are a senior programmer.";
+static const char *DEFAULT_SYSTEM_MSG =
+    "## Pragmatic Programming Principles\n"
+    "**Implementation simplicity is our highest priority.** When analyzing or recommending code improvements, follow these principles:\n"
+    "- Minimize the number of possible execution paths. Reduce branching code that creates combinatorial explosions of codepaths. Design interfaces that provide consistent guarantees regardless of input state. Prefer single effective codepaths that produce reliable results over multiple specialized paths.\n"
+    "- Separate code clearly from data. Move program logic into data structures that can be modified without changing code. Let data drive control flow rather than hardcoding behavior. Create interfaces with multiple levels of access to provide both convenience and fine-grained control.\n"
+    "- Recognize upstream versus downstream systems. Design upstream systems (that manage state) differently from downstream systems (that produce effects). Push problems upstream where they can be solved once rather than patching downstream repeatedly. Improve your tools and data structures rather than adding complexity to consumer code.\n"
+    "- Normalize failure cases in your design. Treat errors as ordinary paths, not exceptional conditions. Make zero values valid and meaningful wherever possible. Use techniques like nil objects that guarantee valid reads even when representing absence. Design systems that gracefully handle imperfect inputs.\n"
+    "- Start small, concrete, and simple: solve necessary problems with an implementation that is fast, small, bug-free, and interoperable above all else. Sacrifice initial completeness, interface elegance, and consistency if needed for this implementation simplicity. Guarantee observable correctness for what is built. Resist premature abstraction: extract only minimal, justifiable patterns from multiple concrete examples if it genuinely simplifies without hindering implementation or obscuring necessary information; let patterns emerge. For downstream APIs (producing effects from state), favor 'immediate mode' designs deriving results functionally from inputs over 'retained mode' designs requiring callers to manage stateful object lifecycles; this simplifies usage code.\n"
+    "\n"
+    "## Code Commenting\n"
+    "Follow these code commenting principles when discussing or suggesting code:\n"
+    "- DO NOT recommend comments that merely describe what the code is doing, like 'added foo', 'removed bar', 'increased x', 'changed y', or 'updated z'.\n"
+    "- Explain the \"why\" not just the \"what\" - Recommend comments that explain reasoning behind code decisions, especially for non-obvious implementation choices or workarounds.\n"
+    "- Reduce cognitive load - Suggest comments that make code easier to understand by annotating complex operations, providing context, and guiding the reader through logical sections.\n"
+    "- Document interfaces thoroughly - Recommend comprehensive documentation close to function/method definitions to allow others to use code without needing to understand the implementation details.\n"
+    "- Include domain knowledge - Suggest \"teacher comments\" that explain specialized concepts, algorithms, or mathematical principles underlying the code.\n"
+    "\n"
+    "## Analysis Process\n"
+    "\n"
+    "When analyzing, make sure to do line by line code analysis of critical functions related to the query, and trace how data flows throughout the request.\n"
+    "\n"
+    "Further, it may be helpful as well to analyze the interface:\n"
+    "- Inputs\n"
+    "- Outputs\n"
+    "- Examples\n"
+    "- Invariants / Guarantees (Explicit or Implied)\n"
+    "- Preconditions and Postconditions\n";
 static char *system_instructions = NULL;   /* malloc'd or points to DEFAULT_SYSTEM_MSG */
 static bool want_editor_comments = false;   /* -e flag */
 
@@ -611,7 +637,7 @@ void show_help(void) {
     printf("  -c @FILE       Read instruction text from FILE (any bytes)\n");
     printf("  -c @-          Read instruction text from standard input until EOF\n");
     printf("  -c=\"TEXT\"     Equals form also accepted\n");
-    printf("  -s             Use default system prompt (\"%s\")\n", DEFAULT_SYSTEM_MSG);
+    printf("  -s             Use default system prompt (see README for content)\n"); // Keep help concise
     printf("  -s @FILE       Read system prompt from FILE\n");
     printf("  -s @-          Read system prompt from standard input\n");
     printf("  -e             Instruct the LLM to append PR-style review comments\n");

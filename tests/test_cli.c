@@ -1035,9 +1035,10 @@ TEST(test_cli_s_default) {
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx -s -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
-    const char *default_prompt = "You are a senior programmer.";
+    // Check for a key phrase from the new default prompt instead of the old short one
+    const char *key_phrase = "Pragmatic Programming Principles";
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
-    ASSERT("Output contains default system prompt", string_contains(output, default_prompt));
+    ASSERT("Output contains key phrase from default system prompt", string_contains(output, key_phrase));
     ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
     // Ensure user instructions are not present unless -c is also used
     ASSERT("Output does NOT contain <user_instructions>", !string_contains(output, "<user_instructions>"));
