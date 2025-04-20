@@ -264,11 +264,40 @@ llm_ctx -f --no-gitignore config.log 'src/**/*.c'
 
 ### How to Add Instructions for the LLM
 
-Use the `-c` flag followed by your instructions in quotes:
-```bash
-llm_ctx -f main.c -c "Focus on the main function and look for potential bugs."
-```
-This adds a `<user_instructions>` block to the output.
+Use the `-c` flag to provide instructions. There are several ways:
+
+1.  **Inline Text:** Provide the instructions directly on the command line (remember to quote if necessary):
+    ```bash
+    llm_ctx -f main.c -c "Focus on the main function and look for potential bugs."
+    # Or using the equals form:
+    llm_ctx -f main.c -c="Focus on the main function..."
+    ```
+
+2.  **From a File (`-c @file`):** Read instructions from a specified file. This is useful for complex or reusable prompts.
+    ```bash
+    # Create a file with your instructions
+    echo "Review this code for style consistency and potential errors." > /tmp/review_prompt.txt
+
+    # Use the file with -c @
+    llm_ctx -f src/*.c -c @/tmp/review_prompt.txt
+    ```
+
+3.  **From Standard Input (`-c @-`):** Read instructions from stdin until EOF (Ctrl+D). This is great for multi-line instructions directly in the terminal or via heredocs in scripts.
+    ```bash
+    # Type instructions directly (press Ctrl+D when done)
+    llm_ctx -f main.c -c @-
+    # --> Enter instructions here...
+    # --> Press Ctrl+D
+
+    # Use a heredoc in a script or shell
+    ./llm_ctx -c @- -f src/utils.c <<'EOF'
+    Please perform the following actions:
+    1. Identify potential memory leaks.
+    2. Suggest improvements for error handling.
+    EOF
+    ```
+
+All these methods add a `<user_instructions>` block to the output.
 
 ### How to Send Output to Clipboard
 
