@@ -159,6 +159,16 @@ git diff HEAD~1 | llm_ctx -c "Review this commit" | pbcopy
 
 This section provides goal-oriented steps for common tasks.
 
+### How to Request PR-Style Review Comments
+
+Use the `-e` (or `--editor-comments`) flag along with `-c` to instruct the LLM to format part of its response like a pull request review, with specific suggestions tied to the code.
+
+```bash
+# Analyze main.c and ask for review comments
+llm_ctx -f main.c -c "Review this function for thread safety" -e | pbcopy
+```
+This adds specific instructions within the `<response_guide>` block in the output.
+
 ### How to Analyze Specific Files
 
 Use the `-f` flag followed by the paths to the files:
@@ -347,6 +357,10 @@ Options:
   -c @-          Read instruction text from standard input until EOF (Ctrl+D).
                  Useful for multi-line instructions or heredocs.
                  Example: echo "Instructions" | llm_ctx -c @- -f file.c
+
+  -e, --editor-comments
+                 Instruct the LLM to append PR-style review comments to its
+                 response. Adds specific instructions to the <response_guide>.
 
   -f [FILE...]   Process specified files or glob patterns instead of stdin.
                  Must be followed by one or more file paths or patterns.
