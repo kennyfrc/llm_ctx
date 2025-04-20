@@ -148,8 +148,9 @@ static void add_response_guide(const char *problem) {
     if (!problem || !*problem) return;
     fprintf(temp_file,
         "<response_guide>\n"
+        "<!-- LLM: Follow the instructions within this response guide -->\n"
         "  <problem_statement>\n"
-        "Summarize the user's request or problem based on the <user_instructions> block and the provided context.\n"
+        "Summarize the user's request or problem based on the overall context provided.\n"
         "  </problem_statement>\n"
         "  <reply_format>\n"
         "    1. Provide a clear, step-by-step solution or explanation.\n"

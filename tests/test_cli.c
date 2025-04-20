@@ -982,8 +982,10 @@ TEST(test_cli_e_flag_response_guide) {
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
     char *output_no_e = run_command(cmd);
 
-    const char *expected_problem_statement = "Summarize the user's request or problem based on the <user_instructions> block and the provided context.";
+    const char *expected_guide_instruction = "<!-- LLM: Follow the instructions within this response guide -->";
+    const char *expected_problem_statement = "Summarize the user's request or problem based on the overall context provided.";
     ASSERT("Output (no -e) contains <response_guide>", string_contains(output_no_e, "<response_guide>"));
+    ASSERT("Output (no -e) contains guide instruction comment", string_contains(output_no_e, expected_guide_instruction));
     ASSERT("Output (no -e) contains <problem_statement>", string_contains(output_no_e, "<problem_statement>"));
     ASSERT("Output (no -e) contains correct problem statement instruction", string_contains(output_no_e, expected_problem_statement));
     /* Removed redundant check: instructions *are* present in <user_instructions> */
@@ -995,6 +997,7 @@ TEST(test_cli_e_flag_response_guide) {
     char *output_with_e = run_command(cmd);
 
     ASSERT("Output (with -e) contains <response_guide>", string_contains(output_with_e, "<response_guide>"));
+    ASSERT("Output (with -e) contains guide instruction comment", string_contains(output_with_e, expected_guide_instruction));
     ASSERT("Output (with -e) contains <problem_statement>", string_contains(output_with_e, "<problem_statement>"));
     ASSERT("Output (with -e) contains correct problem statement instruction", string_contains(output_with_e, expected_problem_statement));
     /* Removed redundant check: instructions *are* present in <user_instructions> */
