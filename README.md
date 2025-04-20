@@ -393,9 +393,9 @@ Options:
 
 The output is structured using simple XML-like tags for clarity:
 
-*   **`<system_instructions>` (Optional):** Contains the text provided via the `-s` flag (either the default or custom from `@FILE`/`@-`). Appears first if present.
-*   **`<user_instructions>` (Optional):** Contains the text provided via the `-c` flag. Appears after system instructions if both are present.
-*   **`<response_guide>` (Optional):** Appears if `-c` was used. Contains guidance for the LLM on how to structure its response. Includes an initial comment instructing the LLM to follow the guide.
+*   **`<user_instructions>` (Optional):** Contains the text provided via the `-c` flag. Appears first if present.
+*   **`<system_instructions>` (Optional):** Contains the text provided via the `-s` flag (either the default or custom from `@FILE`/`@-`). Appears after user instructions if both are present.
+*   **`<response_guide>` (Optional):** Appears if `-c` was used. Contains guidance for the LLM on how to structure its response. Includes an initial comment instructing the LLM to follow the guide. Appears after system instructions.
     *   **`<problem_statement>`:** Contains a fixed instruction for the LLM to summarize the user's request based on the overall context provided (including `<user_instructions>` and file content). This ensures the LLM actively processes the request context.
     *   **`<reply_format>`:** Instructions for the LLM's reply structure. If the `-e` or `--editor-comments` flag was used, this section explicitly asks for PR-style code review comments (e.g., using GitHub inline diff syntax) in addition to the main solution/explanation. Otherwise, it indicates that no code review block is needed.
 *   **`<file_tree>`:** Shows a tree structure representing the relative paths of the files included in the context. The root of the tree is the common parent directory.
@@ -404,16 +404,16 @@ The output is structured using simple XML-like tags for clarity:
     *   **```` ```[type] ````:** Standard Markdown fenced code blocks containing the file content. `[type]` is automatically detected for stdin content (e.g., `diff`, `json`) if possible, otherwise it's empty.
     *   **`----------------------------------------`:** A separator line between files within the `<file_context>`.
 
-**Example Structure (with `-s`, `-c` and `-e`):**
+**Example Structure (with `-c`, `-s` and `-e`):**
 
 ```
-<system_instructions>
-You are a senior programmer.
-</system_instructions>
-
 <user_instructions>
 Review this C code for potential memory leaks and suggest improvements.
 </user_instructions>
+
+<system_instructions>
+You are a senior programmer.
+</system_instructions>
 
 <response_guide>
 <!-- LLM: Follow the instructions within this response guide -->

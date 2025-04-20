@@ -1332,13 +1332,13 @@ int main(int argc, char *argv[]) {
         /* If it's a file argument in file_mode, the loop continues */
     }
 
-    /* Add system instructions first, if provided */
-    add_system_instructions(system_instructions);
-    /* Add user instructions if provided */
+    /* Add user instructions first, if provided */
     add_user_instructions(user_instructions);
+    /* Add system instructions if provided */
+    add_system_instructions(system_instructions);
     /* Add response guide (depends on user instructions and -e flag) */
     add_response_guide(user_instructions);
-    
+
     /* Load gitignore files if enabled */
     if (respect_gitignore) {
         /* Pre-condition: gitignore is enabled */
