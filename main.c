@@ -156,7 +156,7 @@ static void add_response_guide(const char *problem) {
         "    2. %s\n"
         "  </reply_format>\n"
         "</response_guide>\n\n",
-        problem,
+        /* The only argument needed is for the %s above */
         want_editor_comments ?
           "Return **PR-style code review comments**: use GitHub inline-diff syntax, group notes per file, justify each change, and suggest concrete refactors."
           : "No code-review block is required.");
