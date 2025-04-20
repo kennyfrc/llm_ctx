@@ -331,11 +331,20 @@ This section provides detailed technical information about `llm_ctx`.
 ### Command-Line Options
 
 ```
-Usage: llm_ctx [OPTIONS]
+Usage: llm_ctx [OPTIONS] [FILE...]
 
 Options:
-  -c TEXT        Add user instructions wrapped in <user_instructions> tags.
+  -c TEXT        Add instruction text wrapped in <user_instructions> tags.
                  Example: -c "Explain this code."
+                 Example: -c="Explain this code."
+
+  -c @FILE       Read instruction text from FILE. The file content is used
+                 as the instruction text. Useful for multi-line prompts.
+                 Example: -c @/path/to/prompt.txt
+
+  -c @-          Read instruction text from standard input until EOF (Ctrl+D).
+                 Useful for multi-line instructions or heredocs.
+                 Example: echo "Instructions" | llm_ctx -c @- -f file.c
 
   -f [FILE...]   Process specified files or glob patterns instead of stdin.
                  Must be followed by one or more file paths or patterns.
