@@ -977,6 +977,23 @@ TEST(test_cli_error_command_equals_empty) {
     ASSERT("Output contains 'requires a non-empty argument' fatal error", string_contains(output, "Error: -c/--command requires a non-empty argument"));
 }
 
+/* Test -C flag: Read instructions from stdin (alias for -c @-) */
+TEST(test_cli_C_flag_stdin) {
+    char cmd[2048];
+    // Pipe instructions via echo to llm_ctx running with -C
+    snprintf(cmd, sizeof(cmd), "echo 'Instructions via -C.' | %s/llm_ctx -C -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    char *output = run_command(cmd);
+
+    // Check for user instructions block (Note: echo adds a trailing newline)
+    ASSERT("Output contains user_instructions tag", string_contains(output, "<user_instructions>"));
+    ASSERT("Output contains instructions from stdin via -C", string_contains(output, "Instructions via -C.\n"));
+    ASSERT("Output contains closing user_instructions tag", string_contains(output, "</user_instructions>"));
+    // Check that file content is also present
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+    // Check for the warning message (since -C uses the -c @- logic)
+    ASSERT("Output contains '@- implies file mode' warning", string_contains(output, "Warning: Using -c @- implies file mode"));
+}
+
 /* Test -e flag and <response_guide> content */
 TEST(test_cli_e_flag_response_guide) {
     char cmd[2048];
@@ -1168,6 +1185,7 @@ int main(void) {
     RUN_TEST(test_cli_error_c_no_arg);
     RUN_TEST(test_cli_error_c_equals_empty);
     RUN_TEST(test_cli_error_command_equals_empty);
+    RUN_TEST(test_cli_C_flag_stdin);
     RUN_TEST(test_cli_e_flag_response_guide);
 
     /* Tests for -s */
