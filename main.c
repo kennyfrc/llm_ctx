@@ -1385,6 +1385,7 @@ int main(int argc, char *argv[]) {
     /* and adhering to the "minimize execution paths" principle. */
     int opt;
     while ((opt = getopt_long(argc, argv, "hc:s::fe", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s::feC", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
                 show_help(); /* Exits */
@@ -1401,6 +1402,10 @@ int main(int argc, char *argv[]) {
                 break;
             case 'e': /* -e or --editor-comments */
                 want_editor_comments = true;
+                break;
+            case 'C': /* -C (equivalent to -c @-) */
+                /* Reuse the existing handler by simulating the @- argument */
+                handle_command_arg("@-");
                 break;
             case 1: /* --no-gitignore (long option without short equiv) */
                 respect_gitignore = false;
