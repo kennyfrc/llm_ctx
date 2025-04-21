@@ -1385,7 +1385,6 @@ int main(int argc, char *argv[]) {
     /* and adhering to the "minimize execution paths" principle. */
     int opt;
     while ((opt = getopt_long(argc, argv, "hc:s::fe", long_options, NULL)) != -1) {
-    while ((opt = getopt_long(argc, argv, "hc:s::feC", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
 
