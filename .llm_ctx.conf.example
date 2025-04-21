@@ -1,0 +1,19 @@
+# Example configuration file for llm_ctx
+#
+# Place this file as .llm_ctx.conf in your project root or a parent directory.
+# llm_ctx will search upwards for the first .llm_ctx.conf file it finds.
+# Settings here can be overridden by command-line flags.
+
+# Automatically copy output to clipboard instead of printing to stdout.
+# Valid values: true, false, yes, no, 1, 0
+# copy_to_clipboard = true
+
+# Default setting for requesting PR-style review comments (-e flag).
+# Valid values: true, false, yes, no, 1, 0
+editor_comments = false
+
+# Default system prompt (-s flag).
+# Can be inline text or a path relative to this config file using '@'.
+# system_prompt = You are a helpful assistant.
+# system_prompt = @prompts/default_system.txt
+

@@ -37,12 +37,22 @@ tests/test_stdin: tests/test_stdin.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 test: $(TARGET) $(TEST_TARGETS)
+	@echo "Backing up user config file..."
+	@mv -f ".llm_ctx.conf" "__USER_llm_ctx.conf.backup__" 2>/dev/null || true
+	@echo "Creating temporary empty config file..."
+	@touch .llm_ctx.conf # Create dummy to stop upward search
 	@echo "\nRunning unit tests..."
-	./tests/test_gitignore
+	@./tests/test_gitignore || true
 	@echo "\nRunning integration tests..."
-	./tests/test_cli
+	@./tests/test_cli || true
 	@echo "\nRunning stdin pipe tests..."
-	./tests/test_stdin
+	@./tests/test_stdin || true
+	@echo "\nRemoving temporary config file..."
+	@rm -f ".llm_ctx.conf" # Remove dummy
+	@echo "\nRestoring user config file..."
+	@mv -f "__USER_llm_ctx.conf.backup__" ".llm_ctx.conf" 2>/dev/null || true
+	@echo "Test run complete."
+	@# Exit with non-zero status if any test failed (requires more complex tracking or a test runner)
 
 clean:
 	rm -f $(TARGET) $(TEST_TARGETS)

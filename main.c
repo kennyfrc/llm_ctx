@@ -23,11 +23,27 @@
 #include <stdbool.h>  /* For bool type */
 #include <stdint.h>   /* For fixed-width integer types */
 #include <stdarg.h>   /* For va_list, va_start, va_end */
+#include <limits.h>   /* For PATH_MAX */
 #include <getopt.h>   /* For getopt_long */
 #include "gitignore.h"
 
 /* Forward declaration for cleanup function called by fatal() */
 void cleanup(void);
+
+/* Structure to hold settings parsed directly from the config file */
+typedef struct {
+    char *system_prompt_source; /* Allocated string: NULL, inline text, or "@path" */
+    bool editor_comments;
+    bool copy_to_clipboard;
+
+    /* Flags to track if a setting was explicitly set in the config file */
+    bool system_prompt_set;
+    bool editor_comments_set;
+    bool copy_to_clipboard_set;
+} ConfigSettings;
+
+/* Global flag for effective copy_to_clipboard setting */
+static bool g_effective_copy_to_clipboard = false;
 
 /* ========================= NEW HELPERS ========================= */
 
@@ -152,6 +168,9 @@ bool collect_file(const char *filepath);
 bool output_file_content(const char *filepath, FILE *output);
 void add_user_instructions(const char *instructions);
 void find_recursive(const char *base_dir, const char *pattern);
+char *find_config_file(void);
+bool parse_config_file(const char *config_path, ConfigSettings *settings);
+void copy_to_clipboard(const char *buffer);
 bool process_pattern(const char *pattern);
 void generate_file_tree(void);
 void add_to_file_tree(const char *filepath);
@@ -1128,6 +1147,61 @@ void find_recursive(const char *base_dir, const char *pattern) {
 }
 
 /**
+ * Search upwards from the current directory for the config file.
+ * Returns the path to the first found config file (caller must free), or NULL.
+ */
+char *find_config_file(void) {
+    char current_dir[PATH_MAX];
+    char config_path[PATH_MAX];
+    char parent_dir[PATH_MAX];
+
+    /* Get the current working directory */
+    if (getcwd(current_dir, sizeof(current_dir)) == NULL) {
+        perror("getcwd() error");
+        return NULL;
+    }
+
+    /* Loop upwards until root or error */
+    while (1) {
+        /* Construct the path to the config file in the current directory */
+        snprintf(config_path, sizeof(config_path), "%s/.llm_ctx.conf", current_dir);
+
+        /* Check if the file exists and is readable */
+        if (access(config_path, R_OK) == 0) {
+            /* Found it! Duplicate the path and return */
+            char *found_path = strdup(config_path);
+            if (!found_path) {
+                perror("strdup() error");
+                return NULL; /* Allocation failed */
+            }
+            return found_path;
+        }
+
+        /* Check if we are at the root directory */
+        if (strcmp(current_dir, "/") == 0) {
+            break; /* Reached root, not found */
+        }
+
+        /* Get the parent directory path */
+        /* Use dirname() on a copy because it can modify the input */
+        char *dir_copy = strdup(current_dir);
+        if (!dir_copy) { perror("strdup() error"); return NULL; }
+        strcpy(parent_dir, dirname(dir_copy));
+        free(dir_copy);
+
+        /* Check if dirname returned the same path (e.g., at root or error) */
+        if (strcmp(current_dir, parent_dir) == 0) {
+            break; /* Stop if path doesn't change */
+        }
+
+        /* Update current_dir to the parent directory */
+        strcpy(current_dir, parent_dir);
+    }
+
+    return NULL; /* Not found */
+}
+
+/**
  * Process a glob pattern to find matching files
  */
 bool process_pattern(const char *pattern) {
@@ -1221,6 +1295,125 @@ bool process_pattern(const char *pattern) {
     return (files_found > initial_files_found);
 }
 
+/* Trim leading/trailing whitespace from a string in-place */
+static char *trim_whitespace(char *str) {
+    char *end;
+
+    /* Trim leading space */
+    while (isspace((unsigned char)*str)) str++;
+
+    if (*str == 0) /* All spaces? */
+        return str;
+
+    /* Trim trailing space */
+    end = str + strlen(str) - 1;
+    while (end > str && isspace((unsigned char)*end)) end--;
+
+    /* Write new null terminator character */
+    end[1] = '\0';
+
+    return str;
+}
+
+/* Parse the configuration file */
+bool parse_config_file(const char *config_path, ConfigSettings *settings) {
+    FILE *file = fopen(config_path, "r");
+    if (!file) {
+        /* Don't treat not found as fatal, just return false */
+        if (errno == ENOENT) {
+            return false;
+        }
+        /* Other errors (e.g., permission denied) could be warned */
+        /* fprintf(stderr, "Warning: Could not open config file %s: %s\n", config_path, strerror(errno)); */
+        return false;
+    }
+
+    /* Initialize settings */
+    memset(settings, 0, sizeof(ConfigSettings));
+
+    char line[1024];
+    while (fgets(line, sizeof(line), file)) {
+        char *trimmed_line = trim_whitespace(line);
+
+        /* Skip empty lines and comments */
+        if (trimmed_line[0] == '\0' || trimmed_line[0] == '#') {
+            continue;
+        }
+
+        char *key = trimmed_line;
+        char *value = strchr(trimmed_line, '=');
+
+        if (value) {
+            *value = '\0'; /* Null-terminate key */
+            value++;       /* Move to start of value */
+            key = trim_whitespace(key);
+            value = trim_whitespace(value);
+
+            if (strcmp(key, "copy_to_clipboard") == 0) {
+                settings->copy_to_clipboard = (strcasecmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcasecmp(value, "yes") == 0);
+                settings->copy_to_clipboard_set = true;
+            } else if (strcmp(key, "editor_comments") == 0) {
+                settings->editor_comments = (strcasecmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcasecmp(value, "yes") == 0);
+                settings->editor_comments_set = true;
+            } else if (strcmp(key, "system_prompt") == 0) {
+                settings->system_prompt_source = strdup(value);
+                if (!settings->system_prompt_source) {
+                    /* Handle allocation failure - maybe warn? */
+                    /* For now, just skip setting this value */
+                } else {
+                    settings->system_prompt_set = true;
+                }
+            } /* Add other keys here in later slices */
+        } /* Ignore lines without '=' for now */
+    }
+    fclose(file);
+    return true;
+}
+
+/**
+ * Copy the given buffer content to the system clipboard.
+ * Uses platform-specific commands.
+ */
+void copy_to_clipboard(const char *buffer) {
+    const char *cmd = NULL;
+    #ifdef __APPLE__
+        cmd = "pbcopy";
+    #elif defined(__linux__)
+        /* Prefer wl-copy if Wayland is likely running */
+        if (getenv("WAYLAND_DISPLAY")) {
+            cmd = "wl-copy";
+        } else {
+            /* Fallback to xclip for X11 */
+            /* Check if xclip exists? For now, assume it does or popen will fail. */
+            cmd = "xclip -selection clipboard";
+        }
+    #elif defined(_WIN32)
+        cmd = "clip.exe";
+    #else
+        fprintf(stderr, "Warning: Clipboard copy not supported on this platform.\n");
+        return;
+    #endif
+
+    if (!cmd) { /* Should only happen on Linux if both checks fail */
+         fprintf(stderr, "Warning: Could not determine clipboard command on Linux.\n");
+         return;
+    }
+
+    FILE *pipe = popen(cmd, "w");
+    if (!pipe) {
+        perror("popen failed for clipboard command");
+        return;
+    }
+
+    /* Write buffer to the command's stdin */
+    fwrite(buffer, 1, strlen(buffer), pipe);
+
+    /* Close the pipe and check status */
+    if (pclose(pipe) == -1) {
+        perror("pclose failed for clipboard command");
+    }
+    /* Ignore command exit status for now, focus on pipe errors */
+}
 
 /**
  * Cleanup function to free memory before exit
@@ -1233,7 +1426,6 @@ void cleanup(void) {
     /* Free dynamically allocated user instructions */
     if (user_instructions) free(user_instructions);
 
-    /* Free the processed files list */
     for (int i = 0; i < num_processed_files; i++) {
         free(processed_files[i]);
     }
@@ -1266,6 +1458,11 @@ static const struct option long_options[] = {
     {"no-gitignore",    no_argument,       0,  1 }, /* Use a value > 255 for long-only */
     {0, 0, 0, 0} /* Terminator */
 };
+static bool s_flag_used = false; /* Track if -s was used */
+static bool e_flag_used = false; /* Track if -e was used */
+/* No specific CLI flag for copy yet, so no copy_flag_used needed */
+
+
 
 /* Helper to handle argument for -c/--command */
 static void handle_command_arg(const char *arg) {
@@ -1398,12 +1595,14 @@ int main(int argc, char *argv[]) {
             case 's': /* -s or --system */
                 /* optarg is NULL if -s is bare, points to arg if -s@... */
                 handle_system_arg(optarg);
+                s_flag_used = true; /* Track that CLI flag was used */
                 break;
             case 'f': /* -f or --files */
                 file_mode = 1;
                 break;
             case 'e': /* -e or --editor-comments */
                 want_editor_comments = true;
+                e_flag_used = true; /* Track that CLI flag was used */
                 break;
             case 'C': /* -C (equivalent to -c @-) */
                 /* Reuse the existing handler by simulating the @- argument */
@@ -1443,6 +1642,73 @@ int main(int argc, char *argv[]) {
     /* After getopt_long, optind is the index of the first non-option argument. */
     /* These are the file paths/patterns if file_mode is set. */
     int file_args_start = optind;
+
+    /* --- Configuration File Loading --- */
+    /* Find config file by searching upwards */
+    char *config_path = find_config_file();
+    if (config_path) {
+        ConfigSettings loaded_settings;
+        if (parse_config_file(config_path, &loaded_settings)) {
+            /* Merge copy_to_clipboard (no CLI override yet) */
+            if (loaded_settings.copy_to_clipboard_set) {
+                g_effective_copy_to_clipboard = loaded_settings.copy_to_clipboard;
+            }
+            /* Merge editor_comments (respect CLI override) */
+            if (loaded_settings.editor_comments_set && !e_flag_used) {
+                /* Apply config setting only if CLI flag wasn't used */
+                want_editor_comments = loaded_settings.editor_comments;
+                /* Note: e_flag_used remains false here */
+            }
+            /* Merge system_prompt (respect CLI override) */
+            if (loaded_settings.system_prompt_set && !s_flag_used) {
+                char *source = loaded_settings.system_prompt_source;
+                char *new_prompt = NULL;
+                bool load_attempted = false; /* Track if we tried loading from config */
+
+                if (source && source[0] == '@') {
+                    if (strcmp(source, "@-") == 0) {
+                        fprintf(stderr, "Warning: system_prompt=@- in config file is not supported. Ignoring.\n");
+                    } else {
+                        /* Resolve path relative to config file */
+                        char config_dir_buf[PATH_MAX];
+                        strncpy(config_dir_buf, config_path, PATH_MAX - 1);
+                        config_dir_buf[PATH_MAX - 1] = '\0';
+                        char *config_dir = dirname(config_dir_buf);
+
+                        char abs_path[PATH_MAX];
+                        snprintf(abs_path, sizeof(abs_path), "%s/%s", config_dir, source + 1);
+
+                        new_prompt = slurp_file(abs_path);
+                        load_attempted = true; /* We attempted to load from a file */
+                        if (!new_prompt) {
+                            fprintf(stderr, "Warning: Cannot read system prompt file '%s' (resolved from '%s' in config): %s. Ignoring.\n", abs_path, source, strerror(errno));
+                            /* new_prompt remains NULL, indicating failure */
+                        }
+                    }
+                } else if (source) { /* Inline string */
+                    new_prompt = strdup(source);
+                    load_attempted = true; /* We attempted to load from inline text */
+                    if (!new_prompt) {
+                        fprintf(stderr, "Warning: Out of memory duplicating system prompt from config. Ignoring.\n");
+                        /* new_prompt is NULL, indicating failure */
+                    }
+                }
+
+                if (new_prompt) {
+                    /* Successfully loaded/duplicated prompt from config */
+                    if (system_instructions && system_instructions != DEFAULT_SYSTEM_MSG) free(system_instructions);
+                    system_instructions = new_prompt;
+                } else if (load_attempted) {
+                    /* Attempted to load from config (file or inline) but failed (file not found, OOM) */
+                    /* Fall back to the default system prompt. */
+                    if (system_instructions && system_instructions != DEFAULT_SYSTEM_MSG) free(system_instructions);
+                    system_instructions = (char *)DEFAULT_SYSTEM_MSG; /* Use default */
+                }
+            }
+            /* Free allocated strings in loaded_settings if any (future slices) */
+        }
+        free(config_path); /* Free the path returned by find_config_file */
+    }
 
     /* Add user instructions first, if provided */
     add_user_instructions(user_instructions);
@@ -1495,11 +1761,17 @@ int main(int argc, char *argv[]) {
     } else {
         /* Stdin mode (no -f, no @- used) */
         if (isatty(STDIN_FILENO)) {
-            /* If stdin is a terminal and no file mode, show help */
+            /* If stdin is a terminal and we are not in file mode (which would be set by -f, -c @-, -s @-, -C),
+             * it means the user likely forgot to pipe input or provide file arguments.
+             * Show the help message in this case. The -C/-c @-/-s @- cases are handled
+             * because they set file_mode = 1 earlier. */
             show_help();
+
         } else {
-            /* Process stdin content */
-            process_stdin_content();
+            /* Stdin is not a terminal (piped data), process it */
+            if (!process_stdin_content()) {
+                 return 1; /* Exit on stdin processing error */
+            }
         }
     }
     
@@ -1528,19 +1800,32 @@ int main(int argc, char *argv[]) {
     /* Flush and close the temp file */
     fclose(temp_file);
     
-    /* Display the output directly to stdout */
-    FILE *final_output = fopen(temp_file_path, "r");
-    if (final_output) {
-        char buffer[4096];
-        size_t bytes_read;
-        while ((bytes_read = fread(buffer, 1, sizeof(buffer), final_output)) > 0) {
-            fwrite(buffer, 1, bytes_read, stdout);
+
+    /* --- Output Handling --- */
+    if (g_effective_copy_to_clipboard) {
+        /* Read temp file content */
+        char *final_content = slurp_file(temp_file_path);
+        if (final_content) {
+            copy_to_clipboard(final_content);
+            free(final_content);
+            /* Print confirmation message to stderr */
+            fprintf(stderr, "Content copied to clipboard.\n");
+        } else {
+            perror("Failed to read temporary file for clipboard");
+            /* atexit handler will still attempt cleanup */
+            return 1; /* Indicate failure */
         }
-        fclose(final_output);
+        /* Do NOT print to stdout when copying */
     } else {
-        perror("Failed to open temporary file for reading");
-        /* atexit handler will still attempt cleanup */
-        return 1; /* Indicate failure */
+        /* Default: Display the output directly to stdout */
+        char *final_content = slurp_file(temp_file_path);
+        if (final_content) {
+            printf("%s", final_content); /* Print directly to stdout */
+            free(final_content);
+        } else {
+            perror("Failed to read temporary file for stdout");
+            return 1; /* Indicate failure */
+        }
     }
 
     /* Cleanup is handled by atexit handler */

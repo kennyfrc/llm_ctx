@@ -24,4 +24,14 @@ Thumbs.db
 
 # Aider specific files (if used)
 .aider*
-*.plan
+*.plan # Often used by aider or similar tools
+plan.md
+debrief*.md
+
+# Test backup files
+__USER_llm_ctx.conf.backup__
+
+# Configuration file
+# Ignore the actual config file, but not the example
+.llm_ctx.conf
+!.llm_ctx.conf.example
