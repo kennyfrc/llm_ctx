@@ -63,4 +63,7 @@ else
 endif
 	@echo "Symlink created. You can now run '$(TARGET)' from anywhere."
 
-.PHONY: all clean install test symlink
+# Shortcut to clean, build, and test
+retest: clean test
+
+.PHONY: all clean install test symlink retest
