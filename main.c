@@ -1388,6 +1388,7 @@ int main(int argc, char *argv[]) {
     while ((opt = getopt_long(argc, argv, "hc:s::feC", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
+
                 show_help(); /* Exits */
                 break;
             case 'c': /* -c or --command */
