@@ -1454,8 +1454,8 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
         /* Handle multiline value collection */
         /* ---------- Already inside a multiline value ---------- */
         if (collecting_multiline) {
-            /* Whitespace‑only line  → keep a *pure* blank line inside block   */
             if (strspn(line, " \t\r\n") == strlen(line)) {
+            /* Whitespace‑only line  → keep a *pure* blank line inside block   */
                 /* Append just a newline */
                 if (!APPEND_TO_BUFFER("\n", 1, &pending_value_buffer, &pending_value_len, &pending_value_cap)) {
                     free(pending_key);
