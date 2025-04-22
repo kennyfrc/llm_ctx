@@ -1401,11 +1401,7 @@ static bool finalize_multiline_block(ConfigSettings *s,
     }
 
     /* ---------- Trim common indentation ---------- */
-    /* Preserve the original spacing for `system_prompt` because leading     *
-     * spaces may be part of Markdown/code‑block formatting.  All other      *
-     * multiline values still benefit from the de‑indent logic.              */
-    if (strcmp(key, "system_prompt") != 0 &&
-        min_indent != SIZE_MAX &&
+    if (min_indent != SIZE_MAX &&
         min_indent >= INDENT_TRIM_THRESHOLD) {
         char *trimmed = malloc(len + 1); /* Max possible size */
         if (!trimmed) { errno = ENOMEM; free(buf); *buf_ptr = NULL; *len_ptr = 0; return false; }

@@ -1007,8 +1007,8 @@ TEST(test_cli_config_system_prompt_multiline) {
     char conf_path[1024];
     snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
     /* Test setup matching the intended scenario for indentation */
-    const char *expected_combined_prompt = "  Line 1.\n    Line 2 indented.\n  Line 3 same indent.";
-
+    /* After uniform de-indent (min-indent = 2), the stored value is: */
+    const char *expected_combined_prompt = "Line 1.\n  Line 2 indented.\nLine 3 same indent.";
     /* Create config file with multiline prompt */
     FILE *conf = fopen(conf_path, "w");
     ASSERT("Config file created for sys prompt multiline test", conf != NULL);
