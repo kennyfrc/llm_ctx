@@ -1319,6 +1319,21 @@ TEST(test_cli_config_editor_comments_override) {
     unlink(conf_path); // Clean up config file
 }
 
+/* Test prompt-only output: -c flag with no files/stdin */
+TEST(test_cli_prompt_only_c) {
+    char cmd[2048];
+    const char *instructions = "Explain this refactor";
+
+    // Run with only -c flag, no files, no stdin pipe
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c=\"%s\"", getenv("PWD"), instructions);
+    char *output = run_command(cmd); // Captures stderr
+
+    ASSERT("Output contains <user_instructions>", string_contains(output, "<user_instructions>"));
+    ASSERT("Output contains <file_context>", string_contains(output, "<file_context>"));
+    ASSERT("Output does NOT contain 'File:' marker", !string_contains(output, "File:"));
+    ASSERT("Output does NOT contain 'No files to process' error", !string_contains(output, "No files to process"));
+}
+
 // ============================================================================
 // Tests for -s (system instructions)
 // ============================================================================
@@ -1594,6 +1609,7 @@ int main(void) {
     RUN_TEST(test_cli_config_editor_comments_true);
     RUN_TEST(test_cli_config_editor_comments_false);
     RUN_TEST(test_cli_config_editor_comments_override);
+    RUN_TEST(test_cli_prompt_only_c);
 
     /* Tests for -s */
     RUN_TEST(test_cli_s_default);

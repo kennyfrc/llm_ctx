@@ -1466,6 +1466,7 @@ static const struct option long_options[] = {
     {0, 0, 0, 0} /* Terminator */
 };
 static bool s_flag_used = false; /* Track if -s was used */
+static bool c_flag_used = false; /* Track if -c/-C/--command was used */
 static bool e_flag_used = false; /* Track if -e was used */
 /* No specific CLI flag for copy yet, so no copy_flag_used needed */
 
@@ -1489,6 +1490,7 @@ static void handle_command_arg(const char *arg) {
     if (*arg == '\0')
         fatal("Error: -c/--command requires a non-empty argument");
 
+    c_flag_used = true; /* Track that CLI flag was used */
     if (user_instructions) { /* Free previous if called multiple times */
          free(user_instructions);
          user_instructions = NULL;
@@ -1524,6 +1526,7 @@ static void handle_command_arg(const char *arg) {
 /* Helper to handle argument for -s/--system */
 static void handle_system_arg(const char *arg) {
      if (system_instructions && system_instructions != DEFAULT_SYSTEM_MSG) {
+         /* Don't free if it's the default, which wasn't malloc'd */
          free(system_instructions); /* Free previous if called multiple times */
          system_instructions = NULL;
      }
@@ -1531,6 +1534,7 @@ static void handle_system_arg(const char *arg) {
     /* Case 1: -s without argument (optarg is NULL) -> use default */
     if (arg == NULL) {
         system_instructions = (char *)DEFAULT_SYSTEM_MSG;
+        s_flag_used = true; /* Track that CLI flag was used */
         return; /* Nothing more to do */
     }
 
@@ -1542,6 +1546,7 @@ static void handle_system_arg(const char *arg) {
             }
             system_instructions = slurp_stream(stdin);
             if (!system_instructions) fatal("Error reading system instructions from stdin: %s", ferror(stdin) ? strerror(errno) : "Out of memory");
+            s_flag_used = true; /* Track that CLI flag was used */
             /* Using -s @- implies file mode */
              if (!file_mode) {
                  fprintf(stderr, "Warning: Using -s @- implies file mode (-f). Subsequent arguments will be treated as files.\n");
@@ -1551,6 +1556,7 @@ static void handle_system_arg(const char *arg) {
             system_instructions = slurp_file(arg + 1); /* skip '@' */
             if (!system_instructions)
                 fatal("Cannot open or read system prompt file '%s': %s", arg + 1, strerror(errno));
+            s_flag_used = true; /* Track that CLI flag was used */
         }
     } else {
         /* Case 3: -s with an argument not starting with '@' -> Error */
@@ -1566,6 +1572,7 @@ static void handle_system_arg(const char *arg) {
  * Main function - program entry point
  */
 int main(int argc, char *argv[]) {
+    bool allow_empty_context = false; /* Can we finish with no file content? */
     /* Register cleanup handler */
     atexit(cleanup); /* Register cleanup handler early */
 
@@ -1598,11 +1605,13 @@ int main(int argc, char *argv[]) {
                 break;
             case 'c': /* -c or --command */
                 handle_command_arg(optarg);
+                /* Flag set inside handle_command_arg */
                 break;
             case 's': /* -s or --system */
                 /* optarg is NULL if -s is bare, points to arg if -s@... */
                 handle_system_arg(optarg);
-                s_flag_used = true; /* Track that CLI flag was used */
+                /* Flag set inside handle_system_arg */
+                /* allow_empty_context = true; // Set later based on final state */
                 break;
             case 'f': /* -f or --files */
                 file_mode = 1;
@@ -1610,10 +1619,11 @@ int main(int argc, char *argv[]) {
             case 'e': /* -e or --editor-comments */
                 want_editor_comments = true;
                 e_flag_used = true; /* Track that CLI flag was used */
+                /* allow_empty_context = true; // Set later based on final state */
                 break;
             case 'C': /* -C (equivalent to -c @-) */
                 /* Reuse the existing handler by simulating the @- argument */
-                handle_command_arg("@-");
+                handle_command_arg("@-"); /* Sets c_flag_used */
                 break;
             case 1: /* --no-gitignore (long option without short equiv) */
                 respect_gitignore = false;
@@ -1653,6 +1663,9 @@ int main(int argc, char *argv[]) {
     /* --- Configuration File Loading --- */
     /* Find config file by searching upwards */
     char *config_path = find_config_file();
+    bool config_set_system = false;
+    bool config_set_editor = false;
+
     if (config_path) {
         ConfigSettings loaded_settings;
         if (parse_config_file(config_path, &loaded_settings)) {
@@ -1664,10 +1677,12 @@ int main(int argc, char *argv[]) {
             if (loaded_settings.editor_comments_set && !e_flag_used) {
                 /* Apply config setting only if CLI flag wasn't used */
                 want_editor_comments = loaded_settings.editor_comments;
+                config_set_editor = true;
                 /* Note: e_flag_used remains false here */
             }
             /* Merge system_prompt (respect CLI override) */
             if (loaded_settings.system_prompt_set && !s_flag_used) {
+                config_set_system = true; /* Mark that config tried to set it */
                 char *source = loaded_settings.system_prompt_source;
                 char *new_prompt = NULL;
                 bool load_attempted = false; /* Track if we tried loading from config */
@@ -1717,6 +1732,13 @@ int main(int argc, char *argv[]) {
         free(config_path); /* Free the path returned by find_config_file */
     }
 
+    /* Determine if prompt-only output is allowed based on final settings */
+    /* Allow if user instructions were given (-c/-C/--command) */
+    /* OR if system instructions were explicitly set (via -s or config) */
+    /* OR if editor comments were requested (via -e or config) */
+    allow_empty_context = c_flag_used || s_flag_used || config_set_system || e_flag_used || config_set_editor;
+
+
     /* Add user instructions first, if provided */
     add_user_instructions(user_instructions);
     /* Add system instructions if provided */
@@ -1746,7 +1768,7 @@ int main(int argc, char *argv[]) {
                  /* -f flag likely provided but no files specified, or only options given */
                  fprintf(stderr, "Warning: File mode specified (-f or via @-) but no file arguments provided.\n");
                  /* Allow proceeding if stdin might have been intended but wasn't used for @- */
-                 /* If stdin is not a tty, process it. Otherwise, exit. */
+                 /* If stdin is not a tty, process it. Otherwise, exit if prompt-only not allowed. */
                  if (isatty(STDIN_FILENO)) {
                      fprintf(stderr, "No input provided.\n");
                      return 1; /* Exit if terminal and no files */
@@ -1769,10 +1791,11 @@ int main(int argc, char *argv[]) {
         /* Stdin mode (no -f, no @- used) */
         if (isatty(STDIN_FILENO)) {
             /* If stdin is a terminal and we are not in file mode (which would be set by -f, -c @-, -s @-, -C),
-             * it means the user likely forgot to pipe input or provide file arguments.
-             * Show the help message in this case. The -C/-c @-/-s @- cases are handled
-             * because they set file_mode = 1 earlier. */
-            show_help();
+             * and prompt-only output isn't allowed (no -c/-s/-e flags used),
+             * it means the user likely forgot to pipe input or provide file arguments. Show help. */
+            if (!allow_empty_context) {
+                show_help(); /* Exits */
+            } /* Otherwise, allow proceeding to generate prompt-only output */
 
         } else {
             /* Stdin is not a terminal (piped data), process it */
@@ -1782,12 +1805,17 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    /* Check if any files were found */
-    if (files_found == 0) {
+    /* Check if any files were found or if prompt-only output is allowed */
+    if (files_found == 0 && !allow_empty_context) {
         fprintf(stderr, "No files to process\n");
         fclose(temp_file);
         unlink(temp_file_path);
         return 1;
+    }
+
+    /* Inform user if producing prompt-only output in interactive mode */
+    if (files_found == 0 && allow_empty_context && isatty(STDERR_FILENO)) {
+        fprintf(stderr, "llm_ctx: No files or stdin provided; producing prompt-only output.\n");
     }
     
     /* Generate and add file tree */
@@ -1802,7 +1830,7 @@ int main(int argc, char *argv[]) {
     }
     
     /* Add closing file_context tag */
-    fprintf(temp_file, "\n</file_context>\n");
+    fprintf(temp_file, "</file_context>\n");
     
     /* Flush and close the temp file */
     fclose(temp_file);
