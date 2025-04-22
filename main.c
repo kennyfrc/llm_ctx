@@ -1369,6 +1369,7 @@ static bool store_kv(ConfigSettings *s, const char *k, const char *v) {
         }
         s->system_prompt_set = true;
     }
+    /* Add other keys here if needed */
     return true;
 }
 
