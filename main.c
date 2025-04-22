@@ -1377,6 +1377,9 @@ static char *trim_whitespace(char *str) {
     return str;
 }
 
+/* Trim only when common indent is definitely structural (≥3 spaces).   */
+#define INDENT_TRIM_THRESHOLD 3
+
 /* Helper function to finalize a multiline block */
 static bool finalize_multiline_block(ConfigSettings *s,
                                      char *key,
