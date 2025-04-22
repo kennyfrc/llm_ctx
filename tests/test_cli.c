@@ -1329,7 +1329,7 @@ TEST(test_cli_prompt_only_c) {
     char *output = run_command(cmd); // Captures stderr
 
     ASSERT("Output contains <user_instructions>", string_contains(output, "<user_instructions>"));
-    ASSERT("Output contains <file_context>", string_contains(output, "<file_context>"));
+    ASSERT("Output does NOT contain <file_context>", !string_contains(output, "<file_context>"));
     ASSERT("Output does NOT contain 'File:' marker", !string_contains(output, "File:"));
     ASSERT("Output does NOT contain 'No files to process' error", !string_contains(output, "No files to process"));
 }
@@ -1345,7 +1345,7 @@ TEST(test_cli_C_flag_prompt_only) {
 
     ASSERT("Output contains <user_instructions>", string_contains(output, "<user_instructions>"));
     ASSERT("Output contains instructions from stdin", string_contains(output, instructions));
-    ASSERT("Output contains <file_context>", string_contains(output, "<file_context>"));
+    ASSERT("Output does NOT contain <file_context>", !string_contains(output, "<file_context>"));
     ASSERT("Output does NOT contain 'File:' marker", !string_contains(output, "File:"));
     ASSERT("Output does NOT contain 'No input provided.' error", !string_contains(output, "No input provided."));
 }

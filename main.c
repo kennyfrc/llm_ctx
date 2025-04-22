@@ -234,11 +234,25 @@ static char *system_instructions = NULL;   /* malloc'd or points to DEFAULT_SYST
 static bool want_editor_comments = false;   /* -e flag */
 
 /**
+ * Open the file context block if it hasn't been opened yet.
  * Add system instructions to the output if provided
  */
 static void add_system_instructions(const char *msg) {
     if (!msg || !*msg) return;
     fprintf(temp_file, "<system_instructions>\n%s\n</system_instructions>\n\n", msg);
+}
+
+/* Global flag to track if any file content has been written */
+static bool wrote_file_context = false;
+
+/**
+ * Open the file context block lazily, only if needed.
+ */
+static void open_file_context_if_needed(void) {
+    if (!wrote_file_context) {
+        fprintf(temp_file, "<file_context>\n\n");
+        wrote_file_context = true;
+    }
 }
 
 /**
@@ -1011,6 +1025,9 @@ bool collect_file(const char *filepath) {
  * Returns true on success, false on failure
  */
 bool output_file_content(const char *filepath, FILE *output) {
+    /* Ensure the file context block is opened before writing file content */
+    open_file_context_if_needed();
+
     /* Check if this is a special file (e.g., stdin content) */
     for (int i = 0; i < num_special_files; i++) {
         if (strcmp(filepath, special_files[i].filename) == 0) {
@@ -1816,7 +1833,6 @@ int main(int argc, char *argv[]) {
     generate_file_tree();
     
     /* Add file context header and output content of each file */
-    fprintf(temp_file, "<file_context>\n\n");
     
     /* Output content of each processed file */
     for (int i = 0; i < num_processed_files; i++) {
@@ -1824,7 +1840,7 @@ int main(int argc, char *argv[]) {
     }
     
     /* Add closing file_context tag */
-    fprintf(temp_file, "</file_context>\n");
+    if (wrote_file_context) fprintf(temp_file, "</file_context>\n");
     
     /* Flush and close the temp file */
     fclose(temp_file);
