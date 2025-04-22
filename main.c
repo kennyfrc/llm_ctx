@@ -1515,7 +1515,6 @@ static void handle_system_arg(const char *arg) {
 
     /* Case 1: -s without argument (optarg is NULL) -> Mark flag used, prompt loaded later */
     if (arg == NULL) {
-        system_instructions = (char *)DEFAULT_SYSTEM_MSG;
         s_flag_used = true; /* Track that CLI flag was used */
         return; /* Nothing more to do */
     }
@@ -1697,7 +1696,7 @@ int main(int argc, char *argv[]) {
 
                 if (new_prompt) {
                     /* Successfully loaded/duplicated prompt from config */
-                    if (system_instructions && system_instructions != DEFAULT_SYSTEM_MSG) free(system_instructions);
+                    if (system_instructions) free(system_instructions);
                     system_instructions = new_prompt;
                 } else if (load_attempted) {
                     /* Attempted to load from config (file or inline) but failed (file not found, OOM) */
