@@ -201,8 +201,11 @@ static bool store_kv(ConfigSettings *s, const char *k, const char *v) {
 }
 
 /* Forward declaration for finalize_multiline_block needed by parse_config_file */
-static bool finalize_multiline_block(ConfigSettings *s, char *key, char **buf_ptr, size_t *len_ptr, size_t min_indent);
-
+static bool finalize_multiline_block(ConfigSettings *s,
+                                     char *key,
+                                     char **buf_ptr,
+                                     size_t *len_ptr,
+                                     size_t min_indent);
 /* Forward declaration for parse_config_file needed by main */
 bool parse_config_file(const char *config_path, ConfigSettings *settings);
 
@@ -1375,7 +1378,11 @@ static char *trim_whitespace(char *str) {
 }
 
 /* Helper function to finalize a multiline block */
-static bool finalize_multiline_block(ConfigSettings *s, char *key, char **buf_ptr, size_t *len_ptr, size_t min_indent __attribute__((unused))) {
+static bool finalize_multiline_block(ConfigSettings *s,
+                                     char *key,
+                                     char **buf_ptr,
+                                     size_t *len_ptr,
+                                     size_t min_indent) {
     char *buf = *buf_ptr;
     size_t len = *len_ptr;
 
@@ -1384,12 +1391,35 @@ static bool finalize_multiline_block(ConfigSettings *s, char *key, char **buf_pt
         buf[--len] = '\0';
     }
 
-    /* TODO: Implement left-trimming based on min_indent if needed */
-    /* For now, just store the collected buffer as is */
+    /* ---------- Trim common indentation ---------- */
+    if (min_indent != SIZE_MAX && min_indent > 0) {
+        char *trimmed = malloc(len + 1); /* Max possible size */
+        if (!trimmed) { errno = ENOMEM; free(buf); *buf_ptr = NULL; *len_ptr = 0; return false; }
+
+        size_t src = 0, dst = 0;
+        bool at_line_start = true;
+
+        while (src < len) {
+            if (at_line_start) {
+                /* Skip up to min_indent spaces or TABs */
+                size_t skipped = 0;
+                while (src < len && skipped < min_indent &&
+                       (buf[src] == ' ' || buf[src] == '\t')) {
+                    ++src; ++skipped;
+                }
+                at_line_start = false;
+            }
+            trimmed[dst++] = buf[src];
+            if (buf[src++] == '\n') at_line_start = true;
+        }
+        trimmed[dst] = '\0';
+        free(buf); /* Free original buffer */
+        buf  = trimmed; /* Point to the new trimmed buffer */
+        len  = dst;     /* Update length */
+    }
 
     bool success = store_kv(s, key, buf);
-
-    free(buf); /* Free the collected buffer */
+    free(buf); /* Free the (potentially new) buffer */
     *buf_ptr = NULL;
     *len_ptr = 0;
     return success;
@@ -1424,8 +1454,8 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
         /* Handle multiline value collection */
         /* ---------- Already inside a multiline value ---------- */
         if (collecting_multiline) {
-            /* Blank line (just '\n' or "\r\n") → keep it inside the block      */
-            if (line[0] == '\n' || (line[0] == '\r' && line[1] == '\n')) {
+            /* Whitespace‑only line  → keep a *pure* blank line inside block   */
+            if (strspn(line, " \t\r\n") == strlen(line)) {
                 /* Append just a newline */
                 if (!APPEND_TO_BUFFER("\n", 1, &pending_value_buffer, &pending_value_len, &pending_value_cap)) {
                     free(pending_key);
