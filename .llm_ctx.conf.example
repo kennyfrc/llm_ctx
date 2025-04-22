@@ -6,11 +6,11 @@
 
 # Automatically copy output to clipboard instead of printing to stdout.
 # Valid values: true, false, yes, no, 1, 0
-# copy_to_clipboard = true
+copy_to_clipboard = true
 
 # Default setting for requesting PR-style review comments (-e flag).
 # Valid values: true, false, yes, no, 1, 0
-editor_comments = false
+editor_comments = true
 
 # Default system prompt (-s flag).
 # Can be inline text or a path relative to this config file using '@'.
