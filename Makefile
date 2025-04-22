@@ -6,8 +6,8 @@ RELEASE_CFLAGS = -std=c99 -Wall -Wextra -O2 -DNDEBUG # -O2 optimization, NDEBUG 
 
 TARGET = llm_ctx
 SRC = main.c gitignore.c
-TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c
-TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin
+TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c tests/test_config.c
+TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin tests/test_config
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 
@@ -27,10 +27,17 @@ release: $(SRC)
 	strip $(TARGET)
 	@echo "Release build complete: $(TARGET)"
 
+# Note: test_gitignore depends on gitignore.c
 tests/test_gitignore: tests/test_gitignore.c gitignore.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 tests/test_cli: tests/test_cli.c
+# Note: test_cli depends on main.c (for config parsing logic) and gitignore.c
+tests/test_cli: tests/test_cli.c main.c gitignore.c
+	$(CC) $(CFLAGS) -o $@ $^
+
+# Note: test_config depends on main.c (for config parsing logic) and gitignore.c
+tests/test_config: tests/test_config.c main.c gitignore.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 tests/test_stdin: tests/test_stdin.c
@@ -45,6 +52,8 @@ test: $(TARGET) $(TEST_TARGETS)
 	@./tests/test_gitignore || true
 	@echo "\nRunning integration tests..."
 	@./tests/test_cli || true
+	@echo "\nRunning config parser tests..."
+	@./tests/test_config || true
 	@echo "\nRunning stdin pipe tests..."
 	@./tests/test_stdin || true
 	@echo "\nRemoving temporary config file..."
