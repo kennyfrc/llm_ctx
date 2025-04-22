@@ -203,34 +203,7 @@ SpecialFile special_files[10]; /* Support up to 10 special files */
 int num_special_files = 0;
 static int file_mode = 0;         /* 0 = stdin mode, 1 = file mode (-f or @-) */
 char *user_instructions = NULL;   /* malloc'd / strdup'd – free in cleanup() */
-static const char *DEFAULT_SYSTEM_MSG =
-    "## Pragmatic Programming Principles\n"
-    "**Implementation simplicity is our highest priority.** When analyzing or recommending code improvements, follow these principles:\n"
-    "- Minimize the number of possible execution paths. Reduce branching code that creates combinatorial explosions of codepaths. Design interfaces that provide consistent guarantees regardless of input state. Prefer single effective codepaths that produce reliable results over multiple specialized paths.\n"
-    "- Separate code clearly from data. Move program logic into data structures that can be modified without changing code. Let data drive control flow rather than hardcoding behavior. Create interfaces with multiple levels of access to provide both convenience and fine-grained control.\n"
-    "- Recognize upstream versus downstream systems. Design upstream systems (that manage state) differently from downstream systems (that produce effects). Push problems upstream where they can be solved once rather than patching downstream repeatedly. Improve your tools and data structures rather than adding complexity to consumer code.\n"
-    "- Normalize failure cases in your design. Treat errors as ordinary paths, not exceptional conditions. Make zero values valid and meaningful wherever possible. Use techniques like nil objects that guarantee valid reads even when representing absence. Design systems that gracefully handle imperfect inputs.\n"
-    "- Start small, concrete, and simple: solve necessary problems with an implementation that is fast, small, bug-free, and interoperable above all else. Sacrifice initial completeness, interface elegance, and consistency if needed for this implementation simplicity. Guarantee observable correctness for what is built. Resist premature abstraction: extract only minimal, justifiable patterns from multiple concrete examples if it genuinely simplifies without hindering implementation or obscuring necessary information; let patterns emerge. For downstream APIs (producing effects from state), favor 'immediate mode' designs deriving results functionally from inputs over 'retained mode' designs requiring callers to manage stateful object lifecycles; this simplifies usage code.\n"
-    "\n"
-    "## Code Commenting\n"
-    "Follow these code commenting principles when discussing or suggesting code:\n"
-    "- DO NOT recommend comments that merely describe what the code is doing, like 'added foo', 'removed bar', 'increased x', 'changed y', or 'updated z'.\n"
-    "- Explain the \"why\" not just the \"what\" - Recommend comments that explain reasoning behind code decisions, especially for non-obvious implementation choices or workarounds.\n"
-    "- Reduce cognitive load - Suggest comments that make code easier to understand by annotating complex operations, providing context, and guiding the reader through logical sections.\n"
-    "- Document interfaces thoroughly - Recommend comprehensive documentation close to function/method definitions to allow others to use code without needing to understand the implementation details.\n"
-    "- Include domain knowledge - Suggest \"teacher comments\" that explain specialized concepts, algorithms, or mathematical principles underlying the code.\n"
-    "\n"
-    "## Analysis Process\n"
-    "\n"
-    "When analyzing, make sure to do line by line code analysis of critical functions related to the query, and trace how data flows throughout the request.\n"
-    "\n"
-    "Further, it may be helpful as well to analyze the interface:\n"
-    "- Inputs\n"
-    "- Outputs\n"
-    "- Examples\n"
-    "- Invariants / Guarantees (Explicit or Implied)\n"
-    "- Preconditions and Postconditions\n";
-static char *system_instructions = NULL;   /* malloc'd or points to DEFAULT_SYSTEM_MSG */
+static char *system_instructions = NULL;   /* malloc'd, NULL if not set */
 static bool want_editor_comments = false;   /* -e flag */
 
 /**
@@ -1443,10 +1416,7 @@ void copy_to_clipboard(const char *buffer) {
  * Cleanup function to free memory before exit
  */
 void cleanup(void) {
-    /* Free dynamically allocated system instructions (if not the default literal) */
-    if (system_instructions && system_instructions != DEFAULT_SYSTEM_MSG) {
-        free(system_instructions);
-    }
+    if (system_instructions) free(system_instructions);
     /* Free dynamically allocated user instructions */
     if (user_instructions) free(user_instructions);
 
@@ -1540,13 +1510,10 @@ static void handle_command_arg(const char *arg) {
 
 /* Helper to handle argument for -s/--system */
 static void handle_system_arg(const char *arg) {
-     if (system_instructions && system_instructions != DEFAULT_SYSTEM_MSG) {
-         /* Don't free if it's the default, which wasn't malloc'd */
-         free(system_instructions); /* Free previous if called multiple times */
-         system_instructions = NULL;
-     }
+    if (system_instructions) free(system_instructions); /* Free previous if called multiple times */
+    system_instructions = NULL; /* Reset before handling */
 
-    /* Case 1: -s without argument (optarg is NULL) -> use default */
+    /* Case 1: -s without argument (optarg is NULL) -> Mark flag used, prompt loaded later */
     if (arg == NULL) {
         system_instructions = (char *)DEFAULT_SYSTEM_MSG;
         s_flag_used = true; /* Track that CLI flag was used */
@@ -1734,10 +1701,8 @@ int main(int argc, char *argv[]) {
                     system_instructions = new_prompt;
                 } else if (load_attempted) {
                     /* Attempted to load from config (file or inline) but failed (file not found, OOM) */
-                    /* Fall back to the default system prompt. */
-                    if (system_instructions && system_instructions != DEFAULT_SYSTEM_MSG) free(system_instructions);
-                    system_instructions = (char *)DEFAULT_SYSTEM_MSG; /* Use default */
-                }
+                    /* Do nothing, system_instructions remains NULL, no prompt will be output */
+                } /* else: no system_prompt in config, system_instructions remains as set by CLI or NULL */
             }
             /* Free allocated strings in loaded_settings if any (future slices) */
         }
