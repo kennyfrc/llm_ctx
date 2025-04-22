@@ -1339,10 +1339,10 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
         }
 
         char *key = trimmed_line;
-        char *value = strchr(trimmed_line, '=');
+        char *value = strpbrk(trimmed_line, "=:"); /* Accept '=' or ':' */
 
         if (value) {
-            *value = '\0'; /* Null-terminate key */
+            *value = '\0'; /* Split key and value */
             value++;       /* Move to start of value */
             key = trim_whitespace(key);
             value = trim_whitespace(value);
@@ -1354,10 +1354,17 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
                 settings->editor_comments = (strcasecmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcasecmp(value, "yes") == 0);
                 settings->editor_comments_set = true;
             } else if (strcmp(key, "system_prompt") == 0) {
+                /* Strip optional surrounding quotes */
+                if ((*value == '"'  && value[strlen(value)-1] == '"') ||
+                    (*value == '\'' && value[strlen(value)-1] == '\'')) {
+                    value[strlen(value)-1] = '\0'; /* Remove trailing quote */
+                    value++;                       /* Advance past leading quote */
+                }
                 settings->system_prompt_source = strdup(value);
                 if (!settings->system_prompt_source) {
                     /* Handle allocation failure - maybe warn? */
                     /* For now, just skip setting this value */
+                    /* The fatal check in main() will catch this if loading was expected */
                 } else {
                     settings->system_prompt_set = true;
                 }
@@ -1709,10 +1716,10 @@ int main(int argc, char *argv[]) {
                     system_instructions = new_prompt;
                 } else if (load_attempted) {
                     /* Attempted to load from config (file or inline) but failed (file not found, OOM) */
-                    /* Do nothing, system_instructions remains NULL, no prompt will be output */
+                    /* Fatal error: Config specified a prompt, but loading failed. */
+                    fatal("Error: system_prompt was set in config file '%s' but could not be loaded.", config_path);
                 } /* else: no system_prompt in config, system_instructions remains as set by CLI or NULL */
             }
-            /* Free allocated strings in loaded_settings if any (future slices) */
         }
         free(config_path); /* Free the path returned by find_config_file */
     }
