@@ -31,14 +31,17 @@ release: $(SRC)
 tests/test_gitignore: tests/test_gitignore.c gitignore.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-tests/test_cli: tests/test_cli.c
 # Note: test_cli depends on main.c (for config parsing logic) and gitignore.c
-tests/test_cli: tests/test_cli.c main.c gitignore.c
-	$(CC) $(CFLAGS) -o $@ $^
+# test_cli is an integration test, it runs the main llm_ctx executable.
+# It only needs its own source file compiled.
+tests/test_cli: tests/test_cli.c
+	$(CC) $(CFLAGS) -o $@ $< # Use $< to only link the first prerequisite (test_cli.c)
 
 # Note: test_config depends on main.c (for config parsing logic) and gitignore.c
-tests/test_config: tests/test_config.c main.c gitignore.c
-	$(CC) $(CFLAGS) -o $@ $^
+# test_config is an integration test, it runs the main llm_ctx executable.
+# It only needs its own source file compiled.
+tests/test_config: tests/test_config.c
+	$(CC) $(CFLAGS) -o $@ $< # Use $< to only link the first prerequisite (test_config.c)
 
 tests/test_stdin: tests/test_stdin.c
 	$(CC) $(CFLAGS) -o $@ $^
