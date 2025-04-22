@@ -1048,8 +1048,8 @@ TEST(test_cli_c_at_stdin) {
     ASSERT("Output contains closing user_instructions tag", string_contains(output, "</user_instructions>"));
     // Check that file content is also present
     ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
-    // Check for the warning message (since stdin is used for instructions)
-    ASSERT("Output contains '@- implies file mode' warning", string_contains(output, "Warning: Using -c @- implies file mode"));
+    // Check that the warning message is NOT present (removed in 55dc4ec)
+    ASSERT("Output does NOT contain '@- implies file mode' warning", !string_contains(output, "Warning: Using -c @- implies file mode"));
 }
 
 /* Test -c=inline: Use inline instructions with equals sign */
@@ -1098,7 +1098,7 @@ TEST(test_cli_command_at_stdin) {
     ASSERT("Output contains long option stdin instructions", string_contains(output, "Long option stdin.\n"));
     ASSERT("Output contains closing user_instructions tag", string_contains(output, "</user_instructions>"));
     ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
-    ASSERT("Output contains '@- implies file mode' warning", string_contains(output, "Warning: Using -c @- implies file mode"));
+    ASSERT("Output does NOT contain '@- implies file mode' warning", !string_contains(output, "Warning: Using -c @- implies file mode"));
 }
 
 /* Test --command=inline: Long option for inline instructions */
@@ -1170,8 +1170,8 @@ TEST(test_cli_C_flag_stdin) {
     ASSERT("Output contains closing user_instructions tag", string_contains(output, "</user_instructions>"));
     // Check that file content is also present
     ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
-    // Check for the warning message (since -C uses the -c @- logic)
-    ASSERT("Output contains '@- implies file mode' warning", string_contains(output, "Warning: Using -c @- implies file mode"));
+    // Check that the warning message is NOT present (removed in 55dc4ec)
+    ASSERT("Output does NOT contain '@- implies file mode' warning", !string_contains(output, "Warning: Using -c @- implies file mode"));
 }
 
 /* Test -e flag and <response_guide> content */
@@ -1413,8 +1413,8 @@ TEST(test_cli_s_at_stdin) {
     ASSERT("Output contains system prompt from stdin", string_contains(output, expected_output));
     ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
     ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
-    // Check for the warning message
-    ASSERT("Output contains '@- implies file mode' warning for -s", string_contains(output, "Warning: Using -s @- implies file mode"));
+    // Check that the warning message is NOT present (removed in 55dc4ec)
+    ASSERT("Output does NOT contain '@- implies file mode' warning for -s", !string_contains(output, "Warning: Using -s @- implies file mode"));
 }
 
 /* Test error: Invalid -s usage (e.g., -sfoo, -s=bar) */
