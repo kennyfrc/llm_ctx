@@ -245,20 +245,27 @@ static void add_system_instructions(const char *msg) {
  * Add the response guide block to the output
  */
 static void add_response_guide(const char *problem) {
-    if (!problem || !*problem) return;
-    fprintf(temp_file,
-        "<response_guide>\n"
-        "LLM: Please respond using the markdown format below.\n"
-        "## Problem Statement\n"
-        "Summarize the user's request or problem based on the overall context provided.\n"
-        "## Response\n"
-        "    1. Provide a clear, step-by-step solution or explanation.\n"
-        "    2. %s\n"
-        "</response_guide>\n\n",
-        /* The only argument needed is for the %s above */
-        want_editor_comments ?
-          "Return **PR-style code review comments**: use GitHub inline-diff syntax, group notes per file, justify each change, and suggest concrete refactors."
-          : "No code-review block is required.");
+    // Add the guide if editor comments are requested OR if user instructions were provided.
+    // This ensures -e always adds the guide, even without -c.
+    if (want_editor_comments || (problem && *problem)) {
+        fprintf(temp_file, "<response_guide>\n");
+        fprintf(temp_file, "LLM: Please respond using the markdown format below.\n");
+
+        // Only include Problem Statement section if user instructions were provided
+        if (problem && *problem) {
+            fprintf(temp_file, "## Problem Statement\n");
+            fprintf(temp_file, "Summarize the user's request or problem based on the overall context provided.\n");
+        }
+
+        fprintf(temp_file, "## Response\n");
+        fprintf(temp_file, "    1. Provide a clear, step-by-step solution or explanation.\n");
+        fprintf(temp_file, "    2. %s\n",
+                want_editor_comments ?
+                  "Return **PR-style code review comments**: use GitHub inline-diff syntax, group notes per file, justify each change, and suggest concrete refactors."
+                  : "No code-review block is required."); // If !want_editor_comments, this is only reached if 'problem' exists.
+
+        fprintf(temp_file, "</response_guide>\n\n");
+    }
 }
 
 

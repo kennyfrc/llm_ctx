@@ -1226,6 +1226,24 @@ TEST(test_cli_e_flag_response_guide) {
     ASSERT("Output (no -c) does NOT contain Response header", !string_contains(output_no_c, expected_response_header));
 }
 
+/* Test -e flag without -c (should still add response guide for review) */
+TEST(test_cli_e_flag_without_c) {
+    char cmd[2048];
+    const char *expected_reply_with_review_start = "    2. Return **PR-style code review comments**";
+    const char *problem_statement_header = "## Problem Statement";
+
+    // Run with -e but no -c
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -e -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    char *output = run_command(cmd);
+
+    ASSERT("Output (only -e) contains <response_guide>", string_contains(output, "<response_guide>"));
+    ASSERT("Output (only -e) contains correct 'PR-style' reply format", string_contains(output, expected_reply_with_review_start));
+    ASSERT("Output (only -e) does NOT contain Problem Statement header", !string_contains(output, problem_statement_header));
+    // Ensure file content is still present
+    ASSERT("Output (only -e) contains regular file content", string_contains(output, "Regular file content"));
+}
+
+
 /* Test config file: editor_comments = true, no CLI flag */
 TEST(test_cli_config_editor_comments_true) {
     char cmd[2048];
@@ -1570,6 +1588,7 @@ int main(void) {
     RUN_TEST(test_cli_error_command_equals_empty);
     RUN_TEST(test_cli_C_flag_stdin);
     RUN_TEST(test_cli_e_flag_response_guide);
+    RUN_TEST(test_cli_e_flag_without_c);
 
     /* Tests for config file editor_comments (Slice 4) */
     RUN_TEST(test_cli_config_editor_comments_true);
