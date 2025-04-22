@@ -1001,6 +1001,35 @@ TEST(test_cli_config_system_prompt_override_cli_at_file) {
     unlink(cli_sys_prompt_file_path);
 }
 
+/* Test config file: system_prompt = multiline value */
+TEST(test_cli_config_system_prompt_multiline) {
+    char cmd[2048];
+    char conf_path[1024];
+    snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
+    const char *config_sys_prompt_line1 = "System prompt from config file (multiline).";
+    const char *config_sys_prompt_line2 = "  Second line, indented.";
+    const char *config_sys_prompt_line3 = "    Third line, more indented.";
+    const char *expected_combined_prompt = "System prompt from config file (multiline).\nSecond line, indented.\n  Third line, more indented."; // Note: parser trims leading space from lines 2 & 3
+
+    /* Create config file with multiline prompt */
+    FILE *conf = fopen(conf_path, "w");
+    ASSERT("Config file created for sys prompt multiline test", conf != NULL);
+    if (!conf) return;
+    fprintf(conf, "system_prompt=\n"); // Start multiline
+    fprintf(conf, "  %s\n", config_sys_prompt_line1); // Indented line 1
+    fprintf(conf, "%s\n", config_sys_prompt_line2);   // Indented line 2
+    fprintf(conf, "  %s\n", config_sys_prompt_line3); // Indented line 3
+    fclose(conf);
+
+    /* Run llm_ctx without -s flag */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains correct combined multiline system prompt", string_contains(output, expected_combined_prompt));
+
+    unlink(conf_path);
+}
 // ============================================================================
 // Tests for -c @file / @- / = variants
 // ============================================================================
@@ -1660,6 +1689,7 @@ int main(void) {
     RUN_TEST(test_cli_config_system_prompt_at_nonexistent);
     RUN_TEST(test_cli_config_system_prompt_override_cli_default);
     RUN_TEST(test_cli_config_system_prompt_override_cli_at_file);
+    RUN_TEST(test_cli_config_system_prompt_multiline);
 
     /* Tests for config file (Slice 1) */
     RUN_TEST(test_cli_config_copy_clipboard_true);
