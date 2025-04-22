@@ -1375,7 +1375,7 @@ static char *trim_whitespace(char *str) {
 }
 
 /* Helper function to finalize a multiline block */
-static bool finalize_multiline_block(ConfigSettings *s, char *key, char **buf_ptr, size_t *len_ptr, size_t min_indent) {
+static bool finalize_multiline_block(ConfigSettings *s, char *key, char **buf_ptr, size_t *len_ptr, size_t min_indent __attribute__((unused))) {
     char *buf = *buf_ptr;
     size_t len = *len_ptr;
 
