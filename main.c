@@ -1421,13 +1421,21 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
     while (fgets(line, sizeof(line), file)) {
         char *trimmed_line = trim_whitespace(line);
 
-        /* Skip empty lines and comments */
-        /* Moved this check below the multiline handling */
-
         /* Handle multiline value collection */
-        /* ---------- If we are already collecting a multiline value ---------- */
-        /* ---------------- multiline collector ---------------- */
+        /* ---------- Already inside a multiline value ---------- */
         if (collecting_multiline) {
+            /* Blank line (just '\n' or "\r\n") → keep it inside the block      */
+            if (line[0] == '\n' || (line[0] == '\r' && line[1] == '\n')) {
+                /* Append just a newline */
+                if (!APPEND_TO_BUFFER("\n", 1, &pending_value_buffer, &pending_value_len, &pending_value_cap)) {
+                    free(pending_key);
+                    fclose(file);
+                    return false; /* OOM */
+                }
+                continue; /* Stay in multiline block */
+            }
+
+
             /* Still indented? keep it in the block - even if it starts with '#' */
             if (line[0] == ' ' || line[0] == '\t') {
                 /* Keep original line content, just find length up to newline */
@@ -1447,7 +1455,7 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
             } else {
                 /* Not indented, multiline value ends here. Finalize and fall through. */
                 collecting_multiline = false;
-                if (!finalize_multiline_block(settings, pending_key, &pending_value_buffer, &pending_value_len, 0 /* min_indent */)) {
+                if (!finalize_multiline_block(settings, pending_key, &pending_value_buffer, &pending_value_len, min_indent)) {
                     /* Handle potential error from finalize/store_kv */
                     free(pending_key);
                     fclose(file);
@@ -1464,6 +1472,12 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
         }
 
         trimmed_line = trim_whitespace(line); /* Re-trim after potential multiline exit */
+
+        /* Skip empty lines and comments (ONLY when not inside a block) */
+        if (trimmed_line[0] == '\0' || trimmed_line[0] == '#') {
+            continue;
+        }
+
         /* ---------------- single-line parsing ---------------- */
         char *key = trimmed_line;
         char *value = strpbrk(trimmed_line, "=:"); /* Accept '=' or ':' */
