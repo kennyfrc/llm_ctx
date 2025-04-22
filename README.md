@@ -369,13 +369,12 @@ Options:
   -C             Shortcut for `-c @-`. Reads user instruction text from
                  standard input until EOF (Ctrl+D).
 
+  -s             (Bare flag) No system prompt is added by default.
+
   -s TEXT        Add system prompt text wrapped in <system_instructions> tags.
                  Appears before user instructions.
                  Example: -s "You are a helpful assistant."
                  Example: -s="You are a helpful assistant."
-
-  -s             (Bare flag) No system prompt is added by default. This form
-                 is mainly useful to override a system prompt set in a config file.
 
   -s@FILE        Read system prompt text from FILE (no space after -s).
                  Overrides any inline text provided with -s TEXT.
@@ -393,6 +392,10 @@ Options:
                  Example: -f main.c 'src/**/*.js'
 
   -h, --help     Show this help message and exit.
+
+  --command=TEXT Alias for -c=TEXT.
+  --system[=TEXT] Alias for -s[=TEXT]. Optional argument form.
+  --files        Alias for -f.
 
   --no-gitignore Ignore .gitignore files. Process all files matched by
                  arguments or patterns, even if they are listed in .gitignore.

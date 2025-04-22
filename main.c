@@ -1586,10 +1586,19 @@ int main(int argc, char *argv[]) {
                 /* Flag set inside handle_command_arg */
                 break;
             case 's': /* -s or --system */
-                /* optarg is NULL if -s is bare, points to arg if -s@... */
-                handle_system_arg(optarg);
-                /* Flag set inside handle_system_arg */
-                /* allow_empty_context = true; // Set later based on final state */
+                /*
+                 * With "s::" the short‑option optional argument is only captured
+                 * when it is glued to the flag. Support the space‑separated
+                 * form (-s "foo") by stealing the next argv element when it is
+                 * not another option.
+                 */
+                if (optarg == NULL              /* no glued arg */
+                    && optind < argc            /* something left */
+                    && argv[optind][0] != '-') {/* not next flag  */
+                    handle_system_arg(argv[optind++]); /* treat as arg, consume */
+                } else {
+                    handle_system_arg(optarg);  /* glued/NULL */
+                }
                 break;
             case 'f': /* -f or --files */
                 file_mode = 1;
