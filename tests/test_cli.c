@@ -943,30 +943,21 @@ TEST(test_cli_config_system_prompt_override_cli_default) {
     char cmd[2048];
     char conf_path[1024];
     snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-    const char *config_sys_prompt = "This should be overridden by CLI -s.";
-    const char *cli_default_key_phrase = "Pragmatic Programming Principles"; // Key phrase from default prompt
+    const char *config_sys_prompt = "This should be ignored due to bare -s flag.";
 
     /* Create config file */
     FILE *conf = fopen(conf_path, "w");
     ASSERT("Config file created for sys prompt override test", conf != NULL);
     if (!conf) return;
     fprintf(conf, "system_prompt=%s\n", config_sys_prompt);
-    // Also add the default prompt text so -s has something to load
-    fprintf(conf, "\nsystem_prompt=%s\n", cli_default_key_phrase);
     fclose(conf);
 
-    /* Run llm_ctx WITH -s flag (bare, uses default) */
-    /* Need to create a *separate* config file that -s will load */
-    char s_conf_path[1024];
-    snprintf(s_conf_path, sizeof(s_conf_path), "%s/.llm_ctx.conf.s_test", TEST_DIR); // Use different name
-    FILE *s_conf = fopen(s_conf_path, "w");
-    fprintf(s_conf, "system_prompt=%s\n", cli_default_key_phrase);
-    fclose(s_conf);
-    snprintf(cmd, sizeof(cmd), "cd %s && mv .llm_ctx.conf.s_test .llm_ctx.conf && %s/llm_ctx -s -f __regular.txt", TEST_DIR, getenv("PWD"));
+    /* Run llm_ctx WITH bare -s flag */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -s -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
-    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
-    ASSERT("Output contains default system prompt phrase (CLI override)", string_contains(output, "Pragmatic Programming Principles"));
+    // Check that NO system instructions are present because bare -s prevents config loading.
+    ASSERT("Output does NOT contain <system_instructions> (bare -s overrides config)", !string_contains(output, "<system_instructions>"));
     ASSERT("Output does NOT contain config system prompt", !string_contains(output, config_sys_prompt));
 
     unlink(conf_path);
@@ -1363,29 +1354,15 @@ TEST(test_cli_C_flag_prompt_only) {
 
 /* Test bare -s flag (default system prompt) */
 TEST(test_cli_s_default) {
-    char cmd[2048], conf_path[1024];
-    snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-    const char *key_phrase = "Pragmatic Programming Principles"; // Key phrase from default prompt
+    char cmd[2048];
 
-    // Create a temporary config file containing the default prompt text
-    FILE *conf = fopen(conf_path, "w");
-    ASSERT("Config file created for -s default test", conf != NULL);
-    if (!conf) return;
-    // Simplified: just include the key phrase to ensure it's loaded
-    fprintf(conf, "system_prompt=%s\n", key_phrase);
-    fclose(conf);
-
-    // Run llm_ctx with -s flag (which should now load from the temp config)
+    // Run llm_ctx with bare -s flag. This should NOT output any system prompt.
     snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -s -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
-    // Clean up the temporary config file
-    unlink(conf_path);
-
-    // Check for a key phrase from the new default prompt instead of the old short one
-    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
-    ASSERT("Output contains key phrase from default system prompt", string_contains(output, key_phrase));
-    ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
+    // Check that NO system instructions are present because bare -s prevents config loading
+    // and there's no hardcoded default anymore.
+    ASSERT("Output does NOT contain <system_instructions> (bare -s)", !string_contains(output, "<system_instructions>"));
     // Ensure user instructions are not present unless -c is also used
     ASSERT("Output does NOT contain <user_instructions>", !string_contains(output, "<user_instructions>"));
     // Ensure file content is still present
