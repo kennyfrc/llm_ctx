@@ -145,6 +145,67 @@ static char *slurp_file(const char *path) {
     return txt;
 }
 
+/* Helper macro to grow buffer and append one line + '\n' */
+/* Returns true on success, false on OOM */
+#define APPEND_TO_BUFFER(src, len, buffer_ptr, buf_len_ptr, buf_cap_ptr) \
+    ({                                                                   \
+        bool success = true;                                             \
+        /* Ensure space for line + newline + null terminator */          \
+        while (*(buf_len_ptr) + (len) + 2 > *(buf_cap_ptr)) {             \
+            size_t new_cap = (*(buf_cap_ptr) == 0) ? 256 : *(buf_cap_ptr) * 2; \
+            /* Add overflow check? For now, assume it won't exceed SIZE_MAX */ \
+            char *new_buffer = realloc(*(buffer_ptr), new_cap);          \
+            if (!new_buffer) {                                           \
+                /* OOM during buffer growth */                           \
+                free(*(buffer_ptr)); /* Free old buffer */               \
+                *(buffer_ptr) = NULL;                                    \
+                *(buf_cap_ptr) = 0;                                      \
+                *(buf_len_ptr) = 0;                                      \
+                errno = ENOMEM;                                          \
+                success = false;                                         \
+                break; /* Exit while loop */                             \
+            }                                                            \
+            *(buffer_ptr) = new_buffer;                                  \
+            *(buf_cap_ptr) = new_cap;                                    \
+        }                                                                \
+        if (success) {                                                   \
+            /* Append the line content and a newline */                  \
+            memcpy(*(buffer_ptr) + *(buf_len_ptr), (src), (len));        \
+            *(buf_len_ptr) += (len);                                     \
+            (*(buffer_ptr))[(*(buf_len_ptr))++] = '\n';                  \
+            (*(buffer_ptr))[*(buf_len_ptr)] = '\0'; /* Keep null-terminated */ \
+        }                                                                \
+        success; /* Return status */                                     \
+    })
+
+/* Helper function to store a key-value pair */
+/* Returns true on success, false on OOM */
+static bool store_kv(ConfigSettings *s, const char *k, const char *v) {
+    if (strcmp(k, "copy_to_clipboard") == 0) {
+        s->copy_to_clipboard = (strcasecmp(v, "true") == 0 || strcmp(v, "1") == 0 || strcasecmp(v, "yes") == 0);
+        s->copy_to_clipboard_set = true;
+    } else if (strcmp(k, "editor_comments") == 0) {
+        s->editor_comments = (strcasecmp(v, "true") == 0 || strcmp(v, "1") == 0 || strcasecmp(v, "yes") == 0);
+        s->editor_comments_set = true;
+    } else if (strcmp(k, "system_prompt") == 0) {
+        free(s->system_prompt_source); /* Free previous if any */
+        s->system_prompt_source = strdup(v);
+        if (!s->system_prompt_source) {
+            errno = ENOMEM;
+            return false; /* Allocation failed */
+        }
+        s->system_prompt_set = true;
+    }
+    /* Add other keys here if needed */
+    return true;
+}
+
+/* Forward declaration for finalize_multiline_block needed by parse_config_file */
+static bool finalize_multiline_block(ConfigSettings *s, char *key, char **buf_ptr, size_t *len_ptr, size_t min_indent);
+
+/* Forward declaration for parse_config_file needed by main */
+bool parse_config_file(const char *config_path, ConfigSettings *settings);
+
 /* ========================= EXISTING CODE ======================= */
 
 #define MAX_PATH 4096
@@ -1313,66 +1374,6 @@ static char *trim_whitespace(char *str) {
     return str;
 }
 
-/* Parse the configuration file */
-bool parse_config_file(const char *config_path, ConfigSettings *settings) {
-    FILE *file = fopen(config_path, "r");
-    if (!file) {
-        /* Don't treat not found as fatal, just return false */
-        if (errno == ENOENT) {
-            return false;
-        }
-        /* Other errors (e.g., permission denied) could be warned */
-        /* fprintf(stderr, "Warning: Could not open config file %s: %s\n", config_path, strerror(errno)); */
-        return false;
-    }
-
-    /* Initialize settings */
-    memset(settings, 0, sizeof(ConfigSettings));
-
-/* Helper macro to grow buffer and append one line + '\n' */
-#define APPEND_TO_BUFFER(src, len, buffer, buf_len, buf_cap) \
-    do {                                                     \
-        /* Ensure space for line + newline + null terminator */ \
-        while ((buf_len) + (len) + 2 > (buf_cap)) {          \
-            (buf_cap) = ((buf_cap) == 0) ? 256 : (buf_cap) * 2; \
-            /* Add overflow check? For now, assume it won't exceed SIZE_MAX */ \
-            char *new_buffer = realloc((buffer), (buf_cap)); \
-            if (!new_buffer) {                               \
-                /* OOM during buffer growth */               \
-                free((buffer)); /* Free old buffer */        \
-                errno = ENOMEM;                              \
-                return false; /* Indicate failure */         \
-            }                                                \
-            (buffer) = new_buffer;                           \
-        }                                                    \
-        /* Append the line content and a newline */          \
-        memcpy((buffer) + (buf_len), (src), (len));          \
-        (buf_len) += (len);                                  \
-        (buffer)[(buf_len)++] = '\n';                        \
-        (buffer)[(buf_len)] = '\0'; /* Keep null-terminated */ \
-    } while (0)
-
-/* Helper function to store a key-value pair */
-static bool store_kv(ConfigSettings *s, const char *k, const char *v) {
-    if (strcmp(k, "copy_to_clipboard") == 0) {
-        s->copy_to_clipboard = (strcasecmp(v, "true") == 0 || strcmp(v, "1") == 0 || strcasecmp(v, "yes") == 0);
-        s->copy_to_clipboard_set = true;
-    } else if (strcmp(k, "editor_comments") == 0) {
-        s->editor_comments = (strcasecmp(v, "true") == 0 || strcmp(v, "1") == 0 || strcasecmp(v, "yes") == 0);
-        s->editor_comments_set = true;
-    } else if (strcmp(k, "system_prompt") == 0) {
-        free(s->system_prompt_source); /* Free previous if any */
-        s->system_prompt_source = strdup(v);
-        if (!s->system_prompt_source) {
-            errno = ENOMEM;
-            return false; /* Allocation failed */
-        }
-        s->system_prompt_set = true;
-    }
-    /* Add other keys here if needed */
-    return true;
-}
-
 /* Helper function to finalize a multiline block */
 static bool finalize_multiline_block(ConfigSettings *s, char *key, char **buf_ptr, size_t *len_ptr, size_t min_indent) {
     char *buf = *buf_ptr;
@@ -1393,6 +1394,20 @@ static bool finalize_multiline_block(ConfigSettings *s, char *key, char **buf_pt
     *len_ptr = 0;
     return success;
 }
+
+/* Parse the configuration file */
+bool parse_config_file(const char *config_path, ConfigSettings *settings) {
+    FILE *file = fopen(config_path, "r");
+    if (!file) {
+        /* Don't treat not found as fatal, just return false */
+        if (errno == ENOENT) {
+            return false;
+        }
+        /* Other errors (e.g., permission denied) could be warned */
+        /* fprintf(stderr, "Warning: Could not open config file %s: %s\n", config_path, strerror(errno)); */
+        return false;
+    }
+
     /* State for multiline value collection */
     bool collecting_multiline = false;
     char *pending_key = NULL;
@@ -1418,7 +1433,7 @@ static bool finalize_multiline_block(ConfigSettings *s, char *key, char **buf_pt
                 /* Keep original line content, just find length up to newline */
                 size_t raw_len = strcspn(line, "\r\n");
                 /* Append raw line content + newline */
-                if (!APPEND_TO_BUFFER(line, raw_len, pending_value_buffer, pending_value_len, pending_value_cap)) {
+                if (!APPEND_TO_BUFFER(line, raw_len, &pending_value_buffer, &pending_value_len, &pending_value_cap)) {
                     free(pending_key);
                     fclose(file);
                     return false; /* OOM */
@@ -1689,6 +1704,7 @@ static void handle_system_arg(const char *arg) {
  */
 int main(int argc, char *argv[]) {
     bool allow_empty_context = false; /* Can we finish with no file content? */
+    ConfigSettings loaded_settings; /* Declare here for broader scope */
     /* Register cleanup handler */
     atexit(cleanup); /* Register cleanup handler early */
 
@@ -1792,8 +1808,8 @@ int main(int argc, char *argv[]) {
     bool config_set_editor = false;
 
     if (config_path) {
-        ConfigSettings loaded_settings;
-        if (parse_config_file(config_path, &loaded_settings)) {
+        memset(&loaded_settings, 0, sizeof(ConfigSettings)); /* Initialize before parsing */
+        if (parse_config_file(config_path, &loaded_settings)) { /* Parse into the main scope variable */
             /* Merge copy_to_clipboard (no CLI override yet) */
             if (loaded_settings.copy_to_clipboard_set) {
                 g_effective_copy_to_clipboard = loaded_settings.copy_to_clipboard;
@@ -1861,7 +1877,7 @@ int main(int argc, char *argv[]) {
     /* OR if editor comments were requested (via -e or config) */
     /* OR if stdin was consumed by an option like -c @- or -s @- */
     allow_empty_context = c_flag_used || s_flag_used || config_set_system || e_flag_used || config_set_editor || g_stdin_consumed_for_option;
-    if (loaded_settings.system_prompt_source) free(loaded_settings.system_prompt_source); /* Free the source string after merging */
+    if (config_path && loaded_settings.system_prompt_source) free(loaded_settings.system_prompt_source); /* Free the source string after merging if config was loaded */
 
 
     /* Add user instructions first, if provided */
