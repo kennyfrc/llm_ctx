@@ -419,6 +419,11 @@ Options:
     *   `copy_to_clipboard`: Set to `true`, `yes`, or `1` to automatically copy the output to the system clipboard instead of printing it to standard output. Defaults to `false`.
     *   `editor_comments`: Set to `true`, `yes`, or `1` to enable the PR-style review comment instruction in the `<response_guide>` by default. Defaults to `false`.
     *   `system_prompt`: Sets the default system prompt. Can be provided as inline text directly after the `=`, or as a path to a file relative to the `.llm_ctx.conf` file using the `@` prefix (e.g., `system_prompt = @prompts/my_prompt.txt`). Defaults to the built-in pragmatic programming prompt.
+    *   `system_prompt`: Optional. If set, its text is injected before user instructions.
+        • Inline: `system_prompt = You are a concise code reviewer.`
+        • From file (path is **relative** to the config):
+         `system_prompt = @prompts/my_prompt.txt`
+        **Note:** `llm_ctx` ships with *no* automatic system prompt. Use this setting or `-s` to add one.
 *   **Precedence:** Command-line flags (`-s`, `-s@FILE`, `-s@-`, `-e`) always override settings from the configuration file.
     *   If you use `-e` on the command line, `editor_comments` will be treated as `true` for that run, regardless of the config file setting.
     *   *(Currently, there is no command-line flag to override `copy_to_clipboard`)*.
@@ -437,6 +442,24 @@ Options:
     git diff | llm_ctx -c "Review this diff"
     # Output will be copied to clipboard automatically
     ```
+
+#### Writing multiline values
+Indent any line by **≥ 2 spaces**; the common indent will be stripped automatically:
+
+```ini
+system_prompt =
+  Line 1.
+    Line 2 indented further.
+  Line 3.
+```
+
+The stored value becomes:
+
+```
+Line 1.
+  Line 2 indented further.
+Line 3.
+```
 
 ### Input Methods
 
