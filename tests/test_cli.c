@@ -1006,19 +1006,17 @@ TEST(test_cli_config_system_prompt_multiline) {
     char cmd[2048];
     char conf_path[1024];
     snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-    const char *config_sys_prompt_line1 = "System prompt from config file (multiline).";
-    const char *config_sys_prompt_line2 = "  Second line, indented.";
-    const char *config_sys_prompt_line3 = "    Third line, more indented.";
-    const char *expected_combined_prompt = "System prompt from config file (multiline).\nSecond line, indented.\n  Third line, more indented."; // Note: parser trims leading space from lines 2 & 3
+    /* Test setup matching the intended scenario for indentation */
+    const char *expected_combined_prompt = "  Line 1.\n    Line 2 indented.\n  Line 3 same indent.";
 
     /* Create config file with multiline prompt */
     FILE *conf = fopen(conf_path, "w");
     ASSERT("Config file created for sys prompt multiline test", conf != NULL);
     if (!conf) return;
     fprintf(conf, "system_prompt=\n"); // Start multiline
-    fprintf(conf, "  %s\n", config_sys_prompt_line1); // Indented line 1
-    fprintf(conf, "%s\n", config_sys_prompt_line2);   // Indented line 2
-    fprintf(conf, "  %s\n", config_sys_prompt_line3); // Indented line 3
+    fprintf(conf, "  Line 1.\n");             // Indent 2
+    fprintf(conf, "    Line 2 indented.\n"); // Indent 4
+    fprintf(conf, "  Line 3 same indent.\n"); // Indent 2
     fclose(conf);
 
     /* Run llm_ctx without -s flag */

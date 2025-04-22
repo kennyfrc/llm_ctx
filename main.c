@@ -1329,12 +1329,76 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
     /* Initialize settings */
     memset(settings, 0, sizeof(ConfigSettings));
 
+/* Helper macro to grow buffer and append one line + '\n' */
+#define APPEND_TO_BUFFER(src, len, buffer, buf_len, buf_cap) \
+    do {                                                     \
+        /* Ensure space for line + newline + null terminator */ \
+        while ((buf_len) + (len) + 2 > (buf_cap)) {          \
+            (buf_cap) = ((buf_cap) == 0) ? 256 : (buf_cap) * 2; \
+            /* Add overflow check? For now, assume it won't exceed SIZE_MAX */ \
+            char *new_buffer = realloc((buffer), (buf_cap)); \
+            if (!new_buffer) {                               \
+                /* OOM during buffer growth */               \
+                free((buffer)); /* Free old buffer */        \
+                errno = ENOMEM;                              \
+                return false; /* Indicate failure */         \
+            }                                                \
+            (buffer) = new_buffer;                           \
+        }                                                    \
+        /* Append the line content and a newline */          \
+        memcpy((buffer) + (buf_len), (src), (len));          \
+        (buf_len) += (len);                                  \
+        (buffer)[(buf_len)++] = '\n';                        \
+        (buffer)[(buf_len)] = '\0'; /* Keep null-terminated */ \
+    } while (0)
+
+/* Helper function to store a key-value pair */
+static bool store_kv(ConfigSettings *s, const char *k, const char *v) {
+    if (strcmp(k, "copy_to_clipboard") == 0) {
+        s->copy_to_clipboard = (strcasecmp(v, "true") == 0 || strcmp(v, "1") == 0 || strcasecmp(v, "yes") == 0);
+        s->copy_to_clipboard_set = true;
+    } else if (strcmp(k, "editor_comments") == 0) {
+        s->editor_comments = (strcasecmp(v, "true") == 0 || strcmp(v, "1") == 0 || strcasecmp(v, "yes") == 0);
+        s->editor_comments_set = true;
+    } else if (strcmp(k, "system_prompt") == 0) {
+        free(s->system_prompt_source); /* Free previous if any */
+        s->system_prompt_source = strdup(v);
+        if (!s->system_prompt_source) {
+            errno = ENOMEM;
+            return false; /* Allocation failed */
+        }
+        s->system_prompt_set = true;
+    }
+    return true;
+}
+
+/* Helper function to finalize a multiline block */
+static bool finalize_multiline_block(ConfigSettings *s, char *key, char **buf_ptr, size_t *len_ptr, size_t min_indent) {
+    char *buf = *buf_ptr;
+    size_t len = *len_ptr;
+
+    /* Drop trailing NL */
+    if (len > 0 && buf[len - 1] == '\n') {
+        buf[--len] = '\0';
+    }
+
+    /* TODO: Implement left-trimming based on min_indent if needed */
+    /* For now, just store the collected buffer as is */
+
+    bool success = store_kv(s, key, buf);
+
+    free(buf); /* Free the collected buffer */
+    *buf_ptr = NULL;
+    *len_ptr = 0;
+    return success;
+}
     /* State for multiline value collection */
     bool collecting_multiline = false;
     char *pending_key = NULL;
     char *pending_value_buffer = NULL;
     size_t pending_value_cap = 0;
     size_t pending_value_len = 0;
+
 
     char line[1024];
     while (fgets(line, sizeof(line), file)) {
@@ -1346,54 +1410,44 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
         }
 
         /* Handle multiline value collection */
+        /* ---------------- multiline collector ---------------- */
         if (collecting_multiline) {
             /* Check if the current line is indented (starts with space or tab) */
             if (isspace((unsigned char)line[0])) {
-                /* Append the trimmed line to the buffer */
-                size_t line_len = strlen(trimmed_line);
-                /* Ensure space for line + newline + null terminator */
-                if (pending_value_len + line_len + 2 > pending_value_cap) {
-                    pending_value_cap = (pending_value_cap == 0) ? 256 : pending_value_cap * 2;
-                    /* Keep trying to double until it's large enough */
-                    while (pending_value_len + line_len + 2 > pending_value_cap) {
-                         pending_value_cap *= 2;
-                         /* Add overflow check? For now, assume it won't exceed SIZE_MAX */
-                    }
-                    char *new_buffer = realloc(pending_value_buffer, pending_value_cap);
-                    if (!new_buffer) {
-                        /* OOM during multiline collection */
-                        free(pending_key);
-                        free(pending_value_buffer); /* Free old buffer */
-                        fclose(file);
-                        /* Indicate failure, maybe set errno? */
-                        return false; /* Or handle more gracefully */
-                    }
-                    pending_value_buffer = new_buffer;
+                /* Keep original line content, just find length up to newline */
+                size_t raw_len = strcspn(line, "\r\n");
+                /* Append raw line content + newline */
+                if (!APPEND_TO_BUFFER(line, raw_len, pending_value_buffer, pending_value_len, pending_value_cap)) {
+                    free(pending_key);
+                    fclose(file);
+                    return false; /* OOM */
                 }
-                /* Append the line content and a newline */
-                memcpy(pending_value_buffer + pending_value_len, trimmed_line, line_len);
-                pending_value_len += line_len;
-                pending_value_buffer[pending_value_len++] = '\n';
-                pending_value_buffer[pending_value_len] = '\0'; /* Keep null-terminated */
+                /* TODO: Track minimum indentation if needed for trimming */
                 continue; /* Continue collecting */
             } else {
                 /* Not indented, multiline value ends here. Finalize and fall through. */
                 collecting_multiline = false;
-                /* Assign the collected value (will be handled below after freeing key) */
+                if (!finalize_multiline_block(settings, pending_key, &pending_value_buffer, &pending_value_len, 0 /* min_indent */)) {
+                    /* Handle potential error from finalize/store_kv */
+                    free(pending_key);
+                    fclose(file);
+                    return false;
+                }
+                free(pending_key);
+                pending_key = NULL;
+                /* Fall through to process the current line as a new key/value */
             }
         }
 
-        /* Declare key/value here, outside the multiline check */
-        char *key = NULL;
-        char *value = NULL;
-
+        /* ---------------- single-line parsing ---------------- */
+        char *key = trimmed_line;
+        char *value = strpbrk(trimmed_line, "=:"); /* Accept '=' or ':' */
 
         if (value) {
             *value = '\0'; /* Split key and value */
             value++;       /* Move to start of value */
             key = trim_whitespace(key);
             value = trim_whitespace(value);
-
             /* Check for multiline start: key = (nothing follows) */
             if (*value == '\0' && !collecting_multiline) {
                 collecting_multiline = true;
@@ -1405,6 +1459,7 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
                 pending_value_buffer = NULL;
                 pending_value_cap = 0;
                 pending_value_len = 0;
+                /* min_indent = SIZE_MAX; // Reset min_indent tracking */
 
                 /* Set flag early if it's system_prompt */
                 if (strcmp(key, "system_prompt") == 0) {
@@ -1421,23 +1476,12 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
                 value++;                       /* Advance past leading quote */
             }
 
-            if (strcmp(key, "copy_to_clipboard") == 0) {
-                settings->copy_to_clipboard = (strcasecmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcasecmp(value, "yes") == 0);
-                settings->copy_to_clipboard_set = true;
-            } else if (strcmp(key, "editor_comments") == 0) {
-                settings->editor_comments = (strcasecmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcasecmp(value, "yes") == 0);
-                settings->editor_comments_set = true;
-            } else if (strcmp(key, "system_prompt") == 0) {
-                settings->system_prompt_source = strdup(value);
-                if (!settings->system_prompt_source) {
-                    /* OOM */
-                    fclose(file);
-                    return false;
-                } else {
-                    settings->system_prompt_set = true;
-                }
-            } /* Add other keys here in later slices */
-        } /* Ignore lines without '=' for now */
+            /* Store the single-line key-value pair */
+            if (!store_kv(settings, key, value)) {
+                fclose(file);
+                return false; /* OOM in strdup */
+            }
+        } /* Ignore lines without delimiter for now */
     }
 
     /* End of file: finalize any pending multiline value */
@@ -1448,12 +1492,11 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
             pending_value_buffer[pending_value_len] = '\0';
         }
 
-        if (strcmp(pending_key, "system_prompt") == 0) {
-            settings->system_prompt_source = pending_value_buffer;
-            /* system_prompt_set was already true */
-        } else {
-            /* Unknown multiline key, free the buffer */
-            free(pending_value_buffer);
+        if (!finalize_multiline_block(settings, pending_key, &pending_value_buffer, &pending_value_len, 0 /* min_indent */)) {
+            /* Handle potential error */
+            free(pending_key);
+            fclose(file);
+            return false;
         }
         free(pending_key);
     }
@@ -1803,8 +1846,8 @@ int main(int argc, char *argv[]) {
                     system_instructions = new_prompt;
                 } else if (load_attempted) {
                     /* Attempted to load from config (file or inline) but failed (file not found, OOM) */
-                    /* Fatal error: Config specified a prompt, but loading failed or resulted in empty. */
-                    fatal("Error: system_prompt was set in config file '%s' but the final value is missing or empty. Check file existence, permissions, or formatting (e.g., indentation for multiline values).", config_path);
+                    /* Warning: Config specified a prompt, but loading failed or resulted in empty. */
+                    fprintf(stderr, "Warning: system_prompt specified in config file '%s' but could not be loaded (file missing or empty). Ignoring.\n", config_path);
                 } /* else: no system_prompt in config, system_instructions remains as set by CLI or NULL */
             }
         }
@@ -1817,6 +1860,7 @@ int main(int argc, char *argv[]) {
     /* OR if editor comments were requested (via -e or config) */
     /* OR if stdin was consumed by an option like -c @- or -s @- */
     allow_empty_context = c_flag_used || s_flag_used || config_set_system || e_flag_used || config_set_editor || g_stdin_consumed_for_option;
+    if (loaded_settings.system_prompt_source) free(loaded_settings.system_prompt_source); /* Free the source string after merging */
 
 
     /* Add user instructions first, if provided */
