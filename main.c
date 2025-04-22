@@ -1468,6 +1468,7 @@ static const struct option long_options[] = {
 static bool s_flag_used = false; /* Track if -s was used */
 static bool c_flag_used = false; /* Track if -c/-C/--command was used */
 static bool e_flag_used = false; /* Track if -e was used */
+static bool g_stdin_consumed_for_option = false; /* Track if stdin was used for @- */
 /* No specific CLI flag for copy yet, so no copy_flag_used needed */
 
 
@@ -1506,11 +1507,8 @@ static void handle_command_arg(const char *arg) {
                 fprintf(stderr, "Reading instructions from terminal. Enter text and press Ctrl+D when done.\n");
             }
             user_instructions = slurp_stream(stdin);
+            g_stdin_consumed_for_option = true; /* Mark stdin as used */
             if (!user_instructions) fatal("Error reading instructions from stdin: %s", ferror(stdin) ? strerror(errno) : "Out of memory");
-            /* Using -c @- implies file mode */
-            if (!file_mode) {
-                 fprintf(stderr, "Warning: Using -c @- implies file mode (-f). Subsequent arguments will be treated as files.\n");
-            }
             file_mode = 1; /* Set file mode globally */
         } else { /* read from file */
             user_instructions = slurp_file(arg + 1);
@@ -1545,12 +1543,9 @@ static void handle_system_arg(const char *arg) {
                 fprintf(stderr, "Reading system instructions from terminal. Enter text and press Ctrl+D when done.\n");
             }
             system_instructions = slurp_stream(stdin);
+            g_stdin_consumed_for_option = true; /* Mark stdin as used */
             if (!system_instructions) fatal("Error reading system instructions from stdin: %s", ferror(stdin) ? strerror(errno) : "Out of memory");
             s_flag_used = true; /* Track that CLI flag was used */
-            /* Using -s @- implies file mode */
-             if (!file_mode) {
-                 fprintf(stderr, "Warning: Using -s @- implies file mode (-f). Subsequent arguments will be treated as files.\n");
-             }
             file_mode = 1; /* Set file mode globally */
         } else { /* Read from file */
             system_instructions = slurp_file(arg + 1); /* skip '@' */
@@ -1736,7 +1731,8 @@ int main(int argc, char *argv[]) {
     /* Allow if user instructions were given (-c/-C/--command) */
     /* OR if system instructions were explicitly set (via -s or config) */
     /* OR if editor comments were requested (via -e or config) */
-    allow_empty_context = c_flag_used || s_flag_used || config_set_system || e_flag_used || config_set_editor;
+    /* OR if stdin was consumed by an option like -c @- or -s @- */
+    allow_empty_context = c_flag_used || s_flag_used || config_set_system || e_flag_used || config_set_editor || g_stdin_consumed_for_option;
 
 
     /* Add user instructions first, if provided */
@@ -1759,11 +1755,9 @@ int main(int argc, char *argv[]) {
     if (file_mode) {
         /* Process files listed after options */
         if (file_args_start >= argc) {
-            /* Check if stdin was used for @- options, which implies file mode */
+            /* Check if stdin was already consumed by an @- option */
             /* If stdin wasn't used for @- and no files given, it's an error/warning */
-            bool used_stdin_for_args = (user_instructions && strstr(user_instructions, "stdin") != NULL) ||
-                                       (system_instructions && strstr(system_instructions, "stdin") != NULL); /* Crude check, improve if needed */
-
+            bool used_stdin_for_args = g_stdin_consumed_for_option;
             if (!used_stdin_for_args) {
                  /* -f flag likely provided but no files specified, or only options given */
                  fprintf(stderr, "Warning: File mode specified (-f or via @-) but no file arguments provided.\n");
