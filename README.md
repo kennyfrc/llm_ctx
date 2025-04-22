@@ -366,15 +366,19 @@ Options:
                  Useful for multi-line instructions or heredocs.
                  Example: echo "Instructions" | llm_ctx -c @- -f file.c
 
-  -C             Shortcut for `-c @-`. Reads instruction text from standard
-                 input until EOF (Ctrl+D). Convenient for quick multi-line
-                 prompts directly in the terminal.
+  -C             Shortcut for `-c @-`. Reads user instruction text from
+                 standard input until EOF (Ctrl+D).
 
-  -s             Use the default system prompt: "You are a senior programmer."
-                 Adds a <system_instructions> block before user instructions.
+  -s TEXT        Add system prompt text wrapped in <system_instructions> tags.
+                 Appears before user instructions.
+                 Example: -s "You are a helpful assistant."
+                 Example: -s="You are a helpful assistant."
+
+  -s             (Bare flag) No system prompt is added by default. This form
+                 is mainly useful to override a system prompt set in a config file.
 
   -s@FILE        Read system prompt text from FILE (no space after -s).
-                 Overrides the default.
+                 Overrides any inline text provided with -s TEXT.
                  Example: -s@/path/to/system_prompt.txt
 
   -s@-           Read system prompt text from stdin until EOF (no space after -s).
@@ -412,7 +416,7 @@ Options:
     *   `copy_to_clipboard`: Set to `true`, `yes`, or `1` to automatically copy the output to the system clipboard instead of printing it to standard output. Defaults to `false`.
     *   `editor_comments`: Set to `true`, `yes`, or `1` to enable the PR-style review comment instruction in the `<response_guide>` by default. Defaults to `false`.
     *   `system_prompt`: Sets the default system prompt. Can be provided as inline text directly after the `=`, or as a path to a file relative to the `.llm_ctx.conf` file using the `@` prefix (e.g., `system_prompt = @prompts/my_prompt.txt`). Defaults to the built-in pragmatic programming prompt.
-*   **Precedence:** Command-line flags always override settings from the configuration file.
+*   **Precedence:** Command-line flags (`-s`, `-s@FILE`, `-s@-`, `-e`) always override settings from the configuration file.
     *   If you use `-e` on the command line, `editor_comments` will be treated as `true` for that run, regardless of the config file setting.
     *   *(Currently, there is no command-line flag to override `copy_to_clipboard`)*.
 

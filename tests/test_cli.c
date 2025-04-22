@@ -1416,18 +1416,38 @@ TEST(test_cli_s_at_stdin) {
     ASSERT("Output does NOT contain '@- implies file mode' warning for -s", !string_contains(output, "Warning: Using -s @- implies file mode"));
 }
 
-/* Test error: Invalid -s usage (e.g., -sfoo, -s=bar) */
-TEST(test_cli_s_error_bad_usage) {
-    char cmd1[2048], cmd2[2048];
-    snprintf(cmd1, sizeof(cmd1), "%s/llm_ctx -sfoo -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
-    snprintf(cmd2, sizeof(cmd2), "%s/llm_ctx -s=bar -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+/* Test -s "inline text": Use inline system instructions */
+TEST(test_cli_s_inline) {
+    char cmd[2048];
+    const char *inline_sys_prompt = "System prompt as inline text.";
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -s \"%s\" -f %s/__regular.txt", getenv("PWD"), inline_sys_prompt, TEST_DIR);
+    char *output = run_command(cmd);
 
-    char *output1 = run_command(cmd1);
-    char *output2 = run_command(cmd2);
-    const char *expected_error = "Error: -s accepts only no argument or '@file/@-' form";
+    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains inline system prompt", string_contains(output, inline_sys_prompt));
+    ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+}
 
-    ASSERT("Output for -sfoo contains correct error", string_contains(output1, expected_error));
-    ASSERT("Output for -s=bar contains correct error", string_contains(output2, expected_error));
+/* Test -s=inline: Use inline system instructions with equals sign */
+TEST(test_cli_s_equals_inline) {
+    char cmd[2048];
+    const char *inline_sys_prompt = "System prompt with equals.";
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -s=\"%s\" -f %s/__regular.txt", getenv("PWD"), inline_sys_prompt, TEST_DIR);
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains inline system prompt (equals)", string_contains(output, inline_sys_prompt));
+}
+
+/* Test -sglued: Use inline system instructions glued to flag */
+TEST(test_cli_s_glued_inline) {
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -sgluedtext -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains glued inline system prompt", string_contains(output, "gluedtext"));
 }
 
 // ============================================================================
@@ -1630,7 +1650,9 @@ int main(void) {
     RUN_TEST(test_cli_s_default);
     RUN_TEST(test_cli_s_at_file);
     RUN_TEST(test_cli_s_at_stdin);
-    RUN_TEST(test_cli_s_error_bad_usage);
+    RUN_TEST(test_cli_s_inline);
+    RUN_TEST(test_cli_s_equals_inline);
+    RUN_TEST(test_cli_s_glued_inline);
 
     /* Tests for config file system_prompt (Slice 5) */
     RUN_TEST(test_cli_config_system_prompt_inline);

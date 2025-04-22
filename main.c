@@ -706,9 +706,10 @@ void show_help(void) {
     printf("Usage: llm_ctx [OPTIONS] [FILE...]\n");
     printf("Format files for LLM code analysis with appropriate tags.\n\n");
     printf("Options:\n");
-    printf("  -c TEXT        Add instruction text wrapped in <user_instructions> tags\n");
+    printf("  -c TEXT        Add user instruction text wrapped in <user_instructions> tags\n");
     printf("  -c @FILE       Read instruction text from FILE (any bytes)\n");
     printf("  -c @-          Read instruction text from standard input until EOF\n");
+    printf("  -C             Shortcut for -c @-. Reads user instructions from stdin\n");
     printf("  -c=\"TEXT\"     Equals form also accepted\n");
     printf("  -s             Use default system prompt (see README for content)\n"); // Keep help concise
     printf("  -s@FILE        Read system prompt from FILE (no space after -s)\n");
@@ -1537,11 +1538,10 @@ static void handle_system_arg(const char *arg) {
             s_flag_used = true; /* Track that CLI flag was used */
         }
     } else {
-        /* Case 3: -s with an argument not starting with '@' -> Error */
-        /* This case should ideally be caught by getopt_long if 's' required an argument, */
-        /* but since it's optional, we add an explicit check. */
-        /* However, the current getopt string "s::" handles this; this else is defensive. */
-         fatal("Error: -s accepts only no argument or '@file/@-' form, not '%s'", arg);
+        /* Case 3: -s with an argument not starting with '@' -> Treat as inline text */
+        system_instructions = strdup(arg);
+        if (!system_instructions) fatal("Out of memory duplicating -s argument");
+        s_flag_used = true; /* Track that CLI flag was used */
     }
 }
 
