@@ -1377,8 +1377,14 @@ static char *trim_whitespace(char *str) {
     return str;
 }
 
-/* Trim only when common indent is definitely structural (≥3 spaces).   */
-#define INDENT_TRIM_THRESHOLD 3
+/*
+ * Trim common indentation whenever it is at least two spaces.
+ *  • 2‑space indents are routinely used for YAML / Markdown blocks and the
+ *    test‑suite expects them to be stripped.
+ *  • 1‑space indents are left intact so that authors can still force a single
+ *    leading space when they really want one.
+ */
+#define INDENT_TRIM_THRESHOLD 2
 
 /* Helper function to finalize a multiline block */
 static bool finalize_multiline_block(ConfigSettings *s,
