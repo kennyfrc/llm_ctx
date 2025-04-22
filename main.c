@@ -1383,6 +1383,10 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
             }
         }
 
+        /* Declare key/value here, outside the multiline check */
+        char *key = NULL;
+        char *value = NULL;
+
 
         if (value) {
             *value = '\0'; /* Split key and value */
