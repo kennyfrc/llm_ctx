@@ -1414,6 +1414,7 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
     char *pending_value_buffer = NULL;
     size_t pending_value_cap = 0;
     size_t pending_value_len = 0;
+    size_t min_indent = SIZE_MAX; /* Track minimum indentation for multiline */
 
 
     char line[1024];
@@ -1421,25 +1422,28 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
         char *trimmed_line = trim_whitespace(line);
 
         /* Skip empty lines and comments */
-        if (trimmed_line[0] == '\0' || trimmed_line[0] == '#') {
-            continue;
-        }
+        /* Moved this check below the multiline handling */
 
         /* Handle multiline value collection */
+        /* ---------- If we are already collecting a multiline value ---------- */
         /* ---------------- multiline collector ---------------- */
         if (collecting_multiline) {
-            /* Check if the current line is indented (starts with space or tab) */
-            if (isspace((unsigned char)line[0])) {
+            /* Still indented? keep it in the block - even if it starts with '#' */
+            if (line[0] == ' ' || line[0] == '\t') {
                 /* Keep original line content, just find length up to newline */
                 size_t raw_len = strcspn(line, "\r\n");
                 /* Append raw line content + newline */
                 if (!APPEND_TO_BUFFER(line, raw_len, &pending_value_buffer, &pending_value_len, &pending_value_cap)) {
                     free(pending_key);
                     fclose(file);
-                    return false; /* OOM */
+                    return false; /* OOM in APPEND_TO_BUFFER */
                 }
-                /* TODO: Track minimum indentation if needed for trimming */
-                continue; /* Continue collecting */
+                /* Track minimum indentation */
+                size_t indent = strspn(line, " \t");
+                if (indent < min_indent) {
+                    min_indent = indent;
+                }
+                continue; /* Stay in multiline block */
             } else {
                 /* Not indented, multiline value ends here. Finalize and fall through. */
                 collecting_multiline = false;
@@ -1451,10 +1455,15 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
                 }
                 free(pending_key);
                 pending_key = NULL;
+                /* Reset buffer pointers after finalize frees the buffer */
+                pending_value_buffer = NULL;
+                pending_value_cap = 0;
+                pending_value_len = 0;
                 /* Fall through to process the current line as a new key/value */
             }
         }
 
+        trimmed_line = trim_whitespace(line); /* Re-trim after potential multiline exit */
         /* ---------------- single-line parsing ---------------- */
         char *key = trimmed_line;
         char *value = strpbrk(trimmed_line, "=:"); /* Accept '=' or ':' */
@@ -1475,7 +1484,7 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
                 pending_value_buffer = NULL;
                 pending_value_cap = 0;
                 pending_value_len = 0;
-                /* min_indent = SIZE_MAX; // Reset min_indent tracking */
+                min_indent = SIZE_MAX; /* Reset min_indent tracking */
 
                 /* Set flag early if it's system_prompt */
                 if (strcmp(key, "system_prompt") == 0) {
@@ -1508,7 +1517,7 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
             pending_value_buffer[pending_value_len] = '\0';
         }
 
-        if (!finalize_multiline_block(settings, pending_key, &pending_value_buffer, &pending_value_len, 0 /* min_indent */)) {
+        if (!finalize_multiline_block(settings, pending_key, &pending_value_buffer, &pending_value_len, min_indent)) {
             /* Handle potential error */
             free(pending_key);
             fclose(file);
