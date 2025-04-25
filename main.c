@@ -358,14 +358,16 @@ static void open_file_context_if_needed(void) {
  * Add the response guide block to the output
  */
 static void add_response_guide(const char *problem) {
+    bool has_problem = (problem != NULL && *problem != '\0');
+
     // Add the guide if editor comments are requested OR if user instructions were provided.
     // This ensures -e always adds the guide, even without -c.
-    if (want_editor_comments || (problem && *problem)) {
+    if (want_editor_comments || has_problem) {
         fprintf(temp_file, "<response_guide>\n");
         fprintf(temp_file, "LLM: Please respond using the markdown format below.\n");
 
         // Only include Problem Statement section if user instructions were provided
-        if (problem && *problem) {
+        if (has_problem) {
             fprintf(temp_file, "## Problem Statement\n");
             fprintf(temp_file, "Summarize the user's request or problem based on the overall context provided.\n");
         }
