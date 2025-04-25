@@ -282,7 +282,6 @@ void generate_file_tree(void);
 void add_to_file_tree(const char *filepath);
 int compare_file_paths(const void *a, const void *b);
 char *find_common_prefix(void);
-void print_tree_node(const char *path, int level, bool is_last, const char *prefix);
 void build_tree_recursive(char **paths, int count, int level, char *prefix, const char *path_prefix);
 void build_tree_recursive(char **paths, int count, int level, char *prefix);
 int compare_string_pointers(const void *a, const void *b);
@@ -671,16 +670,16 @@ void generate_file_tree(void) {
     char *common_prefix = find_common_prefix();
     int prefix_len = strlen(common_prefix);
     
-    /* Set relative paths and collect non-directory paths */
+    /* Collect relative paths (non-directory) */
     char *relative_paths[MAX_FILES];
-    int path_count = 0;
+    int relative_path_count = 0;
     
     for (int i = 0; i < file_tree_count; i++) {
         const char *path = file_tree[i].path;
         
 
         
-        /* If path starts with common prefix, skip it for relative path */
+
         if (strncmp(path, common_prefix, prefix_len) == 0) {
             if (path[prefix_len] == '/') {
                 file_tree[i].relative_path = strdup(path + prefix_len + 1);
@@ -691,9 +690,11 @@ void generate_file_tree(void) {
             file_tree[i].relative_path = strdup(path);
         }
         
-        /* Add to paths array for tree building */
-        if (rel_path && relative_path_count < MAX_FILES) {
+        // Only add non-directory paths to the list for tree building
+        if (!file_tree[i].is_dir && rel_path && relative_path_count < MAX_FILES) {
             relative_paths[relative_path_count++] = rel_path;
+        } else if (rel_path) {
+            free(rel_path); // Free if it's a directory or we can't store it
         }
     }
     
@@ -720,7 +721,7 @@ void generate_file_tree(void) {
         
         while ((bytes_read = fread(buffer, 1, sizeof(buffer), f)) > 0) {
             fwrite(buffer, 1, bytes_read, temp_file);
-        }
+        }        
         
         fclose(f);
     } else {
@@ -732,9 +733,6 @@ void generate_file_tree(void) {
     /* Remove temporary tree file */
     unlink(tree_file_path);
     
-
-    fprintf(temp_file, "</file_tree>\n\n");
-
     // Free the duplicated relative paths
     for (int i = 0; i < relative_path_count; i++) {
         free(relative_paths[i]);
@@ -744,9 +742,6 @@ void generate_file_tree(void) {
     fclose(tree_file);
     /* Remove temporary tree file */
     unlink(tree_file_path);
-
-    /* Free allocated memory */
-    // No need to free file_tree[i].relative_path as it wasn't used in this version
 }
 
 // Comparison function for qsort on char**
