@@ -243,6 +243,7 @@ static bool store_kv(ConfigSettings *s, const char *k, const char *v) {
 
 /* Forward declaration for finalize_multiline_block needed by parse_config_file */
 static bool finalize_multiline_block(ConfigSettings *s,
+                                     const char *key, // Make key const
                                      char *key,
                                      char **buf_ptr,
                                      size_t *len_ptr,
@@ -283,6 +284,8 @@ int compare_file_paths(const void *a, const void *b);
 char *find_common_prefix(void);
 void print_tree_node(const char *path, int level, bool is_last, const char *prefix);
 void build_tree_recursive(char **paths, int count, int level, char *prefix, const char *path_prefix);
+void build_tree_recursive(char **paths, int count, int level, char *prefix);
+int compare_string_pointers(const void *a, const void *b);
 bool process_stdin_content(void);
 void output_file_callback(const char *name, const char *type, const char *content);
 bool is_binary(FILE *file);
@@ -647,20 +650,21 @@ void generate_file_tree(void) {
         return;
     }
     
-    /* Create a temporary file for the tree */
     strcpy(tree_file_path, "/tmp/llm_ctx_tree_XXXXXX");
     int fd = mkstemp(tree_file_path);
     if (fd == -1) {
+        perror("mkstemp for tree file failed"); // Added error context
         return;
     }
     
     tree_file = fdopen(fd, "w");
     if (!tree_file) {
+        perror("fdopen for tree file failed"); // Added error context
         close(fd);
+        unlink(tree_file_path); // Clean up temp file path
         return;
     }
     
-    /* Sort files for easier tree generation */
     qsort(file_tree, file_tree_count, sizeof(FileInfo), compare_file_paths);
     
     /* Find common prefix */
@@ -668,16 +672,13 @@ void generate_file_tree(void) {
     int prefix_len = strlen(common_prefix);
     
     /* Set relative paths and collect non-directory paths */
-    char *paths[MAX_FILES];
+    char *relative_paths[MAX_FILES];
     int path_count = 0;
     
     for (int i = 0; i < file_tree_count; i++) {
         const char *path = file_tree[i].path;
         
-        /* Skip directories, we only want files */
-        if (file_tree[i].is_dir) {
-            continue;
-        }
+
         
         /* If path starts with common prefix, skip it for relative path */
         if (strncmp(path, common_prefix, prefix_len) == 0) {
@@ -691,8 +692,8 @@ void generate_file_tree(void) {
         }
         
         /* Add to paths array for tree building */
-        if (file_tree[i].relative_path && path_count < MAX_FILES) {
-            paths[path_count++] = file_tree[i].relative_path;
+        if (rel_path && relative_path_count < MAX_FILES) {
+            relative_paths[relative_path_count++] = rel_path;
         }
     }
     
@@ -722,6 +723,8 @@ void generate_file_tree(void) {
         }
         
         fclose(f);
+    } else {
+        perror("Failed to reopen tree file for reading"); // Added error context
     }
     
     fprintf(temp_file, "</file_tree>\n\n");
@@ -729,10 +732,114 @@ void generate_file_tree(void) {
     /* Remove temporary tree file */
     unlink(tree_file_path);
     
+
+    fprintf(temp_file, "</file_tree>\n\n");
+
+    // Free the duplicated relative paths
+    for (int i = 0; i < relative_path_count; i++) {
+        free(relative_paths[i]);
+    }
+
+    free(common_prefix);
+    fclose(tree_file);
+    /* Remove temporary tree file */
+    unlink(tree_file_path);
+
     /* Free allocated memory */
-    for (int i = 0; i < file_tree_count; i++) {
-        free(file_tree[i].relative_path);
-        file_tree[i].relative_path = NULL;
+    // No need to free file_tree[i].relative_path as it wasn't used in this version
+}
+
+// Comparison function for qsort on char**
+int compare_string_pointers(const void *a, const void *b) {
+    const char *str_a = *(const char **)a;
+    const char *str_b = *(const char **)b;
+    return strcmp(str_a, str_b);
+}
+
+// Recursive helper for generate_file_tree
+static void build_tree_recursive(char **paths, int count, int level, char *prefix) {
+    if (count <= 0) return;
+
+    // Separate files and directories at the current level
+    char *files[MAX_FILES];
+    char *dirs[MAX_FILES]; // Store starting path for each top-level dir group
+    int file_count = 0;
+    int dir_count = 0;
+
+    int i = 0;
+    while (i < count) {
+        char *slash = strchr(paths[i], '/');
+        if (slash == NULL) { // It's a file at this level
+            if (file_count < MAX_FILES) files[file_count++] = paths[i];
+            i++;
+        } else { // It's a directory or file within a directory
+            // Extract the first component (directory name)
+            int len = slash - paths[i];
+            bool found = false;
+            // Check if this directory component is already listed
+            for (int d = 0; d < dir_count; d++) {
+                 // Check if paths[i] starts with the same directory component as dirs[d]
+                 if (strncmp(dirs[d], paths[i], len) == 0 && dirs[d][len] == '/') {
+                     found = true;
+                     break;
+                 }
+            }
+            if (!found && dir_count < MAX_FILES) {
+                 // Store the first path encountered for this directory group
+                 dirs[dir_count++] = paths[i];
+            }
+
+            // Skip all paths belonging to this directory component for now
+            // Find the end of the current directory group in the sorted list
+            int group_end = i;
+            while (group_end + 1 < count && strncmp(paths[group_end + 1], paths[i], len) == 0 && paths[group_end + 1][len] == '/') {
+                group_end++;
+            }
+            i = group_end + 1; // Move index past this group
+        }
+    }
+
+    // Process files first
+    for (i = 0; i < file_count; i++) {
+        bool is_last_file = (i == file_count - 1);
+        bool is_last_overall = is_last_file && (dir_count == 0);
+        fprintf(tree_file, "%s%s%s\n", prefix, is_last_overall ? "└── " : "├── ", files[i]);
+    }
+
+    // Process directories
+    for (i = 0; i < dir_count; i++) {
+        bool is_last_dir_group = (i == dir_count - 1);
+        char *dir_start_path = dirs[i];
+        char *slash = strchr(dir_start_path, '/'); // Should exist
+        int len = slash - dir_start_path;
+        char component[MAX_PATH];
+        strncpy(component, dir_start_path, len);
+        component[len] = '\0';
+
+        // Print directory entry
+        fprintf(tree_file, "%s%s%s\n", prefix, is_last_dir_group ? "└── " : "├── ", component);
+
+        // Prepare for recursion: gather sub-paths for this directory
+        char *sub_paths[MAX_FILES];
+        int sub_count = 0;
+        // Need to iterate through the original 'paths' array again to find all matching sub-paths
+        for (int k=0; k < count; ++k) {
+             // Check if paths[k] starts with the current component and has a slash after it
+             if (strncmp(paths[k], component, len) == 0 && paths[k][len] == '/') {
+                 char *sub_path_start = paths[k] + len + 1;
+                 if (*sub_path_start != '\0' && sub_count < MAX_FILES) { // Ensure there's something after the slash
+                     sub_paths[sub_count++] = sub_path_start;
+                 }
+             }
+        }
+
+        // Sort sub-paths before recursing (already sorted in the parent call, but doesn't hurt)
+        // qsort(sub_paths, sub_count, sizeof(char *), compare_string_pointers); // Sorting here might be redundant if parent list was sorted
+
+        // Recurse
+        char new_prefix[MAX_PATH];
+        snprintf(new_prefix, sizeof(new_prefix), "%s%s", prefix, is_last_dir_group ? "    " : "│   ");
+        build_tree_recursive(sub_paths, sub_count, level + 1, new_prefix);
     }
 }
 
@@ -1469,7 +1576,7 @@ static char *trim_whitespace(char *str) {
 
 /* Helper function to finalize a multiline block */
 static bool finalize_multiline_block(ConfigSettings *s,
-                                     char *key,
+                                     const char *key, // Make key const
                                      char **buf_ptr,
                                      size_t *len_ptr,
                                      size_t min_indent) {
