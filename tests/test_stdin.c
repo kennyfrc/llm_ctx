@@ -16,11 +16,10 @@
  * - Testing proper formatting of content
  */
 
-/* Test directory for creating test files (prefixed) */
-#define TEST_DIR "/tmp/__llm_ctx_stdin_test"
 /* Define sizes relative to the 8MB buffer */
 #define STDIN_BUFFER_SIZE_ACTUAL (8 * 1024 * 1024)
 #define FITS_CONTENT_SIZE (STDIN_BUFFER_SIZE_ACTUAL - 1024) /* Slightly less than 8MB */
+
 #define EXCEEDS_CONTENT_SIZE (STDIN_BUFFER_SIZE_ACTUAL + 100) /* Slightly more than 8MB */
 #define FITS_CONTENT_FILE TEST_DIR "/__fits_content.txt" // Prefixed
 #define EXCEEDS_CONTENT_FILE TEST_DIR "/__exceeds_content.txt" // Prefixed
