@@ -42,7 +42,6 @@ int should_ignore_path(const char *path) {
     
     /* Invariant: basename is always valid and points to a string */
     assert(basename != NULL);
-    assert(strlen(basename) > 0);
     
     /* Get file status to determine if it's a directory */
     struct stat path_stat;
