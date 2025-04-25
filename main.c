@@ -312,6 +312,7 @@ static char *system_instructions = NULL;   /* malloc'd, NULL if not set */
 static bool want_editor_comments = false;   /* -e flag */
 static bool raw_mode = false;               /* -r flag */
 
+static bool g_ignore_all_configs = false; /* Flag to ignore all config files */
 /**
  * Open the file context block if it hasn't been opened yet.
  * Add system instructions to the output if provided
@@ -1742,6 +1743,7 @@ static const struct option long_options[] = {
     {"editor-comments", no_argument,       0, 'e'},
     {"raw",             no_argument,       0, 'r'},
     {"no-gitignore",    no_argument,       0,  1 }, /* Use a value > 255 for long-only */
+    {"ignore-configs",  no_argument,       0, 1001}, /* Test-only flag */
     {0, 0, 0, 0} /* Terminator */
 };
 static bool s_flag_used = false; /* Track if -s was used */
@@ -1911,6 +1913,9 @@ int main(int argc, char *argv[]) {
             case 1: /* --no-gitignore (long option without short equiv) */
                 respect_gitignore = false;
                 break;
+            case 1001: /* --ignore-configs */
+                g_ignore_all_configs = true;
+                break;
             case '?': /* Unknown option OR missing required argument */
                 /* optopt contains the failing option character */
                 if (optopt == 'c') {
@@ -1944,71 +1949,78 @@ int main(int argc, char *argv[]) {
     int file_args_start = optind;
 
     /* --- Configuration File Loading --- */
-    /* Find config file by searching upwards */
-    char *config_path = find_config_file();
-    bool config_set_system = false; // Track if config *tried* to set system prompt
-    bool config_set_editor = false;
+    bool config_set_system = false; // Track if config *would have* set system prompt
+    bool config_set_editor = false; // Track if config *would have* set editor comments
 
-    if (config_path) {
-        memset(&loaded_settings, 0, sizeof(ConfigSettings)); /* Initialize before parsing */
-        if (parse_config_file(config_path, &loaded_settings)) { /* Parse into the main scope variable */
-            /* Merge copy_to_clipboard (no CLI override yet) */
-            if (loaded_settings.copy_to_clipboard_set) {
-                g_effective_copy_to_clipboard = loaded_settings.copy_to_clipboard;
-            }
-            /* Store config value for editor_comments if set */
-            if (loaded_settings.editor_comments_set) {
-                config_set_editor = true; // Mark that config set it
-                /* We'll apply the toggle logic later */
-            }
-            /* Merge system_prompt (respect CLI override) */
-            if (loaded_settings.system_prompt_set && !s_flag_used) {
-                config_set_system = true; /* Mark that config tried to set it */
-                char *source = loaded_settings.system_prompt_source;
-                char *new_prompt = NULL;
-                bool load_attempted = false; /* Track if we tried loading from config */
+    if (!g_ignore_all_configs) {
+        /* Find config file by searching upwards */
+        char *config_path = find_config_file();
 
-                if (source && source[0] == '@') {
-                    if (strcmp(source, "@-") == 0) {
-                        fprintf(stderr, "Warning: system_prompt=@- in config file is not supported. Ignoring.\n");
-                    } else {
-                        /* Resolve path relative to config file */
-                        char config_dir_buf[PATH_MAX];
-                        strncpy(config_dir_buf, config_path, PATH_MAX - 1);
-                        config_dir_buf[PATH_MAX - 1] = '\0';
-                        char *config_dir = dirname(config_dir_buf);
+        if (config_path) {
+            memset(&loaded_settings, 0, sizeof(ConfigSettings)); /* Initialize before parsing */
+            if (parse_config_file(config_path, &loaded_settings)) { /* Parse into the main scope variable */
+                /* Merge copy_to_clipboard (no CLI override yet) */
+                if (loaded_settings.copy_to_clipboard_set) {
+                    g_effective_copy_to_clipboard = loaded_settings.copy_to_clipboard;
+                }
+                /* Store config value for editor_comments if set */
+                if (loaded_settings.editor_comments_set) {
+                    config_set_editor = true; // Mark that config set it
+                    /* We'll apply the toggle logic later */
+                }
+                /* Merge system_prompt (respect CLI override) */
+                if (loaded_settings.system_prompt_set && !s_flag_used) {
+                    config_set_system = true; /* Mark that config tried to set it */
+                    char *source = loaded_settings.system_prompt_source;
+                    char *new_prompt = NULL;
+                    bool load_attempted = false; /* Track if we tried loading from config */
 
-                        char abs_path[PATH_MAX];
-                        snprintf(abs_path, sizeof(abs_path), "%s/%s", config_dir, source + 1);
+                    if (source && source[0] == '@') {
+                        if (strcmp(source, "@-") == 0) {
+                            fprintf(stderr, "Warning: system_prompt=@- in config file is not supported. Ignoring.\n");
+                        } else {
+                            /* Resolve path relative to config file */
+                            char config_dir_buf[PATH_MAX];
+                            strncpy(config_dir_buf, config_path, PATH_MAX - 1);
+                            config_dir_buf[PATH_MAX - 1] = '\0';
+                            char *config_dir = dirname(config_dir_buf);
 
-                        new_prompt = slurp_file(abs_path);
-                        load_attempted = true; /* We attempted to load from a file */
+                            char abs_path[PATH_MAX];
+                            snprintf(abs_path, sizeof(abs_path), "%s/%s", config_dir, source + 1);
+
+                            new_prompt = slurp_file(abs_path);
+                            load_attempted = true; /* We attempted to load from a file */
+                            if (!new_prompt) {
+                                fprintf(stderr, "Warning: Cannot read system prompt file '%s' (resolved from '%s' in config): %s. Ignoring.\n", abs_path, source, strerror(errno));
+                                /* new_prompt remains NULL, indicating failure */
+                            }
+                        }
+                    } else if (source) { /* Inline string */
+                        new_prompt = strdup(source);
+                        load_attempted = true; /* We attempted to load from inline text */
                         if (!new_prompt) {
-                            fprintf(stderr, "Warning: Cannot read system prompt file '%s' (resolved from '%s' in config): %s. Ignoring.\n", abs_path, source, strerror(errno));
-                            /* new_prompt remains NULL, indicating failure */
+                            fprintf(stderr, "Warning: Out of memory duplicating system prompt from config. Ignoring.\n");
+                            /* new_prompt is NULL, indicating failure */
                         }
                     }
-                } else if (source) { /* Inline string */
-                    new_prompt = strdup(source);
-                    load_attempted = true; /* We attempted to load from inline text */
-                    if (!new_prompt) {
-                        fprintf(stderr, "Warning: Out of memory duplicating system prompt from config. Ignoring.\n");
-                        /* new_prompt is NULL, indicating failure */
-                    }
-                }
 
-                if (new_prompt) {
-                    /* Successfully loaded/duplicated prompt from config */
-                    if (system_instructions) free(system_instructions);
-                    system_instructions = new_prompt;
-                } else if (load_attempted) {
-                    /* Attempted to load from config (file or inline) but failed (file not found, OOM) */
-                    /* Warning: Config specified a prompt, but loading failed or resulted in empty. */
-                    fprintf(stderr, "Warning: system_prompt specified in config file '%s' but could not be loaded (file missing or empty). Ignoring.\n", config_path);
-                } /* else: no system_prompt in config, system_instructions remains as set by CLI or NULL */
+                    if (new_prompt) {
+                        /* Successfully loaded/duplicated prompt from config */
+                        if (system_instructions) free(system_instructions);
+                        system_instructions = new_prompt;
+                    } else if (load_attempted) {
+                        /* Attempted to load from config (file or inline) but failed (file not found, OOM) */
+                        /* Warning: Config specified a prompt, but loading failed or resulted in empty. */
+                        fprintf(stderr, "Warning: system_prompt specified in config file '%s' but could not be loaded (file missing or empty). Ignoring.\n", config_path);
+                    }
+                    /* else: no system_prompt in config, system_instructions remains as set by CLI or NULL */
+                }
             }
+            free(config_path); /* Free the path returned by find_config_file */
         }
-        free(config_path); /* Free the path returned by find_config_file */
+        /* Free the source string after merging if config was loaded and parsed */
+        /* Check loaded_settings.system_prompt_source exists before freeing */
+        if (loaded_settings.system_prompt_source) free(loaded_settings.system_prompt_source);
     }
 
     /* --- Finalize editor_comments setting (apply toggle logic) --- */
@@ -2035,8 +2047,6 @@ int main(int argc, char *argv[]) {
     /* OR if editor comments were requested (via -e or config) */
     /* OR if stdin was consumed by an option like -c @- or -s @- */
     allow_empty_context = c_flag_used || s_flag_used || config_set_system || e_flag_used || config_set_editor || g_stdin_consumed_for_option;
-    if (config_path && loaded_settings.system_prompt_source) free(loaded_settings.system_prompt_source); /* Free the source string after merging if config was loaded */
-
 
     /* Add user instructions first, if provided */
     add_user_instructions(user_instructions);
