@@ -1273,10 +1273,12 @@ static char *dup_if_readable(const char *path) {
 char *find_config_file(void) {
     char buf[PATH_MAX];
 
+    char *p = NULL; // Declare p once for reuse
     /* ---------- 1. explicit env override ---------- */
-    if (char *env = getenv("LLM_CTX_CONFIG")) {
-        char *p = dup_if_readable(env);
-        if (p) return p; /* user knows best */        // env override precedence
+    char *env = getenv("LLM_CTX_CONFIG"); // Declare env before the if
+    if (env) {
+        p = dup_if_readable(env);
+        if (p) return p; /* user knows best */ // env override precedence
     } /* silently continue if not readable */
 
     /* ---------- 2. project hierarchy walk-up ---------- */
@@ -1286,7 +1288,7 @@ char *find_config_file(void) {
 
         for (;;) {
             snprintf(buf, sizeof buf, "%s/.llm_ctx.conf", current_path);
-            char *p = dup_if_readable(buf);
+            p = dup_if_readable(buf); // Reuse p
             if (p) return p;                          // first hit wins
 
             /* stop at root */
@@ -1301,25 +1303,26 @@ char *find_config_file(void) {
     const char *home = getenv("HOME");
     if (!xdg && home) {                               // spec §3 – default to $HOME/.config  ([XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/?utm_source=chatgpt.com))
         snprintf(buf, sizeof buf, "%s/.config/llm_ctx/.llm_ctx.conf", home);
-        char *p = dup_if_readable(buf);
+        p = dup_if_readable(buf); // Reuse p
         if (p) return p;
     } else if (xdg) {
         snprintf(buf, sizeof buf, "%s/llm_ctx/.llm_ctx.conf", xdg);
-        char *p = dup_if_readable(buf);
+        p = dup_if_readable(buf); // Reuse p
         if (p) return p;
     }
 
     /* ---------- 4. legacy file in $HOME ---------- */
     if (home) {
         snprintf(buf, sizeof buf, "%s/.llm_ctx.conf", home);
-        char *p = dup_if_readable(buf);
+        p = dup_if_readable(buf); // Reuse p
         if (p) return p;
     }
 
     /* ---------- 5. binary-sibling fallback ---------- */
-    if (char *exe_dir = get_executable_dir()) {
+    char *exe_dir = get_executable_dir(); // Declare exe_dir before the if
+    if (exe_dir) {
         snprintf(buf, sizeof buf, "%s/.llm_ctx.conf", exe_dir);
-        char *p = dup_if_readable(buf);
+        p = dup_if_readable(buf); // Reuse p
         if (p) return p;
     }
 
