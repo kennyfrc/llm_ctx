@@ -9,7 +9,6 @@
 /* and linked during compilation */
 extern char *run_command(const char *cmd);
 extern int string_contains(const char *str, const char *substr);
-extern const char *TEST_DIR; /* Defined in test_cli.c */
 
 /**
  * Verify that llm_ctx loads .llm_ctx.conf from the directory
@@ -61,4 +60,3 @@ TEST(test_cli_config_discovery_binary_dir) {
     snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", bin_dir);
     system(rm_cmd);
 }
-

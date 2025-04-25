@@ -15,9 +15,6 @@
  * - Testing file system interactions
  */
 
-/* Test directory for creating test files (prefixed) */
-#define TEST_DIR "/tmp/__llm_ctx_test"
-
 /* Backup path for user's config file */
 #define USER_CONFIG_FILE ".llm_ctx.conf"
 #define USER_CONFIG_BACKUP ".llm_ctx.conf.backup"

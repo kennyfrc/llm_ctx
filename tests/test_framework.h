@@ -12,6 +12,9 @@
  * - Minimal dependencies
  */
 
+/* Test directory for creating test files (prefixed) */
+#define TEST_DIR "/tmp/__llm_ctx_test"
+
 /* Test state */
 static int tests_run = 0;
 static int tests_failed = 0;
