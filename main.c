@@ -328,7 +328,7 @@ static const char *SYSTEM_INSTRUCTIONS_PREFIX = "## Role\n"
  */
 static void add_system_instructions(const char *user_provided_msg) {
     // Always open the block and add the prefix
-    fprintf(temp_file, "<system_instructions>\n%s\n</system_instructions>\n\n", msg);
+    fprintf(temp_file, "<system_instructions>\n"); // Print opening tag
     fprintf(temp_file, "%s\n", SYSTEM_INSTRUCTIONS_PREFIX); // Print prefix, add trailing newline
 
     // Add user-provided instructions if they exist and are non-empty
