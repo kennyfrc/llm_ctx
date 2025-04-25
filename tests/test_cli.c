@@ -858,6 +858,7 @@ TEST(test_cli_config_system_prompt_inline) {
     char cmd[2048];
     char conf_path[1024];
     snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
+    const char *expected_prefix = "## Role\nYou're a helpful and intelligent AI assistant."; // Check start of prefix
     const char *config_sys_prompt = "System prompt from config file (inline).";
 
     /* Create config file */
@@ -872,6 +873,7 @@ TEST(test_cli_config_system_prompt_inline) {
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt prefix", string_contains(output, expected_prefix));
     ASSERT("Output contains correct system prompt (from config inline)", string_contains(output, config_sys_prompt));
     ASSERT("Output does NOT contain default system prompt phrase", !string_contains(output, "Pragmatic Programming Principles"));
 
@@ -885,6 +887,7 @@ TEST(test_cli_config_system_prompt_at_file) {
     char sys_prompt_file_path[1024];
     snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
     snprintf(sys_prompt_file_path, sizeof(sys_prompt_file_path), "%s/__sys_prompt_config.txt", TEST_DIR);
+    const char *expected_prefix = "## Role\nYou're a helpful and intelligent AI assistant.";
     const char *config_sys_prompt = "System prompt from config file (@file).";
 
     /* Create the system prompt file */
@@ -906,6 +909,7 @@ TEST(test_cli_config_system_prompt_at_file) {
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt prefix", string_contains(output, expected_prefix));
     ASSERT("Output contains correct system prompt (from config @file)", string_contains(output, config_sys_prompt));
     ASSERT("Output does NOT contain default system prompt phrase", !string_contains(output, "Pragmatic Programming Principles"));
 
@@ -918,6 +922,7 @@ TEST(test_cli_config_system_prompt_at_nonexistent) {
     char cmd[2048];
     char conf_path[1024];
     snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
+    const char *expected_prefix = "## Role\nYou're a helpful and intelligent AI assistant.";
 
     /* Create config file pointing to a nonexistent file */
     FILE *conf = fopen(conf_path, "w");
@@ -932,8 +937,9 @@ TEST(test_cli_config_system_prompt_at_nonexistent) {
 
     /* Check for warning message on stderr */
     ASSERT("Output contains warning about nonexistent system prompt file", string_contains(output, "Warning: Cannot read system prompt file"));
-    /* Check that NO system prompt was used (since default is gone and file failed) */
-    ASSERT("Output does NOT contain <system_instructions> (fallback)", !string_contains(output, "<system_instructions>"));
+    /* Check that ONLY the prefix is present */
+    ASSERT("Output contains <system_instructions> (prefix only)", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt prefix (prefix only)", string_contains(output, expected_prefix));
     ASSERT("Output does NOT contain default system prompt phrase (fallback)", !string_contains(output, "Pragmatic Programming Principles"));
 
     unlink(conf_path);
@@ -944,6 +950,7 @@ TEST(test_cli_config_system_prompt_override_cli_default) {
     char cmd[2048];
     char conf_path[1024];
     snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
+    const char *expected_prefix = "## Role\nYou're a helpful and intelligent AI assistant.";
     const char *config_sys_prompt = "This should be ignored due to bare -s flag.";
 
     /* Create config file */
@@ -957,8 +964,9 @@ TEST(test_cli_config_system_prompt_override_cli_default) {
     snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -s -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
-    // Check that NO system instructions are present because bare -s prevents config loading.
-    ASSERT("Output does NOT contain <system_instructions> (bare -s overrides config)", !string_contains(output, "<system_instructions>"));
+    // Check that ONLY the prefix is present because bare -s overrides config loading, but prefix is always added.
+    ASSERT("Output contains <system_instructions> (prefix only)", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt prefix (prefix only)", string_contains(output, expected_prefix));
     ASSERT("Output does NOT contain config system prompt", !string_contains(output, config_sys_prompt));
 
     unlink(conf_path);
@@ -971,6 +979,7 @@ TEST(test_cli_config_system_prompt_override_cli_at_file) {
     char cli_sys_prompt_file_path[1024];
     snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
     snprintf(cli_sys_prompt_file_path, sizeof(cli_sys_prompt_file_path), "%s/__sys_prompt_cli.txt", TEST_DIR);
+    const char *expected_prefix = "## Role\nYou're a helpful and intelligent AI assistant.";
     const char *config_sys_prompt = "This should be overridden by CLI -s@file.";
     const char *cli_sys_prompt = "System prompt from CLI file.";
 
@@ -994,6 +1003,7 @@ TEST(test_cli_config_system_prompt_override_cli_at_file) {
 
     /* Check that the prompt from the CLI file was used */
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt prefix", string_contains(output, expected_prefix));
     ASSERT("Output contains correct system prompt (from CLI @file)", string_contains(output, cli_sys_prompt));
     ASSERT("Output does NOT contain config system prompt", !string_contains(output, config_sys_prompt));
     ASSERT("Output does NOT contain default system prompt phrase", !string_contains(output, "Pragmatic Programming Principles"));
@@ -1007,6 +1017,7 @@ TEST(test_cli_config_system_prompt_multiline) {
     char cmd[2048];
     char conf_path[1024];
     snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
+    const char *expected_prefix = "## Role\nYou're a helpful and intelligent AI assistant.";
     /* Test setup matching the intended scenario for indentation */
     /* After uniform de-indent (min-indent = 2), the stored value is: */
     const char *expected_combined_prompt = "Line 1.\n  Line 2 indented.\nLine 3 same indent.";
@@ -1025,6 +1036,7 @@ TEST(test_cli_config_system_prompt_multiline) {
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt prefix", string_contains(output, expected_prefix));
     ASSERT("Output contains correct combined multiline system prompt", string_contains(output, expected_combined_prompt));
 
     unlink(conf_path);
@@ -1383,14 +1395,15 @@ TEST(test_cli_C_flag_prompt_only) {
 /* Test bare -s flag (default system prompt) */
 TEST(test_cli_s_default) {
     char cmd[2048];
+    const char *expected_prefix = "## Role\nYou're a helpful and intelligent AI assistant.";
 
     // Run llm_ctx with bare -s flag. This should NOT output any system prompt.
     snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -s -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
-    // Check that NO system instructions are present because bare -s prevents config loading
-    // and there's no hardcoded default anymore.
-    ASSERT("Output does NOT contain <system_instructions> (bare -s)", !string_contains(output, "<system_instructions>"));
+    // Check that ONLY the prefix is present because bare -s prevents config loading, but prefix is always added.
+    ASSERT("Output contains <system_instructions> (prefix only)", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt prefix (prefix only)", string_contains(output, expected_prefix));
     // Ensure user instructions are not present unless -c is also used
     ASSERT("Output does NOT contain <user_instructions>", !string_contains(output, "<user_instructions>"));
     // Ensure file content is still present
@@ -1402,6 +1415,7 @@ TEST(test_cli_s_at_file) {
     char cmd[2048];
     char sys_msg_file_path[1024];
     snprintf(sys_msg_file_path, sizeof(sys_msg_file_path), "%s/__sys_msg.txt", TEST_DIR);
+    const char *expected_prefix = "## Role\nYou're a helpful and intelligent AI assistant.";
     const char *custom_sys_prompt = "System prompt from file.\nLine two.";
 
     // Create the system message file
@@ -1416,6 +1430,7 @@ TEST(test_cli_s_at_file) {
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt prefix", string_contains(output, expected_prefix));
     ASSERT("Output contains system prompt from file", string_contains(output, custom_sys_prompt));
     ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
     ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
@@ -1427,6 +1442,7 @@ TEST(test_cli_s_at_file) {
 /* Test -s @-: Read system instructions from stdin */
 TEST(test_cli_s_at_stdin) {
     char cmd[2048];
+    const char *expected_prefix = "## Role\nYou're a helpful and intelligent AI assistant.";
     const char *stdin_sys_prompt = "System prompt from stdin.\nSecond line.";
     // Pipe instructions via echo to llm_ctx running with -s@- (attached form)
     snprintf(cmd, sizeof(cmd), "echo '%s' | %s/llm_ctx --ignore-configs -s@- -f %s/__regular.txt", stdin_sys_prompt, getenv("PWD"), TEST_DIR);
@@ -1437,6 +1453,7 @@ TEST(test_cli_s_at_stdin) {
     snprintf(expected_output, sizeof(expected_output), "%s\n", stdin_sys_prompt); // Add newline echo adds
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt prefix", string_contains(output, expected_prefix));
     ASSERT("Output contains system prompt from stdin", string_contains(output, expected_output));
     ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
     ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
@@ -1447,12 +1464,14 @@ TEST(test_cli_s_at_stdin) {
 /* Test -s "inline text": Use inline system instructions */
 TEST(test_cli_s_inline) {
     char cmd[2048];
+    const char *expected_prefix = "## Role\nYou're a helpful and intelligent AI assistant.";
     const char *inline_sys_prompt = "System prompt as inline text.";
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx --ignore-configs -s \"%s\" -f %s/__regular.txt", getenv("PWD"), inline_sys_prompt, TEST_DIR);
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
     ASSERT("Output contains inline system prompt", string_contains(output, inline_sys_prompt));
+    ASSERT("Output contains system prompt prefix", string_contains(output, expected_prefix));
     ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
     ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
 }
@@ -1460,23 +1479,28 @@ TEST(test_cli_s_inline) {
 /* Test -s=inline: Use inline system instructions with equals sign */
 TEST(test_cli_s_equals_inline) {
     char cmd[2048];
+    const char *expected_prefix = "## Role\nYou're a helpful and intelligent AI assistant.";
     const char *inline_sys_prompt = "System prompt with equals.";
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx --ignore-configs -s=\"%s\" -f %s/__regular.txt", getenv("PWD"), inline_sys_prompt, TEST_DIR);
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt prefix", string_contains(output, expected_prefix));
     ASSERT("Output contains inline system prompt (equals)", string_contains(output, inline_sys_prompt));
 }
 
 /* Test -sglued: Use inline system instructions glued to flag */
 TEST(test_cli_s_glued_inline) {
     char cmd[2048];
+    const char *expected_prefix = "## Role\nYou're a helpful and intelligent AI assistant.";
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx --ignore-configs -sgluedtext -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt prefix", string_contains(output, expected_prefix));
     ASSERT("Output contains glued inline system prompt", string_contains(output, "gluedtext"));
 }
+
 
 // ============================================================================
 // Tests for -r (raw mode)

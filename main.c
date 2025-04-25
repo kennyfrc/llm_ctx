@@ -315,13 +315,32 @@ static bool raw_mode = false;               /* -r flag */
 static bool g_ignore_all_configs = false; /* Flag to ignore all config files */
 /**
  * Open the file context block if it hasn't been opened yet.
- * Add system instructions to the output if provided
  */
-static void add_system_instructions(const char *msg) {
-    if (!msg || !*msg) return;
-    fprintf(temp_file, "<system_instructions>\n%s\n</system_instructions>\n\n", msg);
-}
 
+/* Define the universal prefix near the function */
+static const char *SYSTEM_INSTRUCTIONS_PREFIX = "## Role\n"
+                                                "You're a helpful and intelligent AI assistant. "
+                                                "When the user gives you <response_guide></response_guide> you follow it.";
+
+/**
+ * Add system instructions to the output, always including a standard prefix.
+ * User-provided instructions are appended after the prefix.
+ */
+static void add_system_instructions(const char *user_provided_msg) {
+    // Always open the block and add the prefix
+    fprintf(temp_file, "<system_instructions>\n%s\n</system_instructions>\n\n", msg);
+    fprintf(temp_file, "%s\n", SYSTEM_INSTRUCTIONS_PREFIX); // Print prefix, add trailing newline
+
+    // Add user-provided instructions if they exist and are non-empty
+    if (user_provided_msg && *user_provided_msg) {
+        fprintf(temp_file, "%s\n", user_provided_msg); // Print user content, add trailing newline
+    }
+    // No extra newline needed here if user_provided_msg is NULL/empty,
+    // the newlines after the prefix and before the closing tag handle spacing.
+
+    // Always close the block
+    fprintf(temp_file, "</system_instructions>\n\n");
+}
 /* Global flag to track if any file content has been written */
 static bool wrote_file_context = false;
 
