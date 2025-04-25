@@ -1339,6 +1339,16 @@ char *find_config_file(void) {
  */
 bool process_pattern(const char *pattern) {
     int initial_files_found = files_found;
+    struct stat statbuf;
+
+    /* Check if the pattern is actually a directory path */
+    if (lstat(pattern, &statbuf) == 0 && S_ISDIR(statbuf.st_mode)) {
+        // If it's a directory, recursively find all files within it, respecting gitignore
+        // Use "*" as the pattern to match all files within.
+        find_recursive(pattern, "*");
+        return (files_found > initial_files_found); // Return based on whether files were found
+    }
+
     
     /* Check if this is a recursive pattern */
     if (strstr(pattern, "**/") != NULL || strstr(pattern, "**") != NULL) {
@@ -1407,7 +1417,7 @@ bool process_pattern(const char *pattern) {
             add_to_file_tree(path);
 
             // Collect file content if it's a regular file
-            struct stat statbuf;
+            // struct stat statbuf; // Moved declaration up
             if (lstat(path, &statbuf) == 0 && S_ISREG(statbuf.st_mode)) {
                 // collect_file now handles adding to processed_files and files_found,
                 // and checks for readability.

@@ -393,8 +393,7 @@ TEST(test_directory_handling) {
     char *output = run_command(cmd);
 
     /* Directory should not be in the output */
-    ASSERT("Output does not contain directory as file",
-           !string_contains(output, "File: " TEST_DIR "/__nested\n```\n```"));
+    ASSERT("Output does not contain directory path as a file entry", !string_contains(output, "File: " TEST_DIR "/__nested\n"));
 
     /* But nested file should be in the output (prefixed) */
     ASSERT("Output contains __nested_file.txt",
@@ -435,17 +434,17 @@ TEST(test_file_tree_structure) {
     char *output = run_command(cmd);
 
     /* Check if the file tree structure is properly shown (prefixed) */
-    ASSERT("File tree contains __src_tree directory",
-           string_contains(output, "__src_tree"));
+    ASSERT("File tree contains __src_tree directory marker",
+           string_contains(output, "├── __src_tree"));
 
-    ASSERT("File tree contains __include_tree directory",
-           string_contains(output, "__include_tree"));
+    ASSERT("File tree contains __include_tree directory marker",
+           string_contains(output, "└── __include_tree"));
 
-    ASSERT("File tree contains __util subdirectory",
-           string_contains(output, "__util"));
+    ASSERT("File tree contains __util subdirectory marker",
+           string_contains(output, "├── __util"));
 
-    ASSERT("File tree contains __core subdirectory",
-           string_contains(output, "__core"));
+    ASSERT("File tree contains __core subdirectory marker",
+           string_contains(output, "└── __core"));
 
     /* Check if tree indentation is present */
     ASSERT("File tree contains proper indentation",
@@ -1215,8 +1214,8 @@ TEST(test_cli_e_flag_response_guide) {
     const char *expected_problem_statement_header = "## Problem Statement";
     const char *expected_problem_statement_text = "Summarize the user's request or problem based on the overall context provided.";
     const char *expected_response_header = "## Response";
-    const char *expected_reply_no_review = "    2. No code-review block is required.";
-    const char *expected_reply_with_review_start = "    2. Return **PR-style code review comments**"; // Check start only
+    const char *expected_reply_no_review = "    2. Provide an insightful and helpful response."; // Updated text
+    const char *expected_reply_with_review_start = "    2. Provide a technical plan:"; // Updated text (check start)
 
     ASSERT("Output (no -e) contains <response_guide>", string_contains(output_no_e, "<response_guide>"));
     ASSERT("Output (no -e) contains guide instruction line", string_contains(output_no_e, expected_guide_instruction));
@@ -1224,7 +1223,7 @@ TEST(test_cli_e_flag_response_guide) {
     ASSERT("Output (no -e) contains correct problem statement text", string_contains(output_no_e, expected_problem_statement_text));
     ASSERT("Output (no -e) contains Response header", string_contains(output_no_e, expected_response_header));
     ASSERT("Output (no -e) contains correct 'No code-review' reply format", string_contains(output_no_e, expected_reply_no_review));
-    ASSERT("Output (no -e) does NOT contain 'PR-style' reply format", !string_contains(output_no_e, expected_reply_with_review_start));
+    ASSERT("Output (no -e) does NOT contain 'technical plan' reply format", !string_contains(output_no_e, expected_reply_with_review_start));
 
     // Test with -e flag
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx -e -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
@@ -1235,14 +1234,14 @@ TEST(test_cli_e_flag_response_guide) {
     ASSERT("Output (with -e) contains Problem Statement header", string_contains(output_with_e, expected_problem_statement_header));
     ASSERT("Output (with -e) contains correct problem statement text", string_contains(output_with_e, expected_problem_statement_text));
     ASSERT("Output (with -e) contains Response header", string_contains(output_with_e, expected_response_header));
-    ASSERT("Output (with -e) contains correct 'PR-style' reply format", string_contains(output_with_e, expected_reply_with_review_start));
+    ASSERT("Output (with -e) contains correct 'technical plan' reply format", string_contains(output_with_e, expected_reply_with_review_start));
     ASSERT("Output (with -e) does NOT contain 'No code-review' reply format", !string_contains(output_with_e, expected_reply_no_review));
 
 
     // Test with --editor-comments flag (long form)
     snprintf(cmd, sizeof(cmd), "%s/llm_ctx --editor-comments -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
     char *output_with_long_e = run_command(cmd);
-    ASSERT("Output (with --editor-comments) contains correct 'PR-style' reply format", string_contains(output_with_long_e, expected_reply_with_review_start));
+    ASSERT("Output (with --editor-comments) contains correct 'technical plan' reply format", string_contains(output_with_long_e, expected_reply_with_review_start));
     ASSERT("Output (with --editor-comments) does NOT contain 'No code-review' reply format", !string_contains(output_with_long_e, expected_reply_no_review));
 
     // Test case where -c is not provided (no response guide expected)
@@ -1256,7 +1255,7 @@ TEST(test_cli_e_flag_response_guide) {
 /* Test -e flag without -c (should still add response guide for review) */
 TEST(test_cli_e_flag_without_c) {
     char cmd[2048];
-    const char *expected_reply_with_review_start = "    2. Return **PR-style code review comments**";
+    const char *expected_reply_with_review_start = "    2. Provide a technical plan:"; // Updated text
     const char *problem_statement_header = "## Problem Statement";
 
     // Run with -e but no -c
@@ -1264,7 +1263,7 @@ TEST(test_cli_e_flag_without_c) {
     char *output = run_command(cmd);
 
     ASSERT("Output (only -e) contains <response_guide>", string_contains(output, "<response_guide>"));
-    ASSERT("Output (only -e) contains correct 'PR-style' reply format", string_contains(output, expected_reply_with_review_start));
+    ASSERT("Output (only -e) contains correct 'technical plan' reply format", string_contains(output, expected_reply_with_review_start));
     ASSERT("Output (only -e) does NOT contain Problem Statement header", !string_contains(output, problem_statement_header));
     // Ensure file content is still present
     ASSERT("Output (only -e) contains regular file content", string_contains(output, "Regular file content"));
@@ -1277,7 +1276,7 @@ TEST(test_cli_config_editor_comments_true) {
     char conf_path[1024];
     snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
     const char *instructions = "Test instructions for config editor comments.";
-    const char *expected_reply_with_review_start = "    2. Return **PR-style code review comments**";
+    const char *expected_reply_with_review_start = "    2. Provide a technical plan:"; // Updated text
 
     /* Create config file with editor_comments=true */
     FILE *conf = fopen(conf_path, "w");
@@ -1291,7 +1290,7 @@ TEST(test_cli_config_editor_comments_true) {
     char *output = run_command(cmd);
 
     ASSERT("Output contains <response_guide>", string_contains(output, "<response_guide>"));
-    ASSERT("Output contains correct 'PR-style' reply format (from config)", string_contains(output, expected_reply_with_review_start));
+    ASSERT("Output contains correct 'technical plan' reply format (from config)", string_contains(output, expected_reply_with_review_start));
 
     unlink(conf_path); // Clean up config file
 }
@@ -1302,7 +1301,7 @@ TEST(test_cli_config_editor_comments_false) {
     char conf_path[1024];
     snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
     const char *instructions = "Test instructions for config editor comments false.";
-    const char *expected_reply_no_review = "    2. No code-review block is required.";
+    const char *expected_reply_no_review = "    2. Provide an insightful and helpful response."; // Updated text
 
     /* Create config file with editor_comments=false */
     FILE *conf = fopen(conf_path, "w");
@@ -1327,7 +1326,7 @@ TEST(test_cli_config_editor_comments_override) {
     char conf_path[1024];
     snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
     const char *instructions = "Test instructions for config override.";
-    const char *expected_reply_with_review_start = "    2. Return **PR-style code review comments**";
+    const char *expected_reply_with_review_start = "    2. Provide a technical plan:"; // Updated text
 
     /* Create config file with editor_comments=false */
     FILE *conf = fopen(conf_path, "w");
@@ -1341,7 +1340,7 @@ TEST(test_cli_config_editor_comments_override) {
     char *output = run_command(cmd);
 
     ASSERT("Output contains <response_guide>", string_contains(output, "<response_guide>"));
-    ASSERT("Output contains correct 'PR-style' reply format (CLI override)", string_contains(output, expected_reply_with_review_start));
+    ASSERT("Output contains correct 'technical plan' reply format (CLI override)", string_contains(output, expected_reply_with_review_start));
 
     unlink(conf_path); // Clean up config file
 }
