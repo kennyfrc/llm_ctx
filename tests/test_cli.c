@@ -437,8 +437,8 @@ TEST(test_file_tree_structure) {
     ASSERT("File tree contains __src_tree directory marker (either ├── or └──)",
            string_contains(output, "├── __src_tree") || string_contains(output, "└── __src_tree"));
 
-    ASSERT("File tree contains __include_tree directory marker",
-           string_contains(output, "└── __include_tree"));
+    ASSERT("File tree contains __include_tree directory marker (should be ├──)",
+           string_contains(output, "├── __include_tree"));
 
     ASSERT("File tree contains __util subdirectory marker",
            string_contains(output, "├── __util"));
