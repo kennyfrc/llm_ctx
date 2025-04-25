@@ -22,6 +22,9 @@
 #define USER_CONFIG_FILE ".llm_ctx.conf"
 #define USER_CONFIG_BACKUP ".llm_ctx.conf.backup"
 
+/* Declare test function defined in another file */
+extern void test_cli_config_discovery_binary_dir(void);
+
 /* Set up the test environment */
 void setup_test_env(void) {
     /* Create test directory */
