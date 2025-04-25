@@ -243,8 +243,7 @@ static bool store_kv(ConfigSettings *s, const char *k, const char *v) {
 
 /* Forward declaration for finalize_multiline_block needed by parse_config_file */
 static bool finalize_multiline_block(ConfigSettings *s,
-                                     const char *key, // Make key const
-                                     char *key,
+                                     const char *key,
                                      char **buf_ptr,
                                      size_t *len_ptr,
                                      size_t min_indent);
@@ -282,7 +281,6 @@ void generate_file_tree(void);
 void add_to_file_tree(const char *filepath);
 int compare_file_paths(const void *a, const void *b);
 char *find_common_prefix(void);
-void build_tree_recursive(char **paths, int count, int level, char *prefix, const char *path_prefix);
 void build_tree_recursive(char **paths, int count, int level, char *prefix);
 int compare_string_pointers(const void *a, const void *b);
 bool process_stdin_content(void);
@@ -676,20 +674,18 @@ void generate_file_tree(void) {
     
     for (int i = 0; i < file_tree_count; i++) {
         const char *path = file_tree[i].path;
-        
-
-        
+        char *rel_path = NULL;
 
         if (strncmp(path, common_prefix, prefix_len) == 0) {
             if (path[prefix_len] == '/') {
-                file_tree[i].relative_path = strdup(path + prefix_len + 1);
+                rel_path = strdup(path + prefix_len + 1);
             } else {
-                file_tree[i].relative_path = strdup(path + prefix_len);
+                rel_path = strdup(path + prefix_len);
             }
         } else {
-            file_tree[i].relative_path = strdup(path);
+            rel_path = strdup(path);
         }
-        
+
         // Only add non-directory paths to the list for tree building
         if (!file_tree[i].is_dir && rel_path && relative_path_count < MAX_FILES) {
             relative_paths[relative_path_count++] = rel_path;
@@ -697,51 +693,46 @@ void generate_file_tree(void) {
             free(rel_path); // Free if it's a directory or we can't store it
         }
     }
-    
+
     /* Print the root directory */
     fprintf(tree_file, "%s\n", common_prefix);
-    
+
     /* Build the tree recursively */
-    build_tree_recursive(paths, path_count, 0, "", common_prefix);
-    
+    build_tree_recursive(relative_paths, relative_path_count, 0, "");
+
     /* Free common prefix memory */
     free(common_prefix);
-    
+
     /* Close tree file */
     fclose(tree_file);
-    
+
     /* Add file tree to the main output */
     fprintf(temp_file, "<file_tree>\n");
-    
+
     /* Copy tree file content */
     FILE *f = fopen(tree_file_path, "r");
     if (f) {
         char buffer[4096];
         size_t bytes_read;
-        
+
         while ((bytes_read = fread(buffer, 1, sizeof(buffer), f)) > 0) {
             fwrite(buffer, 1, bytes_read, temp_file);
-        }        
-        
+        }
+
         fclose(f);
     } else {
         perror("Failed to reopen tree file for reading"); // Added error context
     }
-    
+
     fprintf(temp_file, "</file_tree>\n\n");
-    
+
     /* Remove temporary tree file */
     unlink(tree_file_path);
-    
+
     // Free the duplicated relative paths
     for (int i = 0; i < relative_path_count; i++) {
         free(relative_paths[i]);
     }
-
-    free(common_prefix);
-    fclose(tree_file);
-    /* Remove temporary tree file */
-    unlink(tree_file_path);
 }
 
 // Comparison function for qsort on char**
@@ -751,87 +742,68 @@ int compare_string_pointers(const void *a, const void *b) {
     return strcmp(str_a, str_b);
 }
 
-// Recursive helper for generate_file_tree
 static void build_tree_recursive(char **paths, int count, int level, char *prefix) {
     if (count <= 0) return;
 
-    // Separate files and directories at the current level
     char *files[MAX_FILES];
-    char *dirs[MAX_FILES]; // Store starting path for each top-level dir group
+    char *dirs[MAX_FILES];
     int file_count = 0;
     int dir_count = 0;
 
     int i = 0;
     while (i < count) {
         char *slash = strchr(paths[i], '/');
-        if (slash == NULL) { // It's a file at this level
+        if (slash == NULL) {
             if (file_count < MAX_FILES) files[file_count++] = paths[i];
             i++;
-        } else { // It's a directory or file within a directory
-            // Extract the first component (directory name)
+        } else {
             int len = slash - paths[i];
             bool found = false;
-            // Check if this directory component is already listed
             for (int d = 0; d < dir_count; d++) {
-                 // Check if paths[i] starts with the same directory component as dirs[d]
-                 if (strncmp(dirs[d], paths[i], len) == 0 && dirs[d][len] == '/') {
-                     found = true;
-                     break;
-                 }
+                if (strncmp(dirs[d], paths[i], len) == 0 && dirs[d][len] == '/') {
+                    found = true;
+                    break;
+                }
             }
             if (!found && dir_count < MAX_FILES) {
-                 // Store the first path encountered for this directory group
-                 dirs[dir_count++] = paths[i];
+                dirs[dir_count++] = paths[i];
             }
-
-            // Skip all paths belonging to this directory component for now
-            // Find the end of the current directory group in the sorted list
             int group_end = i;
             while (group_end + 1 < count && strncmp(paths[group_end + 1], paths[i], len) == 0 && paths[group_end + 1][len] == '/') {
                 group_end++;
             }
-            i = group_end + 1; // Move index past this group
+            i = group_end + 1;
         }
     }
 
-    // Process files first
     for (i = 0; i < file_count; i++) {
         bool is_last_file = (i == file_count - 1);
         bool is_last_overall = is_last_file && (dir_count == 0);
         fprintf(tree_file, "%s%s%s\n", prefix, is_last_overall ? "└── " : "├── ", files[i]);
     }
 
-    // Process directories
     for (i = 0; i < dir_count; i++) {
         bool is_last_dir_group = (i == dir_count - 1);
         char *dir_start_path = dirs[i];
-        char *slash = strchr(dir_start_path, '/'); // Should exist
+        char *slash = strchr(dir_start_path, '/');
         int len = slash - dir_start_path;
         char component[MAX_PATH];
         strncpy(component, dir_start_path, len);
         component[len] = '\0';
 
-        // Print directory entry
         fprintf(tree_file, "%s%s%s\n", prefix, is_last_dir_group ? "└── " : "├── ", component);
 
-        // Prepare for recursion: gather sub-paths for this directory
         char *sub_paths[MAX_FILES];
         int sub_count = 0;
-        // Need to iterate through the original 'paths' array again to find all matching sub-paths
-        for (int k=0; k < count; ++k) {
-             // Check if paths[k] starts with the current component and has a slash after it
-             if (strncmp(paths[k], component, len) == 0 && paths[k][len] == '/') {
-                 char *sub_path_start = paths[k] + len + 1;
-                 if (*sub_path_start != '\0' && sub_count < MAX_FILES) { // Ensure there's something after the slash
-                     sub_paths[sub_count++] = sub_path_start;
-                 }
-             }
+        for (int k = 0; k < count; ++k) {
+            if (strncmp(paths[k], component, len) == 0 && paths[k][len] == '/') {
+                char *sub_path_start = paths[k] + len + 1;
+                if (*sub_path_start != '\0' && sub_count < MAX_FILES) {
+                    sub_paths[sub_count++] = sub_path_start;
+                }
+            }
         }
 
-        // Sort sub-paths before recursing (already sorted in the parent call, but doesn't hurt)
-        // qsort(sub_paths, sub_count, sizeof(char *), compare_string_pointers); // Sorting here might be redundant if parent list was sorted
-
-        // Recurse
         char new_prefix[MAX_PATH];
         snprintf(new_prefix, sizeof(new_prefix), "%s%s", prefix, is_last_dir_group ? "    " : "│   ");
         build_tree_recursive(sub_paths, sub_count, level + 1, new_prefix);
