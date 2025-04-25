@@ -1695,6 +1695,9 @@ int main(void) {
     /* Tests for config file discovery (Slice 2) */
     RUN_TEST(test_cli_config_discovery_parent);
     RUN_TEST(test_cli_config_discovery_cwd_over_parent);
+    /* Test for config file discovery next to executable (Slice 3 / Commit 080e75f) */
+    /* This test is defined in test_config_binary_dir.c */
+    RUN_TEST(test_cli_config_discovery_binary_dir);
 
     /* Temporarily skipped tests for UTF-16/32 handling, as the current heuristic */
     /* correctly identifies them as binary (due to null bytes), but the ideal */
