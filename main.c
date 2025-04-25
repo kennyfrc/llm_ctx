@@ -661,7 +661,7 @@ int compare_string_pointers(const void *a, const void *b) {
     return strcmp(str_a, str_b);
 }
 
-static void build_tree_recursive(char **paths, int count, int level, char *prefix) {
+void build_tree_recursive(char **paths, int count, int level, char *prefix) {
     if (count <= 0) return;
 
     char *files[MAX_FILES];
