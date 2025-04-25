@@ -1603,6 +1603,87 @@ TEST(test_cli_config_discovery_cwd_over_parent) {
     unlink(parent_conf_path);
 }
 
+/* Test config file discovery: LLM_CTX_CONFIG environment variable override */
+TEST(test_cli_config_discovery_env_override) {
+    char cmd[2048];
+    char env_conf_path[1024] = "/tmp/llm_ctx_env_test.conf"; // Outside TEST_DIR
+    char cwd_conf_path[1024];
+
+    snprintf(cwd_conf_path, sizeof(cwd_conf_path), "%s/.llm_ctx.conf", TEST_DIR);
+
+    /* 1. Create the config file specified by the env var (copy=true) */
+    FILE *env_conf = fopen(env_conf_path, "w");
+    ASSERT("Env override config file created", env_conf != NULL);
+    if (!env_conf) return;
+    fprintf(env_conf, "copy_to_clipboard=true\n");
+    fclose(env_conf);
+
+    /* 2. Create a conflicting config file in CWD (copy=false) */
+    FILE *cwd_conf = fopen(cwd_conf_path, "w");
+    ASSERT("CWD config file created for env override test", cwd_conf != NULL);
+    if (!cwd_conf) { unlink(env_conf_path); return; }
+    fprintf(cwd_conf, "copy_to_clipboard=false\n");
+    fclose(cwd_conf);
+
+    /* 3. Set the environment variable */
+    setenv("LLM_CTX_CONFIG", env_conf_path, 1);
+
+    /* 4. Run llm_ctx from the test directory */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    /* 5. Assert that the env var config (copy=true) was used */
+    ASSERT("Output does NOT contain regular file content (env override)", !string_contains(output, "Regular file content"));
+    ASSERT("Output contains clipboard confirmation message (env override)", string_contains(output, "Content copied to clipboard."));
+
+    /* 6. Clean up */
+    unsetenv("LLM_CTX_CONFIG");
+    unlink(env_conf_path);
+    unlink(cwd_conf_path); // Remove the CWD config created for this test
+}
+
+/* Test config file discovery: XDG config directory */
+TEST(test_cli_config_discovery_xdg) {
+    char cmd[2048];
+    char xdg_dir_path[1024];
+    char xdg_conf_path[1024];
+    char dot_config_path[1024];
+    const char *home = getenv("HOME");
+    ASSERT("HOME environment variable is set", home != NULL);
+    if (!home) return; // Cannot proceed without HOME
+
+    snprintf(dot_config_path, sizeof(dot_config_path), "%s/.config", home);
+    snprintf(xdg_dir_path, sizeof(xdg_dir_path), "%s/llm_ctx", dot_config_path);
+    snprintf(xdg_conf_path, sizeof(xdg_conf_path), "%s/.llm_ctx.conf", xdg_dir_path);
+
+    /* 1. Create the XDG directory structure */
+    mkdir(dot_config_path, 0755); // Ensure .config exists
+    mkdir(xdg_dir_path, 0755);
+
+    /* 2. Create the XDG config file (copy=true) */
+    FILE *xdg_conf = fopen(xdg_conf_path, "w");
+    ASSERT("XDG config file created", xdg_conf != NULL);
+    if (!xdg_conf) { rmdir(xdg_dir_path); return; }
+    fprintf(xdg_conf, "copy_to_clipboard=true\n");
+    fclose(xdg_conf);
+
+    /* 3. Ensure no CWD config exists */
+    unlink(strcat(strdup(TEST_DIR), "/.llm_ctx.conf"));
+
+    /* 4. Run llm_ctx from the test directory */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    /* 5. Assert that the XDG config (copy=true) was used */
+    ASSERT("Output does NOT contain regular file content (XDG config)", !string_contains(output, "Regular file content"));
+    ASSERT("Output contains clipboard confirmation message (XDG config)", string_contains(output, "Content copied to clipboard."));
+
+    /* 6. Clean up */
+    unlink(xdg_conf_path);
+    rmdir(xdg_dir_path);
+    /* Note: We don't remove ~/.config or ~/. */
+}
+
 // ============================================================================
 // Main Test Runner
 // ============================================================================
@@ -1694,6 +1775,9 @@ int main(void) {
     RUN_TEST(test_cli_config_copy_clipboard_false);
     /* Tests for config file discovery (Slice 2) */
     RUN_TEST(test_cli_config_discovery_parent);
+    /* New tests for config file discovery (Commit 87871e4) */
+    RUN_TEST(test_cli_config_discovery_env_override);
+    RUN_TEST(test_cli_config_discovery_xdg);
     RUN_TEST(test_cli_config_discovery_cwd_over_parent);
     /* Test for config file discovery next to executable (Slice 3 / Commit 080e75f) */
     /* This test is defined in test_config_binary_dir.c */
