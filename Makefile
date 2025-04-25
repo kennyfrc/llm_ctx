@@ -33,9 +33,10 @@ tests/test_gitignore: tests/test_gitignore.c gitignore.c
 
 # Note: test_cli depends on main.c (for config parsing logic) and gitignore.c
 # test_cli is an integration test, it runs the main llm_ctx executable.
-# It only needs its own source file compiled.
-tests/test_cli: tests/test_cli.c
-	$(CC) $(CFLAGS) -o $@ $< # Use $< to only link the first prerequisite (test_cli.c)
+# It needs its own source file compiled AND the source file containing the
+# test_cli_config_discovery_binary_dir function.
+tests/test_cli: tests/test_cli.c tests/test_config_binary_dir.c
+	$(CC) $(CFLAGS) -o $@ $^ # Use $^ to link all prerequisites
 
 # Note: test_config depends on main.c (for config parsing logic) and gitignore.c
 # test_config is an integration test, it runs the main llm_ctx executable.
