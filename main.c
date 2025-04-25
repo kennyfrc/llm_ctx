@@ -25,6 +25,9 @@
 #include <stdarg.h>   /* For va_list, va_start, va_end */
 #include <limits.h>   /* For PATH_MAX */
 #include <getopt.h>   /* For getopt_long */
+#ifdef __APPLE__
+#  include <mach-o/dyld.h> /* _NSGetExecutablePath */
+#endif
 #include "gitignore.h"
 
 /* Forward declaration for cleanup function called by fatal() */
@@ -44,6 +47,8 @@ typedef struct {
 
 /* Global flag for effective copy_to_clipboard setting */
 static bool g_effective_copy_to_clipboard = false;
+/* Store argv[0] for fallback executable path resolution */
+static const char *g_argv0 = NULL;
 
 /* ========================= NEW HELPERS ========================= */
 
@@ -177,6 +182,41 @@ static char *slurp_file(const char *path) {
         }                                                                \
         success; /* Return status */                                     \
     })
+
+/**
+ * get_executable_dir() – return malloc-ed absolute directory that
+ * contains the binary currently running.  Result is cached after the
+ * first call (thread-unsafe but main() is single-threaded).
+ *
+ * WHY: permits a last-chance search for .llm_ctx.conf next to the
+ * shipped binary, enabling “copy-anywhere” workflows without polluting
+ * $HOME or /etc.  Falls back silently if platform support is missing.
+ */
+static char *get_executable_dir(void)
+{
+    static char *cached = NULL;
+    if (cached) return cached;
+
+    char pathbuf[PATH_MAX] = {0};
+#ifdef __linux__
+    ssize_t len = readlink("/proc/self/exe", pathbuf, sizeof(pathbuf) - 1);
+    if (len <= 0) return NULL; /* Error or empty path */
+    pathbuf[len] = '\0';
+#elif defined(__APPLE__)
+    uint32_t size = sizeof(pathbuf);
+    if (_NSGetExecutablePath(pathbuf, &size) != 0)
+        return NULL;            /* buffer too small – very unlikely */
+    /* Use realpath to resolve symlinks, ., .. components */
+    if (!realpath(pathbuf, pathbuf)) return NULL;
+#else
+    /* POSIX fallback: Use argv[0] passed to realpath */
+    if (!g_argv0 || !realpath(g_argv0, pathbuf)) return NULL;
+#endif
+
+    char *dir = dirname(pathbuf);          /* modifies in-place */
+    cached   = strdup(dir);                /* persist after function returns */
+    return cached;
+}
 
 /* Helper function to store a key-value pair */
 /* Returns true on success, false on OOM */
@@ -1260,7 +1300,15 @@ char *find_config_file(void) {
         strcpy(current_dir, parent_dir);
     }
 
-    return NULL; /* Not found */
+    /* ---------------- fallback: directory of the executable ---------------- */
+    char *exe_dir = get_executable_dir();
+    if (exe_dir) {
+        snprintf(config_path, sizeof(config_path), "%s/.llm_ctx.conf", exe_dir);
+        if (access(config_path, R_OK) == 0)
+            return strdup(config_path);    /* SUCCESS: found next to binary */
+    }
+
+    return NULL;                            /* Not found anywhere */
 }
 
 /**
@@ -1767,6 +1815,7 @@ static void handle_system_arg(const char *arg) {
  * Main function - program entry point
  */
 int main(int argc, char *argv[]) {
+    g_argv0 = argv[0]; /* Store for get_executable_dir fallback */
     bool allow_empty_context = false; /* Can we finish with no file content? */
     ConfigSettings loaded_settings; /* Declare here for broader scope */
     /* Register cleanup handler */
