@@ -440,11 +440,11 @@ TEST(test_file_tree_structure) {
     ASSERT("File tree contains __include_tree directory marker (should be ├──)",
            string_contains(output, "├── __include_tree"));
 
-    ASSERT("File tree contains __util subdirectory marker",
-           string_contains(output, "├── __util"));
+    ASSERT("File tree contains __util subdirectory marker (should be └──)",
+           string_contains(output, "└── __util"));
 
-    ASSERT("File tree contains __core subdirectory marker",
-           string_contains(output, "└── __core"));
+    ASSERT("File tree contains __core subdirectory marker (should be ├──)",
+           string_contains(output, "├── __core"));
 
     /* Check if tree indentation is present */
     ASSERT("File tree contains proper indentation",
