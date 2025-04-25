@@ -353,9 +353,9 @@ static void add_response_guide(const char *problem) {
         fprintf(temp_file, "## Response\n");
         fprintf(temp_file, "    1. Provide a clear, step-by-step solution or explanation.\n");
         fprintf(temp_file, "    2. %s\n",
-                want_editor_comments ?
-                  "Return **PR-style code review comments**: use GitHub inline-diff syntax, group notes per file, justify each change, and suggest concrete refactors."
-                  : "No code-review block is required."); // If !want_editor_comments, this is only reached if 'problem' exists.
+                want_editor_comments
+                  ? "Provide a technical plan: Specify locations, explain logic, give example signatures/types, note impacts, and highlight architectural decisions. Short illustrative snippets okay, no full implementation."
+                  : "Provide an insightful and helpful response.");
 
         fprintf(temp_file, "</response_guide>\n\n");
     }
