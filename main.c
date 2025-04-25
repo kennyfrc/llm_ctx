@@ -1248,67 +1248,82 @@ void find_recursive(const char *base_dir, const char *pattern) {
     closedir(dir);
 }
 
+/* Helper: strdup() only if @path is a readable, regular file */
+static char *dup_if_readable(const char *path) {
+    struct stat sb;
+    if (!path || *path == '\0') return NULL;
+    if (stat(path, &sb) == 0 && S_ISREG(sb.st_mode) && access(path, R_OK) == 0) {
+        char *p = strdup(path);
+        if (!p) perror("strdup"); /* propagate NULL on OOM */
+        return p;
+    }
+    return NULL;
+}
+
 /**
- * Search upwards from the current directory for the config file.
- * Returns the path to the first found config file (caller must free), or NULL.
+ * Discover the configuration file using a cosmiconfig-style strategy:
+ *   1. $LLM_CTX_CONFIG env override
+ *   2. walk-up from CWD for .llm_ctx.conf
+ *   3. $XDG_CONFIG_HOME/llm_ctx/.llm_ctx.conf  (or $HOME/.config/…)
+ *   4. $HOME/.llm_ctx.conf                     (legacy)
+ *   5. <binary-dir>/.llm_ctx.conf              (portable install)
+ *
+ * Returns malloc’d path or NULL when none found.
  */
 char *find_config_file(void) {
-    char current_dir[PATH_MAX];
-    char config_path[PATH_MAX];
-    char parent_dir[PATH_MAX];
+    char buf[PATH_MAX];
 
-    /* Get the current working directory */
-    if (getcwd(current_dir, sizeof(current_dir)) == NULL) {
-        perror("getcwd() error");
-        return NULL;
+    /* ---------- 1. explicit env override ---------- */
+    if (char *env = getenv("LLM_CTX_CONFIG")) {
+        char *p = dup_if_readable(env);
+        if (p) return p; /* user knows best */        // env override precedence
+    } /* silently continue if not readable */
+
+    /* ---------- 2. project hierarchy walk-up ---------- */
+    if (getcwd(buf, sizeof buf) != NULL) {
+        char current_path[PATH_MAX]; // Buffer to hold the path being checked
+        strcpy(current_path, buf); // Start with CWD
+
+        for (;;) {
+            snprintf(buf, sizeof buf, "%s/.llm_ctx.conf", current_path);
+            char *p = dup_if_readable(buf);
+            if (p) return p;                          // first hit wins
+
+            /* stop at root */
+            char *slash = strrchr(current_path, '/');
+            if (!slash || slash == current_path) break; // Reached root or error
+            *slash = '\0';                            // ascend (modify current_path)
+        }
     }
 
-    /* Loop upwards until root or error */
-    while (1) {
-        /* Construct the path to the config file in the current directory */
-        snprintf(config_path, sizeof(config_path), "%s/.llm_ctx.conf", current_dir);
-
-        /* Check if the file exists and is readable */
-        if (access(config_path, R_OK) == 0) {
-            /* Found it! Duplicate the path and return */
-            char *found_path = strdup(config_path);
-            if (!found_path) {
-                perror("strdup() error");
-                return NULL; /* Allocation failed */
-            }
-            return found_path;
-        }
-
-        /* Check if we are at the root directory */
-        if (strcmp(current_dir, "/") == 0) {
-            break; /* Reached root, not found */
-        }
-
-        /* Get the parent directory path */
-        /* Use dirname() on a copy because it can modify the input */
-        char *dir_copy = strdup(current_dir);
-        if (!dir_copy) { perror("strdup() error"); return NULL; }
-        strcpy(parent_dir, dirname(dir_copy));
-        free(dir_copy);
-
-        /* Check if dirname returned the same path (e.g., at root or error) */
-        if (strcmp(current_dir, parent_dir) == 0) {
-            break; /* Stop if path doesn't change */
-        }
-
-        /* Update current_dir to the parent directory */
-        strcpy(current_dir, parent_dir);
+    /* ---------- 3. XDG-style per-user config dir ---------- */
+    const char *xdg = getenv("XDG_CONFIG_HOME");
+    const char *home = getenv("HOME");
+    if (!xdg && home) {                               // spec §3 – default to $HOME/.config  ([XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/?utm_source=chatgpt.com))
+        snprintf(buf, sizeof buf, "%s/.config/llm_ctx/.llm_ctx.conf", home);
+        char *p = dup_if_readable(buf);
+        if (p) return p;
+    } else if (xdg) {
+        snprintf(buf, sizeof buf, "%s/llm_ctx/.llm_ctx.conf", xdg);
+        char *p = dup_if_readable(buf);
+        if (p) return p;
     }
 
-    /* ---------------- fallback: directory of the executable ---------------- */
-    char *exe_dir = get_executable_dir();
-    if (exe_dir) {
-        snprintf(config_path, sizeof(config_path), "%s/.llm_ctx.conf", exe_dir);
-        if (access(config_path, R_OK) == 0)
-            return strdup(config_path);    /* SUCCESS: found next to binary */
+    /* ---------- 4. legacy file in $HOME ---------- */
+    if (home) {
+        snprintf(buf, sizeof buf, "%s/.llm_ctx.conf", home);
+        char *p = dup_if_readable(buf);
+        if (p) return p;
     }
 
-    return NULL;                            /* Not found anywhere */
+    /* ---------- 5. binary-sibling fallback ---------- */
+    if (char *exe_dir = get_executable_dir()) {
+        snprintf(buf, sizeof buf, "%s/.llm_ctx.conf", exe_dir);
+        char *p = dup_if_readable(buf);
+        if (p) return p;
+    }
+
+    return NULL; /* none found */
 }
 
 /**
