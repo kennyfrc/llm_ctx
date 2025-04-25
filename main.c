@@ -1935,7 +1935,7 @@ int main(int argc, char *argv[]) {
     /* --- Configuration File Loading --- */
     /* Find config file by searching upwards */
     char *config_path = find_config_file();
-    bool config_set_system = false;
+    bool config_set_system = false; // Track if config *tried* to set system prompt
     bool config_set_editor = false;
 
     if (config_path) {
@@ -1945,12 +1945,10 @@ int main(int argc, char *argv[]) {
             if (loaded_settings.copy_to_clipboard_set) {
                 g_effective_copy_to_clipboard = loaded_settings.copy_to_clipboard;
             }
-            /* Merge editor_comments (respect CLI override) */
-            if (loaded_settings.editor_comments_set && !e_flag_used) {
-                /* Apply config setting only if CLI flag wasn't used */
-                want_editor_comments = loaded_settings.editor_comments;
-                config_set_editor = true;
-                /* Note: e_flag_used remains false here */
+            /* Store config value for editor_comments if set */
+            if (loaded_settings.editor_comments_set) {
+                config_set_editor = true; // Mark that config set it
+                /* We'll apply the toggle logic later */
             }
             /* Merge system_prompt (respect CLI override) */
             if (loaded_settings.system_prompt_set && !s_flag_used) {
@@ -2000,6 +1998,16 @@ int main(int argc, char *argv[]) {
             }
         }
         free(config_path); /* Free the path returned by find_config_file */
+    }
+
+    /* --- Finalize editor_comments setting (apply toggle logic) --- */
+    /* Determine initial state based on config (or default false) */
+    bool initial_want_editor_comments = config_set_editor ? loaded_settings.editor_comments : false;
+    /* Apply toggle if -e flag was used */
+    if (e_flag_used) {
+        want_editor_comments = !initial_want_editor_comments;
+    } else {
+        want_editor_comments = initial_want_editor_comments;
     }
 
     /* Determine if prompt-only output is allowed based on final settings */
