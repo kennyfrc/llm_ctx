@@ -868,7 +868,7 @@ TEST(test_cli_config_system_prompt_inline) {
     fclose(conf);
 
     /* Run llm_ctx without -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
@@ -902,7 +902,7 @@ TEST(test_cli_config_system_prompt_at_file) {
     fclose(conf);
 
     /* Run llm_ctx without -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
@@ -927,7 +927,7 @@ TEST(test_cli_config_system_prompt_at_nonexistent) {
     fclose(conf);
 
     /* Run llm_ctx without -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd); // Captures stderr
 
     /* Check for warning message on stderr */
@@ -954,7 +954,7 @@ TEST(test_cli_config_system_prompt_override_cli_default) {
     fclose(conf);
 
     /* Run llm_ctx WITH bare -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -s -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -s -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Check that NO system instructions are present because bare -s prevents config loading.
@@ -989,7 +989,7 @@ TEST(test_cli_config_system_prompt_override_cli_at_file) {
     fclose(conf);
 
     /* Run llm_ctx WITH -s@file flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -s@%s -f __regular.txt", TEST_DIR, getenv("PWD"), "__sys_prompt_cli.txt");
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -s@%s -f __regular.txt", TEST_DIR, getenv("PWD"), "__sys_prompt_cli.txt");
     char *output = run_command(cmd);
 
     /* Check that the prompt from the CLI file was used */
@@ -1021,7 +1021,7 @@ TEST(test_cli_config_system_prompt_multiline) {
     fclose(conf);
 
     /* Run llm_ctx without -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
@@ -1287,7 +1287,7 @@ TEST(test_cli_config_editor_comments_true) {
     fclose(conf);
 
     /* Run llm_ctx without -e flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
     char *output = run_command(cmd);
 
     ASSERT("Output contains <response_guide>", string_contains(output, "<response_guide>"));
@@ -1312,7 +1312,7 @@ TEST(test_cli_config_editor_comments_false) {
     fclose(conf);
 
     /* Run llm_ctx without -e flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
     char *output = run_command(cmd);
 
     ASSERT("Output contains <response_guide>", string_contains(output, "<response_guide>"));
@@ -1337,7 +1337,7 @@ TEST(test_cli_config_editor_comments_override) {
     fclose(conf);
 
     /* Run llm_ctx WITH -e flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -e -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -e -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
     char *output = run_command(cmd);
 
     ASSERT("Output contains <response_guide>", string_contains(output, "<response_guide>"));
@@ -1524,7 +1524,7 @@ TEST(test_cli_config_copy_clipboard_true) {
     fclose(conf);
 
     /* Run llm_ctx in the test directory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd); /* run_command captures stderr */
 
     /* Check that stdout is empty (content should NOT be printed) */
@@ -1547,7 +1547,7 @@ TEST(test_cli_config_copy_clipboard_false) {
     fclose(conf);
 
     /* Run llm_ctx in the test directory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd); /* run_command captures stderr */
 
     /* Check that the copy mechanism wasn't triggered (no stderr message, stdout present) */
@@ -1579,7 +1579,7 @@ TEST(test_cli_config_discovery_parent) {
     unlink(subdir_conf_path); // Remove if it exists from previous tests
 
     /* Run llm_ctx from the subdirectory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -f %s/__regular.txt", subdir_path, getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f %s/__regular.txt", subdir_path, getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     /* Check if the setting from the parent config was applied (copy=true means no stdout) */
@@ -1620,7 +1620,7 @@ TEST(test_cli_config_discovery_cwd_over_parent) {
     fclose(subdir_conf);
 
     /* Run llm_ctx from the subdirectory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -f %s/__regular.txt", subdir_path, getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f %s/__regular.txt", subdir_path, getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     /* Check that the setting from the subdir config (false) was applied (stdout present) */
@@ -1658,7 +1658,7 @@ TEST(test_cli_config_discovery_env_override) {
     setenv("LLM_CTX_CONFIG", env_conf_path, 1);
 
     /* 4. Run llm_ctx from the test directory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     /* 5. Assert that the env var config (copy=true) was used */
@@ -1705,7 +1705,7 @@ TEST(test_cli_config_discovery_xdg) {
     }
 
     /* 4. Run llm_ctx from the test directory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     /* 5. Assert that the XDG config (copy=true) was used */
