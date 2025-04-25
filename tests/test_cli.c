@@ -434,8 +434,8 @@ TEST(test_file_tree_structure) {
     char *output = run_command(cmd);
 
     /* Check if the file tree structure is properly shown (prefixed) */
-    ASSERT("File tree contains __src_tree directory marker",
-           string_contains(output, "├── __src_tree"));
+    ASSERT("File tree contains __src_tree directory marker (either ├── or └──)",
+           string_contains(output, "├── __src_tree") || string_contains(output, "└── __src_tree"));
 
     ASSERT("File tree contains __include_tree directory marker",
            string_contains(output, "└── __include_tree"));

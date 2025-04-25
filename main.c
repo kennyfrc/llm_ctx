@@ -1205,18 +1205,17 @@ void find_recursive(const char *base_dir, const char *pattern) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
             continue;
 
-        /* Always skip the .git directory to mirror Git's behavior */
-        /* This prevents descending into the Git internal directory structure. */
-        if (strcmp(entry->d_name, ".git") == 0) {
-            continue; // Skip .git entirely
-        }
-
         /* Construct the full path of the current entry */
         snprintf(path, sizeof(path), "%s/%s", base_dir, entry->d_name);
 
         /* Get entry information - skip if can't stat */
         if (lstat(path, &statbuf) == -1)
             continue;
+        /* Always skip the .git directory to mirror Git's behavior */
+        /* This prevents descending into the Git internal directory structure. */
+        if (strcmp(entry->d_name, ".git") == 0) {
+            continue; // Skip .git entirely
+        }
         
         /* Check if the path should be ignored *before* processing */
         if (respect_gitignore && should_ignore_path(path)) {
