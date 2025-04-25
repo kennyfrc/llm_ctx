@@ -320,7 +320,7 @@ static bool g_ignore_all_configs = false; /* Flag to ignore all config files */
 /* Define the universal prefix near the function */
 static const char *SYSTEM_INSTRUCTIONS_PREFIX = "## Role\n"
                                                 "You're a helpful and intelligent AI assistant. "
-                                                "When the user gives you <response_guide></response_guide> you follow it.";
+                                                "When the user gives you a response guide, you must strictly follow it.";
 
 /**
  * Add system instructions to the output, always including a standard prefix.
