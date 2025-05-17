@@ -286,6 +286,8 @@ void build_tree_recursive(char **paths, int count, int level, char *prefix, cons
 bool process_stdin_content(void);
 void output_file_callback(const char *name, const char *type, const char *content);
 bool is_binary(FILE *file);
+bool file_already_in_tree(const char *filepath);
+void add_directory_tree(const char *base_dir);
 
 /* Special file structure for stdin content */
 typedef struct {
@@ -459,12 +461,55 @@ void add_to_file_tree(const char *filepath) {
         }
 
         /* Add to file tree array */
-            file_tree[file_tree_count] = new_file;
-            file_tree_count++;
-            /* Post-condition: file tree was updated */
-            assert(file_tree_count > 0);
+file_tree[file_tree_count] = new_file;
+        file_tree_count++;
+        /* Post-condition: file tree was updated */
+        assert(file_tree_count > 0);
         }
     }
+/**
+ * Check if a path already exists in the file tree
+ */
+bool file_already_in_tree(const char *filepath) {
+    for (int i = 0; i < file_tree_count; i++) {
+        if (strcmp(file_tree[i].path, filepath) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Recursively add an entire directory tree to file_tree
+ */
+void add_directory_tree(const char *base_dir) {
+    DIR *dir;
+    struct dirent *entry;
+    struct stat statbuf;
+    char path[MAX_PATH];
+
+    if (!(dir = opendir(base_dir)))
+        return;
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        if (strcmp(entry->d_name, ".git") == 0)
+            continue;
+        snprintf(path, sizeof(path), "%s/%s", base_dir, entry->d_name);
+        if (lstat(path, &statbuf) == -1)
+            continue;
+        if (respect_gitignore && should_ignore_path(path))
+            continue;
+        if (!file_already_in_tree(path))
+            add_to_file_tree(path);
+        if (S_ISDIR(statbuf.st_mode))
+            add_directory_tree(path);
+    }
+
+    closedir(dir);
+}
+
 
 /**
  * Compare function for sorting file paths
@@ -2140,6 +2185,13 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "llm_ctx: No files or stdin provided; producing prompt-only output.\n");
     }
     
+    /* Expand file tree to show full directory contents */
+    if (file_tree_count > 0) {
+        char *tree_root = find_common_prefix();
+        add_directory_tree(tree_root);
+        free(tree_root);
+    }
+
     /* Generate and add file tree */
     generate_file_tree();
     
