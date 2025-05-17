@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "test_framework.h"
 #include <stdio.h>
 #include <stdlib.h>
