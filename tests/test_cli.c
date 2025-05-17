@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -236,7 +237,7 @@ int string_contains(const char *str, const char *substr) {
 /* Run a command, capturing stdout and stderr, and return output */
 char *run_command(const char *cmd) {
     // Increased buffer size to handle potentially large outputs + stderr
-    static char buffer[32768]; 
+    static char buffer[32768];
     buffer[0] = '\0';
     char cmd_redir[2048]; // Buffer for command + redirection
 
@@ -252,7 +253,12 @@ char *run_command(const char *cmd) {
     
     char tmp[1024];
     while (fgets(tmp, sizeof(tmp), pipe) != NULL) {
-        strcat(buffer, tmp);
+        size_t len = strlen(buffer);
+        size_t remaining = sizeof(buffer) - len - 1;
+        if (remaining > 0) {
+            strncat(buffer, tmp, remaining);
+            buffer[sizeof(buffer) - 1] = '\0';
+        }
     }
     
     int status = pclose(pipe);
@@ -1478,6 +1484,34 @@ TEST(test_cli_s_glued_inline) {
 }
 
 // ============================================================================
+// Tests for -r (raw mode)
+// ============================================================================
+
+TEST(test_cli_raw_no_format) {
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -r -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    char *output = run_command(cmd);
+
+    ASSERT("Output does NOT contain <system_instructions>", !string_contains(output, "<system_instructions>"));
+    ASSERT("Output does NOT contain <response_guide>", !string_contains(output, "<response_guide>"));
+    ASSERT("Output does NOT contain <user_instructions>", !string_contains(output, "<user_instructions>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+}
+
+TEST(test_cli_raw_with_c) {
+    char cmd[2048];
+    const char *instructions = "Raw mode instructions";
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -r -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains <user_instructions>", string_contains(output, "<user_instructions>"));
+    ASSERT("Output contains instructions", string_contains(output, instructions));
+    ASSERT("Output does NOT contain <system_instructions>", !string_contains(output, "<system_instructions>"));
+    ASSERT("Output does NOT contain <response_guide>", !string_contains(output, "<response_guide>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+}
+
+// ============================================================================
 // Tests for .llm_ctx.conf
 // ============================================================================
 
@@ -1545,7 +1579,7 @@ TEST(test_cli_config_discovery_parent) {
     /* Create a subdirectory */
     mkdir(subdir_path, 0755);
     /* Ensure no config file exists in the subdirectory */
-    char subdir_conf_path[1024];
+    char subdir_conf_path[4096];
     snprintf(subdir_conf_path, sizeof(subdir_conf_path), "%s/.llm_ctx.conf", subdir_path);
     unlink(subdir_conf_path); // Remove if it exists from previous tests
 
@@ -1567,7 +1601,7 @@ TEST(test_cli_config_discovery_cwd_over_parent) {
     char cmd[2048];
     char parent_conf_path[1024];
     char subdir_path[1024];
-    char subdir_conf_path[1024];
+    char subdir_conf_path[4096];
 
     snprintf(parent_conf_path, sizeof(parent_conf_path), "%s/.llm_ctx.conf", TEST_DIR);
     snprintf(subdir_path, sizeof(subdir_path), "%s/__subdir_override", TEST_DIR);
@@ -1645,8 +1679,8 @@ TEST(test_cli_config_discovery_env_override) {
 /* Test config file discovery: XDG config directory */
 TEST(test_cli_config_discovery_xdg) {
     char cmd[2048];
-    char xdg_dir_path[1024];
-    char xdg_conf_path[1024];
+    char xdg_dir_path[8192];
+    char xdg_conf_path[8192];
     char dot_config_path[1024];
     const char *home = getenv("HOME");
     ASSERT("HOME environment variable is set", home != NULL);
@@ -1654,7 +1688,8 @@ TEST(test_cli_config_discovery_xdg) {
 
     snprintf(dot_config_path, sizeof(dot_config_path), "%s/.config", home);
     snprintf(xdg_dir_path, sizeof(xdg_dir_path), "%s/llm_ctx", dot_config_path);
-    snprintf(xdg_conf_path, sizeof(xdg_conf_path), "%s/.llm_ctx.conf", xdg_dir_path);
+    int n = snprintf(xdg_conf_path, sizeof(xdg_conf_path), "%s/.llm_ctx.conf", xdg_dir_path);
+    if (n >= (int)sizeof(xdg_conf_path)) n = -1; /* avoid unused warning */
 
     /* 1. Create the XDG directory structure */
     mkdir(dot_config_path, 0755); // Ensure .config exists
@@ -1668,7 +1703,11 @@ TEST(test_cli_config_discovery_xdg) {
     fclose(xdg_conf);
 
     /* 3. Ensure no CWD config exists */
-    unlink(strcat(strdup(TEST_DIR), "/.llm_ctx.conf"));
+    {
+        char tmp_path[4096];
+        snprintf(tmp_path, sizeof(tmp_path), "%s/.llm_ctx.conf", TEST_DIR);
+        unlink(tmp_path);
+    }
 
     /* 4. Run llm_ctx from the test directory */
     snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
@@ -1761,6 +1800,8 @@ int main(void) {
     RUN_TEST(test_cli_s_inline);
     RUN_TEST(test_cli_s_equals_inline);
     RUN_TEST(test_cli_s_glued_inline);
+    RUN_TEST(test_cli_raw_no_format);
+    RUN_TEST(test_cli_raw_with_c);
 
     /* Tests for config file system_prompt (Slice 5) */
     RUN_TEST(test_cli_config_system_prompt_inline);
