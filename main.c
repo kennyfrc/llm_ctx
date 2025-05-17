@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 /**
  * llm_ctx - A utility for extracting file content with fenced blocks for LLM context
  * 
@@ -309,6 +310,7 @@ static int file_mode = 0;         /* 0 = stdin mode, 1 = file mode (-f or @-) */
 char *user_instructions = NULL;   /* malloc'd / strdup'd – free in cleanup() */
 static char *system_instructions = NULL;   /* malloc'd, NULL if not set */
 static bool want_editor_comments = false;   /* -e flag */
+static bool raw_mode = false;               /* -r flag */
 
 /**
  * Open the file context block if it hasn't been opened yet.
@@ -819,6 +821,7 @@ void show_help(void) {
     printf("  -s@FILE        Read system prompt from FILE (no space after -s)\n");
     printf("  -s@-           Read system prompt from standard input (no space after -s)\n");
     printf("  -e             Instruct the LLM to append PR-style review comments\n");
+    printf("  -r             Raw mode; omit system instructions and response guide\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
     printf("  -h             Show this help message\n");
     printf("  --no-gitignore Ignore .gitignore files when collecting files\n\n");
@@ -1287,9 +1290,11 @@ char *find_config_file(void) {
         strcpy(current_path, buf); // Start with CWD
 
         for (;;) {
-            snprintf(buf, sizeof buf, "%s/.llm_ctx.conf", current_path);
-            p = dup_if_readable(buf); // Reuse p
-            if (p) return p;                          // first hit wins
+            int n = snprintf(buf, sizeof buf, "%s/.llm_ctx.conf", current_path);
+            if (n >= 0 && n < (int)sizeof buf) {
+                p = dup_if_readable(buf); // Reuse p
+                if (p) return p;                      // first hit wins
+            }
 
             /* stop at root */
             char *slash = strrchr(current_path, '/');
@@ -1733,6 +1738,7 @@ static const struct option long_options[] = {
     {"system",          optional_argument, 0, 's'}, /* Argument is optional (@file/@-/default) */
     {"files",           no_argument,       0, 'f'}, /* Indicates file args follow */
     {"editor-comments", no_argument,       0, 'e'},
+    {"raw",             no_argument,       0, 'r'},
     {"no-gitignore",    no_argument,       0,  1 }, /* Use a value > 255 for long-only */
     {0, 0, 0, 0} /* Terminator */
 };
@@ -1859,7 +1865,7 @@ int main(int argc, char *argv[]) {
     /* and adhering to the "minimize execution paths" principle. */
     int opt;
     /* Add 'C' to the short options string. It takes no argument. */
-    while ((opt = getopt_long(argc, argv, "hc:s::feC", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s::feCr", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
 
@@ -1892,6 +1898,9 @@ int main(int argc, char *argv[]) {
                 want_editor_comments = true;
                 e_flag_used = true; /* Track that CLI flag was used */
                 /* allow_empty_context = true; // Set later based on final state */
+                break;
+            case 'r': /* -r or --raw */
+                raw_mode = true;
                 break;
             case 'C': /* -C (equivalent to -c @-) */
                 /* Reuse the existing handler by simulating the @- argument */
@@ -2010,6 +2019,14 @@ int main(int argc, char *argv[]) {
         want_editor_comments = initial_want_editor_comments;
     }
 
+    if (raw_mode) {
+        if (system_instructions) {
+            free(system_instructions);
+            system_instructions = NULL;
+        }
+        want_editor_comments = false;
+    }
+
     /* Determine if prompt-only output is allowed based on final settings */
     /* Allow if user instructions were given (-c/-C/--command) */
     /* OR if system instructions were explicitly set (via -s or config) */
@@ -2021,10 +2038,11 @@ int main(int argc, char *argv[]) {
 
     /* Add user instructions first, if provided */
     add_user_instructions(user_instructions);
-    /* Add system instructions if provided */
-    add_system_instructions(system_instructions);
-    /* Add response guide (depends on user instructions and -e flag) */
-    add_response_guide(user_instructions);
+    /* Add system instructions and response guide unless raw mode is enabled */
+    if (!raw_mode) {
+        add_system_instructions(system_instructions);
+        add_response_guide(user_instructions);
+    }
 
     /* Load gitignore files if enabled */
     if (respect_gitignore) {
