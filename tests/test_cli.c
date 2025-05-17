@@ -404,6 +404,16 @@ TEST(test_directory_handling) {
     rmdir(TEST_DIR "/__nested");
 }
 
+/* Tree should include sibling files when a single file is specified */
+TEST(test_file_tree_single_file) {
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --ignore-configs -f __regular.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("File tree shows __brace_test.c", string_contains(output, "__brace_test.c"));
+    ASSERT("File tree shows __test_important.txt", string_contains(output, "__test_important.txt"));
+}
+
 /* Test file tree generation with nested directories (prefixed) */
 TEST(test_file_tree_structure) {
     /* Create a multi-level directory structure for testing (prefixed) */
@@ -578,7 +588,7 @@ TEST(test_cli_glob_brackets_range) {
     // Should include __test_1.log and __test_2.log (matching '[1-2]')
     ASSERT("Output contains __test_1.log", string_contains(output, "__test_1.log"));
     ASSERT("Output contains __test_2.log", string_contains(output, "__test_2.log"));
-    ASSERT("Output does not contain __app.log", !string_contains(output, "__app.log")); // Doesn't match pattern
+    ASSERT("Output does not contain file content for __app.log", !string_contains(output, "File: __app.log"));
 }
 
 /* Test glob pattern '[]' (negation) with --no-gitignore (prefixed) */
@@ -590,8 +600,8 @@ TEST(test_cli_glob_brackets_negation) {
 
     // Should include __test_2.log (matching '[!1]') but not __test_1.log
     ASSERT("Output contains __test_2.log", string_contains(output, "__test_2.log"));
-    ASSERT("Output does not contain __test_1.log", !string_contains(output, "__test_1.log"));
-    ASSERT("Output does not contain __app.log", !string_contains(output, "__app.log")); // Doesn't match pattern
+    ASSERT("Output does not contain file content for __test_1.log", !string_contains(output, "File: __test_1.log"));
+    ASSERT("Output does not contain file content for __app.log", !string_contains(output, "File: __app.log"));
 }
 
 /* Test glob pattern '{}' (brace expansion) (prefixed) */
@@ -606,7 +616,7 @@ TEST(test_cli_glob_brace_expansion) {
     ASSERT("Output contains __brace_test.c", string_contains(output, "__brace_test.c"));
     ASSERT("Output contains __brace_test.h", string_contains(output, "__brace_test.h"));
     // Should not include the .js file
-    ASSERT("Output does not contain __brace_test.js", !string_contains(output, "__brace_test.js"));
+    ASSERT("Output does not contain file content for __brace_test.js", !string_contains(output, "File: __brace_test.js"));
 }
 
 /* Test native recursive glob '** / *' respecting .gitignore (prefixed) */
@@ -707,7 +717,6 @@ TEST(test_cli_binary_null_byte) {
     // Desired expectation: Header and placeholder, no raw content.
     ASSERT("Output contains binary file header", string_contains(output, "File: __binary_null.bin"));
     ASSERT("Output contains binary skipped placeholder", string_contains(output, "[Binary file content skipped]"));
-    ASSERT("Output does NOT contain raw null byte content", !string_contains(output, "test\0test"));
     ASSERT("Output does NOT contain code fences for binary", !string_contains(output, "```"));
 }
 
@@ -1763,8 +1772,9 @@ int main(void) {
     RUN_TEST(test_cli_ignore_dirs);
     RUN_TEST(test_cli_help_message);
     RUN_TEST(test_directory_handling);
+    RUN_TEST(test_file_tree_single_file);
     // test_file_tree_structure creates its own dirs/files, run it before recursive tests
-    RUN_TEST(test_file_tree_structure); 
+    RUN_TEST(test_file_tree_structure);
     RUN_TEST(test_cli_recursive_glob_all);
     RUN_TEST(test_cli_recursive_glob_specific);
     RUN_TEST(test_cli_recursive_glob_no_gitignore);

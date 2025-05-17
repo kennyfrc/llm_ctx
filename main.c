@@ -272,7 +272,7 @@ void show_help(void);
 bool collect_file(const char *filepath);
 bool output_file_content(const char *filepath, FILE *output);
 void add_user_instructions(const char *instructions);
-void find_recursive(const char *base_dir, const char *pattern);
+void find_recursive(const char *base_dir, const char *pattern, bool collect);
 char *find_config_file(void);
 bool parse_config_file(const char *config_path, ConfigSettings *settings);
 void copy_to_clipboard(const char *buffer);
@@ -306,6 +306,9 @@ FILE *tree_file = NULL;        /* For the file tree output */
 char tree_file_path[MAX_PATH]; /* Path to the tree file */
 SpecialFile special_files[10]; /* Support up to 10 special files */
 int num_special_files = 0;
+/* Track directories already scanned for the file tree */
+char *scanned_dirs[MAX_FILES];
+int num_scanned_dirs = 0;
 static int file_mode = 0;         /* 0 = stdin mode, 1 = file mode (-f or @-) */
 char *user_instructions = NULL;   /* malloc'd / strdup'd – free in cleanup() */
 static char *system_instructions = NULL;   /* malloc'd, NULL if not set */
@@ -435,6 +438,26 @@ void add_to_processed_files(const char *filepath) {
         assert(num_processed_files > 0);
         assert(strcmp(processed_files[num_processed_files-1], filepath) == 0);
     }
+}
+
+/* Check if a directory has already been scanned for the file tree */
+static bool dir_already_scanned(const char *dir) {
+    for (int i = 0; i < num_scanned_dirs; i++) {
+        if (strcmp(scanned_dirs[i], dir) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Record a directory as scanned */
+static void add_scanned_dir(const char *dir) {
+    if (num_scanned_dirs >= MAX_FILES) return;
+    scanned_dirs[num_scanned_dirs] = strdup(dir);
+    if (!scanned_dirs[num_scanned_dirs]) {
+        fatal("Out of memory duplicating dir path: %s", dir);
+    }
+    num_scanned_dirs++;
 }
 
 /**
@@ -1207,7 +1230,7 @@ void add_user_instructions(const char *instructions) {
 /**
  * Recursively search directories for files matching a pattern
  */
-void find_recursive(const char *base_dir, const char *pattern) {
+void find_recursive(const char *base_dir, const char *pattern, bool collect) {
     DIR *dir;
     struct dirent *entry;
     struct stat statbuf;
@@ -1244,19 +1267,18 @@ void find_recursive(const char *base_dir, const char *pattern) {
             continue; /* Skip ignored files/directories */
         }
 
-        // Add any non-ignored entry to the file tree structure
+        /* Add any non-ignored entry to the file tree structure */
         add_to_file_tree(path);
 
         /* If entry is a directory, recurse into it */
         if (S_ISDIR(statbuf.st_mode)) {
-            find_recursive(path, pattern);
+            find_recursive(path, pattern, collect);
         }
         /* If entry is a regular file, check if it matches the pattern */
         else if (S_ISREG(statbuf.st_mode)) {
             /* Match filename against the pattern using appropriate flags */
-            if (fnmatch(pattern, entry->d_name, fnmatch_flags) == 0) {
-                // Collect the file for content output ONLY if it matches and is readable
-                // collect_file now handles adding to processed_files and files_found
+            if (fnmatch(pattern, entry->d_name, fnmatch_flags) == 0 && collect) {
+                /* collect_file handles duplicates and readability */
                 collect_file(path);
             }
         }
@@ -1359,7 +1381,7 @@ bool process_pattern(const char *pattern) {
     if (lstat(pattern, &statbuf) == 0 && S_ISDIR(statbuf.st_mode)) {
         // If it's a directory, recursively find all files within it, respecting gitignore
         // Use "*" as the pattern to match all files within.
-        find_recursive(pattern, "*");
+        find_recursive(pattern, "*", true);
         return (files_found > initial_files_found); // Return based on whether files were found
     }
 
@@ -1401,7 +1423,7 @@ bool process_pattern(const char *pattern) {
         }
         
         /* Use custom recursive directory traversal */
-        find_recursive(base_dir, file_pattern);
+        find_recursive(base_dir, file_pattern, true);
     } else {
         /* For standard patterns, use the system glob() function */
         glob_t glob_result;
@@ -1427,22 +1449,26 @@ bool process_pattern(const char *pattern) {
                 continue;
             }
 
-            // Add to tree structure
-            add_to_file_tree(path);
-
-            // Collect file content if it's a regular file
-            // struct stat statbuf; // Moved declaration up
             if (lstat(path, &statbuf) == 0 && S_ISREG(statbuf.st_mode)) {
-                // collect_file now handles adding to processed_files and files_found,
-                // and checks for readability.
+                /* Scan containing directory once for tree display */
+                char dirpath[MAX_PATH];
+                strncpy(dirpath, path, sizeof(dirpath) - 1);
+                dirpath[sizeof(dirpath) - 1] = '\0';
+                char *slash = strrchr(dirpath, '/');
+                if (slash) {
+                    *slash = '\0';
+                } else {
+                    strcpy(dirpath, ".");
+                }
+                if (!dir_already_scanned(dirpath)) {
+                    add_scanned_dir(dirpath);
+                    find_recursive(dirpath, "*", false);
+                }
+
                 collect_file(path);
-           }
-           // If it's a directory matched by glob, descend into it
-           else if (S_ISDIR(statbuf.st_mode)) {
-                // Recursively find all files within this directory, respecting gitignore
-                // Use "*" as the pattern to match all files within.
-                find_recursive(path, "*");
-           }
+            } else if (S_ISDIR(statbuf.st_mode)) {
+                find_recursive(path, "*", true);
+            }
        }
 
         globfree(&glob_result);
@@ -1740,6 +1766,11 @@ void cleanup(void) {
     /* Free special file content */
     for (int i = 0; i < num_special_files; i++) {
         free(special_files[i].content);
+    }
+
+    /* Free scanned directory paths */
+    for (int i = 0; i < num_scanned_dirs; i++) {
+        free(scanned_dirs[i]);
     }
     
     /* Remove temporary file */
