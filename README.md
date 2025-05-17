@@ -387,6 +387,8 @@ Options:
                  Instruct the LLM to append PR-style review comments to its
                  response. Adds specific instructions to the <response_guide>.
 
+  -r             Raw mode. Omits system instructions and the response guide.
+
   -f [FILE...]   Process specified files or glob patterns instead of stdin.
                  Must be followed by one or more file paths or patterns.
                  Example: -f main.c 'src/**/*.js'

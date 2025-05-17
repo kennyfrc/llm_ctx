@@ -1,3 +1,4 @@
+
 /**
  * llm_ctx - A utility for extracting file content with fenced blocks for LLM context
  * 
@@ -309,6 +310,7 @@ static int file_mode = 0;         /* 0 = stdin mode, 1 = file mode (-f or @-) */
 char *user_instructions = NULL;   /* malloc'd / strdup'd – free in cleanup() */
 static char *system_instructions = NULL;   /* malloc'd, NULL if not set */
 static bool want_editor_comments = false;   /* -e flag */
+static bool raw_mode = false; /* -r flag */
 
 /**
  * Open the file context block if it hasn't been opened yet.
@@ -819,6 +821,7 @@ void show_help(void) {
     printf("  -s@FILE        Read system prompt from FILE (no space after -s)\n");
     printf("  -s@-           Read system prompt from standard input (no space after -s)\n");
     printf("  -e             Instruct the LLM to append PR-style review comments\n");
+    printf("  -r             Raw mode: omit system instructions and response guide\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
     printf("  -h             Show this help message\n");
     printf("  --no-gitignore Ignore .gitignore files when collecting files\n\n");
@@ -1271,7 +1274,7 @@ static char *dup_if_readable(const char *path) {
  * Returns malloc’d path or NULL when none found.
  */
 char *find_config_file(void) {
-    char buf[PATH_MAX];
+char buf[PATH_MAX * 2];
 
     char *p = NULL; // Declare p once for reuse
     /* ---------- 1. explicit env override ---------- */
@@ -1283,11 +1286,17 @@ char *find_config_file(void) {
 
     /* ---------- 2. project hierarchy walk-up ---------- */
     if (getcwd(buf, sizeof buf) != NULL) {
-        char current_path[PATH_MAX]; // Buffer to hold the path being checked
+        char current_path[PATH_MAX * 2]; // Buffer to hold the path being checked
         strcpy(current_path, buf); // Start with CWD
 
         for (;;) {
-            snprintf(buf, sizeof buf, "%s/.llm_ctx.conf", current_path);
+            size_t len = strlen(current_path);
+            if (len + sizeof("/.llm_ctx.conf") < sizeof buf) {
+                memcpy(buf, current_path, len);
+                strcpy(buf + len, "/.llm_ctx.conf");
+            } else {
+                buf[0] = '\0';
+            }
             p = dup_if_readable(buf); // Reuse p
             if (p) return p;                          // first hit wins
 
@@ -1302,18 +1311,36 @@ char *find_config_file(void) {
     const char *xdg = getenv("XDG_CONFIG_HOME");
     const char *home = getenv("HOME");
     if (!xdg && home) {                               // spec §3 – default to $HOME/.config  ([XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/?utm_source=chatgpt.com))
-        snprintf(buf, sizeof buf, "%s/.config/llm_ctx/.llm_ctx.conf", home);
+        size_t len = strlen(home);
+        if (len + sizeof("/.config/llm_ctx/.llm_ctx.conf") < sizeof buf) {
+            memcpy(buf, home, len);
+            strcpy(buf + len, "/.config/llm_ctx/.llm_ctx.conf");
+        } else {
+            buf[0] = '\0';
+        }
         p = dup_if_readable(buf); // Reuse p
         if (p) return p;
     } else if (xdg) {
-        snprintf(buf, sizeof buf, "%s/llm_ctx/.llm_ctx.conf", xdg);
+        size_t len2 = strlen(xdg);
+        if (len2 + sizeof("/llm_ctx/.llm_ctx.conf") < sizeof buf) {
+            memcpy(buf, xdg, len2);
+            strcpy(buf + len2, "/llm_ctx/.llm_ctx.conf");
+        } else {
+            buf[0] = '\0';
+        }
         p = dup_if_readable(buf); // Reuse p
         if (p) return p;
     }
 
     /* ---------- 4. legacy file in $HOME ---------- */
     if (home) {
-        snprintf(buf, sizeof buf, "%s/.llm_ctx.conf", home);
+        size_t len3 = strlen(home);
+        if (len3 + sizeof("/.llm_ctx.conf") < sizeof buf) {
+            memcpy(buf, home, len3);
+            strcpy(buf + len3, "/.llm_ctx.conf");
+        } else {
+            buf[0] = '\0';
+        }
         p = dup_if_readable(buf); // Reuse p
         if (p) return p;
     }
@@ -1321,7 +1348,13 @@ char *find_config_file(void) {
     /* ---------- 5. binary-sibling fallback ---------- */
     char *exe_dir = get_executable_dir(); // Declare exe_dir before the if
     if (exe_dir) {
-        snprintf(buf, sizeof buf, "%s/.llm_ctx.conf", exe_dir);
+        size_t len4 = strlen(exe_dir);
+        if (len4 + sizeof("/.llm_ctx.conf") < sizeof buf) {
+            memcpy(buf, exe_dir, len4);
+            strcpy(buf + len4, "/.llm_ctx.conf");
+        } else {
+            buf[0] = '\0';
+        }
         p = dup_if_readable(buf); // Reuse p
         if (p) return p;
     }
@@ -1733,12 +1766,14 @@ static const struct option long_options[] = {
     {"system",          optional_argument, 0, 's'}, /* Argument is optional (@file/@-/default) */
     {"files",           no_argument,       0, 'f'}, /* Indicates file args follow */
     {"editor-comments", no_argument,       0, 'e'},
+    {"raw",             no_argument,       0, 'r'},
     {"no-gitignore",    no_argument,       0,  1 }, /* Use a value > 255 for long-only */
     {0, 0, 0, 0} /* Terminator */
 };
 static bool s_flag_used = false; /* Track if -s was used */
 static bool c_flag_used = false; /* Track if -c/-C/--command was used */
 static bool e_flag_used = false; /* Track if -e was used */
+static bool r_flag_used = false; /* Track if -r was used */
 static bool g_stdin_consumed_for_option = false; /* Track if stdin was used for @- */
 /* No specific CLI flag for copy yet, so no copy_flag_used needed */
 
@@ -1859,7 +1894,7 @@ int main(int argc, char *argv[]) {
     /* and adhering to the "minimize execution paths" principle. */
     int opt;
     /* Add 'C' to the short options string. It takes no argument. */
-    while ((opt = getopt_long(argc, argv, "hc:s::feC", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s::freC", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
 
@@ -1892,6 +1927,10 @@ int main(int argc, char *argv[]) {
                 want_editor_comments = true;
                 e_flag_used = true; /* Track that CLI flag was used */
                 /* allow_empty_context = true; // Set later based on final state */
+                break;
+            case 'r': /* -r or --raw */
+                raw_mode = true;
+                r_flag_used = true;
                 break;
             case 'C': /* -C (equivalent to -c @-) */
                 /* Reuse the existing handler by simulating the @- argument */
@@ -2019,12 +2058,17 @@ int main(int argc, char *argv[]) {
     if (config_path && loaded_settings.system_prompt_source) free(loaded_settings.system_prompt_source); /* Free the source string after merging if config was loaded */
 
 
-    /* Add user instructions first, if provided */
-    add_user_instructions(user_instructions);
-    /* Add system instructions if provided */
-    add_system_instructions(system_instructions);
-    /* Add response guide (depends on user instructions and -e flag) */
-    add_response_guide(user_instructions);
+    if (!raw_mode) {
+        /* Add user instructions first, if provided */
+        add_user_instructions(user_instructions);
+        /* Add system instructions if provided */
+        add_system_instructions(system_instructions);
+        /* Add response guide (depends on user instructions and -e flag) */
+        add_response_guide(user_instructions);
+    } else if (user_instructions && *user_instructions) {
+        /* In raw mode, just print user instructions without tags */
+        fprintf(temp_file, "%s\n\n", user_instructions);
+    }
 
     /* Load gitignore files if enabled */
     if (respect_gitignore) {

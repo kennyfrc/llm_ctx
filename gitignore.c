@@ -181,7 +181,7 @@ void load_gitignore_file(const char *filepath) {
  */
 void load_all_gitignore_files(void) {
     char current_dir[MAX_PATH];
-    char gitignore_path[MAX_PATH];
+    char gitignore_path[MAX_PATH * 2];
     
     /* Pre-condition: ensure we have space for patterns */
     assert(num_ignore_patterns < MAX_IGNORE_PATTERNS);

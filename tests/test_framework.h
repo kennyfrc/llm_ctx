@@ -16,9 +16,9 @@
 #define TEST_DIR "/tmp/__llm_ctx_test"
 
 /* Test state */
-static int tests_run = 0;
+static int tests_run __attribute__((unused)) = 0;
 static int tests_failed = 0;
-static char last_failure[1024] = "";
+static char last_failure[8192] = "";
 
 /* Macros for test assertions */
 #define ASSERT(message, test) do { if (!(test)) { \

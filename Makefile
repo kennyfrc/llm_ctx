@@ -1,6 +1,6 @@
 CC = gcc
 # CFLAGS for development/debug builds (stricter checks)
-CFLAGS = -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -g # Added -g for debug symbols
+CFLAGS = -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g # Added -g for debug symbols
 # RELEASE_CFLAGS for optimized release builds
 RELEASE_CFLAGS = -std=c99 -Wall -Wextra -O2 -DNDEBUG # -O2 optimization, NDEBUG disables asserts
 
