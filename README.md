@@ -29,6 +29,12 @@
     llm_ctx -f '**/*' -c "Please conduct a code review of this project, and find any potential bugs." | pbcopy
     ```
     *(Warning: This can generate a lot of context!)*
+    
+5.  **Generate a code map with function/class/type information** for a JavaScript project:
+    ```bash
+    llm_ctx -m -f 'src/**/*.js' -c "Explain how the key components in this project interact." | pbcopy
+    ```
+    *(Requires Tree-sitter language packs to be installed - see [Code Map Feature](#code-map-feature))*
 
 *(Clipboard commands: Use `| xclip -selection clipboard` on Linux (X11) or `| clip` on Windows instead of `| pbcopy`)*
 
@@ -389,6 +395,9 @@ Options:
 
   -r             Raw mode. Omits system instructions and the response guide.
 
+  -m, --codemap  Generate a code map that shows functions, classes, methods, and
+                 types from JavaScript and TypeScript files. Requires Tree-sitter.
+
   -f [FILE...]   Process specified files or glob patterns instead of stdin.
                  Must be followed by one or more file paths or patterns.
                  Example: -f main.c 'src/**/*.js'
@@ -573,6 +582,62 @@ When using the `-f` flag, `llm_ctx` supports standard glob patterns:
     *   Negation patterns (`!`) always override ignore patterns for a matching file.
 *   **Disabling:** Use the `--no-gitignore` flag to completely skip loading and checking `.gitignore` files.
 
+### Code Map Feature
+
+The `-m` or `--codemap` flag enables code mapping, which extracts and displays functions, classes, methods, and types from JavaScript and TypeScript files in a structured format. This provides a high-level overview of the codebase's structure for the LLM.
+
+*   **What it shows:** For JS/TS files, the code map displays:
+    *   **Functions** with their parameter signatures and return types
+    *   **Classes** with their methods
+    *   **Types/Interfaces**
+
+*   **Example:**
+    ```bash
+    llm_ctx -m -f 'src/**/*.{js,ts}'
+    ```
+
+*   **Output Format:**
+    The output includes a `<code_map>` block between the `<file_tree>` and `<file_context>` sections:
+
+    ```
+    <code_map>
+    [path/to/file.js]
+    Classes:
+      ClassName:
+        methods:
+        - constructor(params)
+        - methodName(params) -> returnType
+    
+    Functions:
+      functionName           (params) -> returnType
+      anotherFunction        (params)
+    
+    Types:
+      TypeName
+    </code_map>
+    ```
+
+*   **Requirements:**
+    To fully utilize the code map feature, you need to install:
+    1.  The Tree-sitter library (`brew install tree-sitter` on macOS)
+    2.  Language packs for JavaScript/TypeScript
+
+*   **Installing Language Packs:**
+    ```bash
+    # Install JavaScript language pack
+    make pack LANG=javascript
+    
+    # Install TypeScript language pack
+    make pack LANG=typescript
+    
+    # Install all supported language packs
+    make packs
+    ```
+
+*   **Notes:**
+    *   Without language packs, the code map will still work but with placeholder entries
+    *   Performance limits: Files > 5MB or parsing time > 2s are skipped
+
 ## Limitations
 
 ### Binary File Detection
@@ -642,4 +707,4 @@ make test
 
 ## License
 
-MIT
+See the [LICENSE](LICENSE) file for license rights and limitations.

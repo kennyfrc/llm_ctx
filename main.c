@@ -30,8 +30,8 @@
 #  include <mach-o/dyld.h> /* _NSGetExecutablePath */
 #endif
 #include "gitignore.h"
-#define ARENA_IMPLEMENTATION
 #include "arena.h"
+#include "codemap.h"
 
 static Arena g_arena;
 
@@ -340,6 +340,7 @@ char *user_instructions = NULL;   /* Allocated from arena */
 static char *system_instructions = NULL;   /* Allocated from arena */
 static bool want_editor_comments = false;   /* -e flag */
 static bool raw_mode = false; /* -r flag */
+static bool want_codemap = false; /* -m flag */
 
 /**
  * Open the file context block if it hasn't been opened yet.
@@ -803,6 +804,31 @@ void generate_file_tree(void) {
     
     fprintf(temp_file, "</file_tree>\n\n");
     
+    /* Generate and append codemap if -m flag was used */
+    if (want_codemap) {
+        /* Initialize codemap */
+        Codemap cm = codemap_init(&g_arena);
+        
+        /* Process JavaScript/TypeScript files */
+        if (process_js_ts_files(&cm, (const char **)processed_files, num_processed_files, &g_arena)) {
+            /* Generate codemap and write to temp_file */
+            char *buffer = arena_push_array(&g_arena, char, 1024 * 1024); /* 1MB buffer */
+            if (buffer) {
+                size_t pos = 0;
+                codemap_generate(&cm, buffer, &pos, 1024 * 1024);
+                
+                /* Write the buffer to the output file */
+                if (pos > 0) {
+                    fprintf(temp_file, "%.*s\n", (int)pos, buffer);
+                }
+            } else {
+                fprintf(stderr, "Warning: Failed to allocate memory for codemap output\n");
+            }
+        } else {
+            fprintf(stderr, "Warning: Failed to process JavaScript/TypeScript files for codemap\n");
+        }
+    }
+    
     /* Remove temporary tree file */
     unlink(tree_file_path);
     
@@ -898,6 +924,7 @@ void show_help(void) {
     printf("  -s@-           Read system prompt from standard input (no space after -s)\n");
     printf("  -e             Instruct the LLM to append PR-style review comments\n");
     printf("  -r             Raw mode: omit system instructions and response guide\n");
+    printf("  -m             Generate compact code map for JavaScript/TypeScript files\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
     printf("  -h             Show this help message\n");
     printf("  --no-gitignore Ignore .gitignore files when collecting files\n\n");
@@ -915,7 +942,9 @@ void show_help(void) {
     printf("  # Add instructions for the LLM\n");
     printf("  llm_ctx -c \"Please explain this code\" -f src/*.c\n\n");
     printf("  # Pipe to clipboard\n");
-    printf("  git diff | llm_ctx -c \"Review these changes\" | pbcopy\n");
+    printf("  git diff | llm_ctx -c \"Review these changes\" | pbcopy\n\n");
+    printf("  # Generate code map from JavaScript/TypeScript files\n");
+    printf("  llm_ctx -f \"src/**/*.ts\" -m\n");
     exit(0);
 }
 
@@ -1839,6 +1868,7 @@ static const struct option long_options[] = {
     {"files",           no_argument,       0, 'f'}, /* Indicates file args follow */
     {"editor-comments", no_argument,       0, 'e'},
     {"raw",             no_argument,       0, 'r'},
+    {"codemap",         no_argument,       0, 'm'}, /* Generate code map */
     {"no-gitignore",    no_argument,       0,  1 }, /* Use a value > 255 for long-only */
     {0, 0, 0, 0} /* Terminator */
 };
@@ -1967,7 +1997,7 @@ int main(int argc, char *argv[]) {
     /* and adhering to the "minimize execution paths" principle. */
     int opt;
     /* Add 'C' to the short options string. It takes no argument. */
-    while ((opt = getopt_long(argc, argv, "hc:s::freC", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s::freCmd", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
 
@@ -2004,6 +2034,9 @@ int main(int argc, char *argv[]) {
             case 'r': /* -r or --raw */
                 raw_mode = true;
                 r_flag_used = true;
+                break;
+            case 'm': /* -m or --codemap */
+                want_codemap = true;
                 break;
             case 'C': /* -C (equivalent to -c @-) */
                 /* Reuse the existing handler by simulating the @- argument */

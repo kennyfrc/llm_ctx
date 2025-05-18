@@ -19,8 +19,9 @@
 #define USER_CONFIG_FILE ".llm_ctx.conf"
 #define USER_CONFIG_BACKUP ".llm_ctx.conf.backup"
 
-/* Declare test function defined in another file */
+/* Declare test functions */
 extern void test_cli_config_discovery_binary_dir(void);
+void test_cli_codemap(void);
 
 /* Set up the test environment */
 void setup_test_env(void) {
@@ -1787,6 +1788,9 @@ int main(void) {
     /* Test for config file discovery next to executable (Slice 3 / Commit 080e75f) */
     /* This test is defined in test_config_binary_dir.c */
     RUN_TEST(test_cli_config_discovery_binary_dir);
+    
+    /* Test for codemap functionality */
+    RUN_TEST(test_cli_codemap);
 
     /* Temporarily skipped tests for UTF-16/32 handling, as the current heuristic */
     /* correctly identifies them as binary (due to null bytes), but the ideal */
@@ -1804,4 +1808,94 @@ int main(void) {
     global_teardown();
 
     PRINT_TEST_SUMMARY();
+}
+
+/* Test -m/--codemap flag for JavaScript/TypeScript code mapping functionality */
+TEST(test_cli_codemap) {
+    char cmd[2048];
+    char js_file_path[1024];
+    char ts_file_path[1024];
+    FILE *js_file, *ts_file;
+    
+    /* Create JavaScript test file */
+    snprintf(js_file_path, sizeof(js_file_path), "%s/__test_codemap.js", TEST_DIR);
+    js_file = fopen(js_file_path, "w");
+    if (js_file) {
+        fprintf(js_file, "// JavaScript test file for codemap\n");
+        fprintf(js_file, "function helloWorld() {\n");
+        fprintf(js_file, "  console.log('Hello, World!');\n");
+        fprintf(js_file, "}\n\n");
+        fprintf(js_file, "function greet(name) {\n");
+        fprintf(js_file, "  return 'Hello, ' + name;\n");
+        fprintf(js_file, "}\n\n");
+        fprintf(js_file, "class AnimationChain {\n");
+        fprintf(js_file, "  constructor(animate) {\n");
+        fprintf(js_file, "    this.animate = animate;\n");
+        fprintf(js_file, "  }\n\n");
+        fprintf(js_file, "  before(callback) {\n");
+        fprintf(js_file, "    this.beforeCallback = callback;\n");
+        fprintf(js_file, "    return this;\n");
+        fprintf(js_file, "  }\n\n");
+        fprintf(js_file, "  after(callback) {\n");
+        fprintf(js_file, "    this.afterCallback = callback;\n");
+        fprintf(js_file, "    return this;\n");
+        fprintf(js_file, "  }\n");
+        fprintf(js_file, "}\n");
+        fclose(js_file);
+    }
+    
+    /* Create TypeScript test file */
+    snprintf(ts_file_path, sizeof(ts_file_path), "%s/__test_utils.ts", TEST_DIR);
+    ts_file = fopen(ts_file_path, "w");
+    if (ts_file) {
+        fprintf(ts_file, "// TypeScript test file for codemap\n");
+        fprintf(ts_file, "interface Position {\n");
+        fprintf(ts_file, "  x: number;\n");
+        fprintf(ts_file, "  y: number;\n");
+        fprintf(ts_file, "}\n\n");
+        fprintf(ts_file, "function positionFromRects(targetRect: DOMRect, floatingRect: DOMRect, options?: any): Position {\n");
+        fprintf(ts_file, "  return { x: 0, y: 0 };\n");
+        fprintf(ts_file, "}\n\n");
+        fprintf(ts_file, "type Range = { start: number, end: number };\n\n");
+        fprintf(ts_file, "function rangeFromProsemirrorSelection(view: any): Range {\n");
+        fprintf(ts_file, "  return { start: 0, end: 0 };\n");
+        fprintf(ts_file, "}\n");
+        fclose(ts_file);
+    }
+    
+    /* Run with -m flag */
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -m -f %s/__test_*.?s", getenv("PWD"), TEST_DIR);
+    char *output = run_command(cmd);
+    
+    /* Check for code_map block */
+    ASSERT("Output contains <code_map> tag", string_contains(output, "<code_map>"));
+    ASSERT("Output contains closing </code_map> tag", string_contains(output, "</code_map>"));
+    
+    /* Since we don't have a real Tree-sitter implementation yet,
+     * we can only check for the placeholder message
+     */
+    ASSERT("Codemap contains placeholder for missing Tree-sitter pack",
+           string_contains(output, "<Tree-sitter pack not installed>"));
+    
+    /* Check for JavaScript file in codemap */
+    ASSERT("Codemap contains JavaScript file reference", string_contains(output, "__test_codemap.js"));
+    
+    /* Check for TypeScript file in codemap */
+    ASSERT("Codemap contains TypeScript file reference", string_contains(output, "__test_utils.ts"));
+    
+    /* Check that file_tree and file_context are still present */
+    ASSERT("Output still contains file_tree", string_contains(output, "<file_tree>"));
+    ASSERT("Output still contains file_context", string_contains(output, "<file_context>"));
+    
+    /* Check correct order of sections: file_tree -> code_map -> file_context */
+    char *file_tree_pos = strstr(output, "<file_tree>");
+    char *code_map_pos = strstr(output, "<code_map>");
+    char *file_context_pos = strstr(output, "<file_context>");
+    
+    ASSERT("file_tree comes before code_map", file_tree_pos && code_map_pos && file_tree_pos < code_map_pos);
+    ASSERT("code_map comes before file_context", code_map_pos && file_context_pos && code_map_pos < file_context_pos);
+    
+    /* Clean up */
+    unlink(js_file_path);
+    unlink(ts_file_path);
 }

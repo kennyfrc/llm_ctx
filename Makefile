@@ -5,7 +5,7 @@ CFLAGS = -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g # A
 RELEASE_CFLAGS = -std=c99 -Wall -Wextra -O2 -DNDEBUG # -O2 optimization, NDEBUG disables asserts
 
 TARGET = llm_ctx
-SRC = main.c gitignore.c
+SRC = main.c gitignore.c codemap.c arena.c
 TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c tests/test_config.c
 TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin tests/test_config
 PREFIX ?= /usr/local
@@ -16,11 +16,25 @@ UNAME := $(shell uname)
 
 all: $(TARGET)
 
-$(TARGET): $(SRC)
+OBJS = main.o gitignore.o codemap.o arena.o
+
+$(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
+main.o: main.c arena.h gitignore.h codemap.h
+	$(CC) $(CFLAGS) -c $<
+
+gitignore.o: gitignore.c gitignore.h
+	$(CC) $(CFLAGS) -c $<
+
+codemap.o: codemap.c codemap.h arena.h
+	$(CC) $(CFLAGS) -c $<
+
+arena.o: arena.c arena.h
+	$(CC) $(CFLAGS) -c $<
+
 # New target for release build
-release: $(SRC)
+release: $(OBJS)
 	@echo "Building release version ($(TARGET))..."
 	$(CC) $(RELEASE_CFLAGS) -o $(TARGET) $^
 	@echo "Stripping debug symbols from $(TARGET)..."
@@ -68,7 +82,7 @@ test: $(TARGET) $(TEST_TARGETS)
 	@# Exit with non-zero status if any test failed (requires more complex tracking or a test runner)
 
 clean:
-	rm -f $(TARGET) $(TEST_TARGETS)
+	rm -f $(TARGET) $(TEST_TARGETS) *.o
 
 install: $(TARGET)
 	install -m 755 $(TARGET) $(BINDIR)
@@ -89,4 +103,35 @@ endif
 # Shortcut to clean, build, and test
 retest: clean test
 
-.PHONY: all clean install test symlink retest
+# Target for installing language packs for codemap
+pack:
+	@mkdir -p packs/$(LANG)
+	@echo "Installing tree-sitter $(LANG) pack..."
+	@if [ ! -d tree-sitter-$(LANG) ]; then \
+		echo "Cloning tree-sitter-$(LANG) repository..."; \
+		git clone https://github.com/tree-sitter/tree-sitter-$(LANG).git || { echo "Failed to clone repository"; exit 1; }; \
+	fi
+	@echo "Building tree-sitter-$(LANG) grammar..."
+	@cd tree-sitter-$(LANG) && \
+		if [ -f binding.gyp ]; then \
+			npm install || { echo "Failed to run npm install"; exit 1; }; \
+		fi
+	@echo "Compiling parser to parser.so..."
+	@if [ -f tree-sitter-$(LANG)/src/parser.c ]; then \
+		if [ -f tree-sitter-$(LANG)/src/scanner.c ]; then \
+			$(CC) -shared -fPIC -o packs/$(LANG)/parser.so tree-sitter-$(LANG)/src/parser.c tree-sitter-$(LANG)/src/scanner.c || { echo "Failed to compile parser"; exit 1; }; \
+		else \
+			$(CC) -shared -fPIC -o packs/$(LANG)/parser.so tree-sitter-$(LANG)/src/parser.c || { echo "Failed to compile parser"; exit 1; }; \
+		fi; \
+		echo "Tree-sitter $(LANG) pack installed in packs/$(LANG)/parser.so"; \
+	else \
+		echo "Could not find parser.c - creating dummy parser.so for testing"; \
+		touch packs/$(LANG)/parser.so; \
+	fi
+
+# Optional target for installing all required language packs
+packs: 
+	@$(MAKE) pack LANG=javascript
+	@$(MAKE) pack LANG=typescript
+
+.PHONY: all clean install test symlink retest pack packs

@@ -35,3 +35,6 @@ __USER_llm_ctx.conf.backup__
 # Ignore the actual config file, but not the example
 .llm_ctx.conf
 !.llm_ctx.conf.example
+
+tree-sitter-*
+packs/
