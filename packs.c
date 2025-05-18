@@ -5,9 +5,11 @@
 #include <sys/stat.h>
 #include <stdbool.h>
 #include <errno.h>
+#include <dlfcn.h>  /* For dynamic library loading */
 
 #include "packs.h"
 #include "arena.h"
+#include "codemap.h"
 
 /**
  * Check if a directory exists and is accessible
@@ -35,6 +37,8 @@ bool initialize_pack_registry(PackRegistry *registry, Arena *arena) {
     // Initialize registry
     registry->packs = NULL;
     registry->pack_count = 0;
+    registry->extension_map = NULL;
+    registry->extension_map_size = 0;
     
     // Try current directory first
     const char *packs_dir = "./packs";
@@ -117,6 +121,14 @@ bool initialize_pack_registry(PackRegistry *registry, Arena *arena) {
             // Mark as available
             pack->available = true;
             
+            // Initialize new fields
+            pack->handle = NULL;
+            pack->extensions = NULL;
+            pack->extension_count = 0;
+            pack->initialize = NULL;
+            pack->cleanup = NULL;
+            pack->parse_file = NULL;
+            
             registry->pack_count++;
         }
     }
@@ -124,6 +136,73 @@ bool initialize_pack_registry(PackRegistry *registry, Arena *arena) {
     closedir(dir);
     
     return (registry->pack_count > 0);
+}
+
+/**
+ * Build the extension map to quickly map file extensions to language packs
+ * Returns true if successful
+ */
+bool build_extension_map(PackRegistry *registry, Arena *arena) {
+    if (!registry || !registry->packs || registry->pack_count == 0) {
+        return false;
+    }
+    
+    // Count total extensions
+    size_t total_extensions = 0;
+    for (size_t i = 0; i < registry->pack_count; i++) {
+        LanguagePack *pack = &registry->packs[i];
+        if (pack->available && pack->extension_count > 0) {
+            total_extensions += pack->extension_count;
+        }
+    }
+    
+    if (total_extensions == 0) {
+        return false;
+    }
+    
+    // Allocate extension map
+    registry->extension_map = arena_push_array(arena, char*, total_extensions * 2);
+    if (!registry->extension_map) {
+        fprintf(stderr, "Error: Failed to allocate memory for extension map\n");
+        return false;
+    }
+    
+    // Build extension map
+    size_t map_index = 0;
+    for (size_t i = 0; i < registry->pack_count; i++) {
+        LanguagePack *pack = &registry->packs[i];
+        if (!pack->available || !pack->extensions) continue;
+        
+        for (size_t j = 0; j < pack->extension_count; j++) {
+            registry->extension_map[map_index++] = (char*)pack->extensions[j];
+            registry->extension_map[map_index++] = (char*)i;  // Store pack index
+        }
+    }
+    
+    registry->extension_map_size = map_index / 2;  // Pairs of entries
+    return true;
+}
+
+/**
+ * Find a language pack for a given file extension
+ * Returns NULL if no suitable pack is found
+ */
+LanguagePack *find_pack_for_extension(PackRegistry *registry, const char *extension) {
+    if (!registry || !registry->extension_map || !extension) {
+        return NULL;
+    }
+    
+    // Look up extension in the map
+    for (size_t i = 0; i < registry->extension_map_size * 2; i += 2) {
+        if (strcmp(registry->extension_map[i], extension) == 0) {
+            size_t pack_index = (size_t)registry->extension_map[i + 1];
+            if (pack_index < registry->pack_count) {
+                return &registry->packs[pack_index];
+            }
+        }
+    }
+    
+    return NULL;
 }
 
 /**
@@ -139,17 +218,151 @@ void print_pack_list(const PackRegistry *registry) {
     
     for (size_t i = 0; i < registry->pack_count; i++) {
         const LanguagePack *pack = &registry->packs[i];
-        printf("  - %s\n", pack->name);
+        printf("  - %s", pack->name);
+        
+        // Show status
+        if (!pack->available) {
+            printf(" (unavailable)");
+        } else if (!pack->handle) {
+            printf(" (not loaded)");
+        } else {
+            printf(" (loaded)");
+        }
+        
+        // Show supported extensions if available
+        if (pack->extensions && pack->extension_count > 0) {
+            printf(" extensions: ");
+            for (size_t j = 0; j < pack->extension_count; j++) {
+                printf("%s", pack->extensions[j]);
+                if (j < pack->extension_count - 1) {
+                    printf(", ");
+                }
+            }
+        }
+        
+        printf("\n");
     }
 }
 
 /**
+ * Load dynamic libraries for all available language packs
+ * Resolves function pointers and initializes extensions
+ * Returns the number of successfully loaded packs
+ */
+size_t load_language_packs(PackRegistry *registry) {
+    if (!registry || !registry->packs || registry->pack_count == 0) {
+        return 0;
+    }
+    
+    size_t loaded_count = 0;
+    
+    for (size_t i = 0; i < registry->pack_count; i++) {
+        LanguagePack *pack = &registry->packs[i];
+        
+        if (!pack->available) continue;
+        
+        // Open the dynamic library
+        pack->handle = dlopen(pack->path, RTLD_LAZY);
+        if (!pack->handle) {
+            fprintf(stderr, "Warning: Failed to load language pack '%s': %s\n",
+                    pack->name, dlerror());
+            pack->available = false;
+            continue;
+        }
+        
+        // Clear any existing errors
+        dlerror();
+        
+        // Load function pointers
+        *(void **)(&pack->initialize) = dlsym(pack->handle, "initialize");
+        if (dlerror() != NULL) {
+            fprintf(stderr, "Warning: No 'initialize' function in pack '%s'\n", pack->name);
+            dlclose(pack->handle);
+            pack->handle = NULL;
+            pack->available = false;
+            continue;
+        }
+        
+        *(void **)(&pack->cleanup) = dlsym(pack->handle, "cleanup");
+        if (dlerror() != NULL) {
+            fprintf(stderr, "Warning: No 'cleanup' function in pack '%s'\n", pack->name);
+            dlclose(pack->handle);
+            pack->handle = NULL;
+            pack->available = false;
+            continue;
+        }
+        
+        *(void **)(&pack->parse_file) = dlsym(pack->handle, "parse_file");
+        if (dlerror() != NULL) {
+            fprintf(stderr, "Warning: No 'parse_file' function in pack '%s'\n", pack->name);
+            dlclose(pack->handle);
+            pack->handle = NULL;
+            pack->available = false;
+            continue;
+        }
+        
+        // Get extensions
+        typedef const char **(*get_extensions_fn)(size_t *count);
+        get_extensions_fn get_extensions = (get_extensions_fn)dlsym(pack->handle, "get_extensions");
+        if (dlerror() != NULL) {
+            fprintf(stderr, "Warning: No 'get_extensions' function in pack '%s'\n", pack->name);
+            dlclose(pack->handle);
+            pack->handle = NULL;
+            pack->available = false;
+            continue;
+        }
+        
+        // Get the extensions array
+        pack->extensions = get_extensions(&pack->extension_count);
+        if (!pack->extensions || pack->extension_count == 0) {
+            fprintf(stderr, "Warning: No file extensions defined in pack '%s'\n", pack->name);
+            dlclose(pack->handle);
+            pack->handle = NULL;
+            pack->available = false;
+            continue;
+        }
+        
+        // Initialize the language parser
+        if (!pack->initialize()) {
+            fprintf(stderr, "Warning: Failed to initialize language pack '%s'\n", pack->name);
+            dlclose(pack->handle);
+            pack->handle = NULL;
+            pack->available = false;
+            continue;
+        }
+        
+        loaded_count++;
+    }
+    
+    return loaded_count;
+}
+
+/**
  * Clean up the pack registry resources
+ * Unloads all dynamic libraries and frees allocated memory
  */
 void cleanup_pack_registry(PackRegistry *registry) {
     if (!registry) return;
     
+    // Unload dynamic libraries if loaded
+    for (size_t i = 0; i < registry->pack_count; i++) {
+        LanguagePack *pack = &registry->packs[i];
+        
+        // Call pack cleanup function if available
+        if (pack->cleanup) {
+            pack->cleanup();
+        }
+        
+        // Close dynamic library handle if open
+        if (pack->handle) {
+            dlclose(pack->handle);
+            pack->handle = NULL;
+        }
+    }
+    
     // We don't need to free packs as it was allocated from the arena
     registry->packs = NULL;
     registry->pack_count = 0;
+    registry->extension_map = NULL;
+    registry->extension_map_size = 0;
 }

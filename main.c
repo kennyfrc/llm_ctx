@@ -35,6 +35,7 @@
 #include "codemap.h"
 
 static Arena g_arena;
+static PackRegistry g_pack_registry;  /* Registry of language packs */
 
 /* Forward declaration for cleanup function called by fatal() */
 void cleanup(void);
@@ -809,6 +810,19 @@ void generate_file_tree(void) {
     if (want_codemap) {
         /* Initialize codemap */
         Codemap cm = codemap_init(&g_arena);
+        
+        /* Initialize and load language packs */
+        bool have_packs = initialize_pack_registry(&g_pack_registry, &g_arena);
+        if (have_packs) {
+            size_t loaded = load_language_packs(&g_pack_registry);
+            if (loaded > 0) {
+                /* Build extension map for lookup */
+                build_extension_map(&g_pack_registry, &g_arena);
+                
+                /* Log language pack loading results */
+                fprintf(stderr, "Loaded %zu language pack(s) for codemap generation.\n", loaded);
+            }
+        }
         
         /* Process JavaScript/TypeScript files */
         if (process_js_ts_files(&cm, (const char **)processed_files, num_processed_files, &g_arena)) {
@@ -1831,6 +1845,9 @@ void copy_to_clipboard(const char *buffer) {
  * Cleanup function to free memory before exit
  */
 void cleanup(void) {
+    /* Clean up language packs */
+    cleanup_pack_registry(&g_pack_registry);
+    
     /* Arena cleanup will release system_instructions */
     /* Free dynamically allocated user instructions */
     if (user_instructions) {
@@ -2050,9 +2067,10 @@ int main(int argc, char *argv[]) {
                 break;
             case 2: /* --list-packs */
                 {
-                    PackRegistry registry = {0};
-                    if (initialize_pack_registry(&registry, &g_arena)) {
-                        print_pack_list(&registry);
+                    if (initialize_pack_registry(&g_pack_registry, &g_arena)) {
+                        size_t loaded = load_language_packs(&g_pack_registry);
+                        printf("Loaded %zu language pack(s).\n\n", loaded);
+                        print_pack_list(&g_pack_registry);
                     } else {
                         printf("No language packs found.\n");
                     }
