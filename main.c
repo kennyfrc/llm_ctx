@@ -31,6 +31,7 @@
 #endif
 #include "gitignore.h"
 #include "arena.h"
+#include "packs.h"
 #include "codemap.h"
 
 static Arena g_arena;
@@ -927,6 +928,7 @@ void show_help(void) {
     printf("  -m             Generate compact code map for JavaScript/TypeScript files\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
     printf("  -h             Show this help message\n");
+    printf("  --list-packs   List available language packs for code map generation\n");
     printf("  --no-gitignore Ignore .gitignore files when collecting files\n\n");
     printf("By default, llm_ctx reads content from stdin.\n");
     printf("Use -f flag to indicate file arguments are provided.\n\n");
@@ -1869,6 +1871,7 @@ static const struct option long_options[] = {
     {"editor-comments", no_argument,       0, 'e'},
     {"raw",             no_argument,       0, 'r'},
     {"codemap",         no_argument,       0, 'm'}, /* Generate code map */
+    {"list-packs",      no_argument,       0,  2 }, /* List available language packs */
     {"no-gitignore",    no_argument,       0,  1 }, /* Use a value > 255 for long-only */
     {0, 0, 0, 0} /* Terminator */
 };
@@ -2044,6 +2047,18 @@ int main(int argc, char *argv[]) {
                 break;
             case 1: /* --no-gitignore (long option without short equiv) */
                 respect_gitignore = false;
+                break;
+            case 2: /* --list-packs */
+                {
+                    PackRegistry registry = {0};
+                    if (initialize_pack_registry(&registry, &g_arena)) {
+                        print_pack_list(&registry);
+                    } else {
+                        printf("No language packs found.\n");
+                    }
+                    cleanup(); /* Clean up and exit */
+                    exit(0);
+                }
                 break;
             case '?': /* Unknown option OR missing required argument */
                 /* optopt contains the failing option character */

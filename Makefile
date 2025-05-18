@@ -5,9 +5,9 @@ CFLAGS = -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g # A
 RELEASE_CFLAGS = -std=c99 -Wall -Wextra -O2 -DNDEBUG # -O2 optimization, NDEBUG disables asserts
 
 TARGET = llm_ctx
-SRC = main.c gitignore.c codemap.c arena.c
-TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c tests/test_config.c
-TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin tests/test_config
+SRC = main.c gitignore.c codemap.c arena.c packs.c
+TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c tests/test_config.c tests/test_packs.c
+TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin tests/test_config tests/test_packs
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 
@@ -16,12 +16,12 @@ UNAME := $(shell uname)
 
 all: $(TARGET)
 
-OBJS = main.o gitignore.o codemap.o arena.o
+OBJS = main.o gitignore.o codemap.o arena.o packs.o
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^
 
-main.o: main.c arena.h gitignore.h codemap.h
+main.o: main.c arena.h gitignore.h codemap.h packs.h
 	$(CC) $(CFLAGS) -c $<
 
 gitignore.o: gitignore.c gitignore.h
@@ -31,6 +31,9 @@ codemap.o: codemap.c codemap.h arena.h
 	$(CC) $(CFLAGS) -c $<
 
 arena.o: arena.c arena.h
+	$(CC) $(CFLAGS) -c $<
+
+packs.o: packs.c packs.h arena.h
 	$(CC) $(CFLAGS) -c $<
 
 # New target for release build
@@ -61,6 +64,9 @@ tests/test_config: tests/test_config.c
 tests/test_stdin: tests/test_stdin.c
 	$(CC) $(CFLAGS) -o $@ $^
 
+tests/test_packs: tests/test_packs.c packs.c arena.c
+	$(CC) $(CFLAGS) -o $@ $^
+
 test: $(TARGET) $(TEST_TARGETS)
 	@echo "Backing up user config file..."
 	@mv -f ".llm_ctx.conf" "__USER_llm_ctx.conf.backup__" 2>/dev/null || true
@@ -74,6 +80,8 @@ test: $(TARGET) $(TEST_TARGETS)
 	@./tests/test_config || true
 	@echo "\nRunning stdin pipe tests..."
 	@./tests/test_stdin || true
+	@echo "\nRunning pack registry tests..."
+	@./tests/test_packs || true
 	@echo "\nRemoving temporary config file..."
 	@rm -f ".llm_ctx.conf" # Remove dummy
 	@echo "\nRestoring user config file..."
