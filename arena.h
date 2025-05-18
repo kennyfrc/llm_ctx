@@ -3,12 +3,14 @@
 #define ARENA_H
 
 #include <stddef.h>
-// Custom max_align_t only if system one is not available
-#if !defined(__STDC_VERSION_STDDEF_H__) && !defined(_MSC_VER) && !defined(__APPLE__)
-typedef union { long long i; long double d; void *p; } max_align_t;
-#endif
 #include <string.h>
 #include <stdint.h>
+
+// Custom max_align_t only if system one is not available
+#if !defined(__STDC_VERSION_STDDEF_H__) && !defined(_MSC_VER) && !defined(_MAX_ALIGN_T_DEFINED)
+typedef union { long long i; long double d; void *p; } max_align_t;
+#define _MAX_ALIGN_T_DEFINED
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,7 +34,7 @@ typedef struct Arena {
 #define GiB(x) ((size_t)(x) << 30)
 
 ARENA_API size_t arena_align_forward(size_t p, size_t a) {
-    if (a == 0) a = _Alignof(max_align_t);
+    if (a == 0) a = sizeof(void*); // Use pointer size as default alignment
     return (p + (a - 1)) & ~(a - 1);
 }
 
@@ -43,8 +45,8 @@ ARENA_API void *arena_push_size(Arena *a, size_t size, size_t align);
 ARENA_API size_t arena_get_mark(Arena *a);
 ARENA_API void arena_set_mark(Arena *a, size_t mark);
 
-#define arena_push(arena,T) ((T*)arena_push_size((arena),sizeof(T),_Alignof(T)))
-#define arena_push_array(arena,T,count) ((T*)arena_push_size((arena),sizeof(T)*(count),_Alignof(T)))
+#define arena_push(arena,T) ((T*)arena_push_size((arena),sizeof(T),__alignof__(T)))
+#define arena_push_array(arena,T,count) ((T*)arena_push_size((arena),sizeof(T)*(count),__alignof__(T)))
 
 #ifdef ARENA_IMPLEMENTATION
 
