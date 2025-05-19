@@ -9,8 +9,8 @@ RELEASE_CFLAGS = -std=c99 -Wall -Wextra -O2 -DNDEBUG # -O2 optimization, NDEBUG 
 TARGET = llm_ctx
 TEST_JS_PARSER = test_js_parser
 SRC = main.c gitignore.c codemap.c arena.c packs.c
-TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c tests/test_config.c tests/test_packs.c tests/test_extension_mapping.c tests/test_js_pack.c tests/test_ruby_pack.c
-TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin tests/test_config tests/test_packs tests/test_extension_mapping tests/test_js_pack tests/test_ruby_pack
+TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c tests/test_config.c tests/test_packs.c tests/test_extension_mapping.c tests/test_js_pack.c tests/test_ruby_pack.c tests/test_pack_info.c tests/test_make_pack.c
+TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin tests/test_config tests/test_packs tests/test_extension_mapping tests/test_js_pack tests/test_ruby_pack tests/test_pack_info tests/test_make_pack
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 
@@ -84,6 +84,14 @@ tests/test_js_pack: tests/test_js_pack.c packs/javascript/js_pack.c arena.c
 tests/test_ruby_pack: tests/test_ruby_pack.c packs/ruby/ruby_pack.c arena.c
 	$(CC) $(CFLAGS) -Itree-sitter-ruby/src -Itree-sitter-ruby/bindings/c -o $@ $^ tree-sitter-ruby/libtree-sitter-ruby.a -L/opt/homebrew/lib -ltree-sitter
 
+# Build test_pack_info
+tests/test_pack_info: tests/test_pack_info.c
+	$(CC) $(CFLAGS) -o $@ $^
+
+# Build test_make_pack
+tests/test_make_pack: tests/test_make_pack.c
+	$(CC) $(CFLAGS) -o $@ $^
+
 
 test: $(TARGET) $(TEST_TARGETS)
 	@echo "Backing up user config file..."
@@ -106,6 +114,12 @@ test: $(TARGET) $(TEST_TARGETS)
 	@./tests/test_js_pack || true
 	@echo "\nRunning Ruby language pack tests..."
 	@./tests/test_ruby_pack || true
+	@echo "\nRunning pack info CLI tests..."
+	@./tests/test_pack_info || true
+	@echo "\nRunning make pack command tests..."
+	@./tests/test_make_pack || true
+	@echo "\nRunning make pack shell tests..."
+	@./tests/test_make_pack.sh || true
 	@echo "\nRemoving temporary config file..."
 	@rm -f ".llm_ctx.conf" # Remove dummy
 	@echo "\nRestoring user config file..."
@@ -169,4 +183,14 @@ packs:
 	@$(MAKE) pack LANG=typescript
 	@$(MAKE) pack LANG=ruby
 
-.PHONY: all clean install test symlink retest pack packs
+# Test the make pack command
+test-make-pack: $(TARGET)
+	@echo "Running 'make pack' command tests..."
+	@./tests/test_make_pack.sh
+
+# Run the full pack management integration test suite
+test-pack-management: $(TARGET) $(TEST_TARGETS)
+	@echo "Running comprehensive pack management integration tests..."
+	@./tests/test_pack_management.sh
+
+.PHONY: all clean install test symlink retest pack packs test-make-pack test-pack-management
