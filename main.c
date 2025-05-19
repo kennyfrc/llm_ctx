@@ -35,7 +35,6 @@
 #include "codemap.h"
 
 static Arena g_arena;
-static PackRegistry g_pack_registry;  /* Registry of language packs */
 
 /* Forward declaration for cleanup function called by fatal() */
 void cleanup(void);

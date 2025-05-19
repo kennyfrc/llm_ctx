@@ -14,6 +14,7 @@
 
 #include "codemap.h"
 #include "arena.h"
+#include "packs.h"  /* For language pack support */
 
 /* Tree-sitter typedefs and function pointers */
 typedef struct TSParser TSParser;
@@ -369,20 +370,17 @@ char *codemap_generate(Codemap *cm, char *output_buffer, size_t *buffer_pos, siz
 }
 
 /**
- * Check if a file is a JavaScript or TypeScript file
+ * Get the file extension from a path
  */
-static bool is_js_ts_file(const char *path) {
-    if (!path) return false;
+static const char* get_file_extension(const char *path) {
+    if (!path) return NULL;
     
     // Get the extension
     const char *ext = strrchr(path, '.');
-    if (!ext) return false;
-    
-    // Add debug output
-    fprintf(stderr, "Checking file extension: %s\n", ext);
+    if (!ext) return NULL;
     
     // Convert extension to lowercase for case-insensitive comparison
-    char ext_lower[10] = {0}; // Enough space for ".tsx" and similar
+    static char ext_lower[10] = {0}; // Enough space for ".tsx" and similar
     size_t ext_len = strlen(ext);
     if (ext_len >= sizeof(ext_lower)) {
         ext_len = sizeof(ext_lower) - 1;
@@ -394,11 +392,27 @@ static bool is_js_ts_file(const char *path) {
     }
     ext_lower[ext_len] = '\0';
     
+    return ext_lower;
+}
+
+/**
+ * Check if a file is a JavaScript or TypeScript file (legacy function)
+ */
+static bool is_js_ts_file(const char *path) {
+    if (!path) return false;
+    
+    // Get the extension
+    const char *ext = get_file_extension(path);
+    if (!ext) return false;
+    
+    // Add debug output
+    fprintf(stderr, "Checking file extension: %s\n", ext);
+    
     // Check if it's a JavaScript or TypeScript file
-    bool result = (strcmp(ext_lower, ".js") == 0 || 
-                  strcmp(ext_lower, ".jsx") == 0 || 
-                  strcmp(ext_lower, ".ts") == 0 || 
-                  strcmp(ext_lower, ".tsx") == 0);
+    bool result = (strcmp(ext, ".js") == 0 || 
+                  strcmp(ext, ".jsx") == 0 || 
+                  strcmp(ext, ".ts") == 0 || 
+                  strcmp(ext, ".tsx") == 0);
     
     fprintf(stderr, "File %s %s JavaScript/TypeScript file\n", path, result ? "is a" : "is NOT a");
     return result;
@@ -1218,7 +1232,87 @@ __attribute__((unused)) static bool parse_js_ts_file(CodemapFile *file, const ch
 }
 
 /**
- * Process JavaScript/TypeScript files and build the codemap.
+ * Process a single source file using language packs
+ * Returns true if the file was processed successfully
+ */
+static bool process_source_file(const char *path, CodemapFile *file, PackRegistry *registry, Arena *arena) {
+    if (!path || !file || !registry || !arena) {
+        return false;
+    }
+    
+    // Get the file extension
+    const char *ext = get_file_extension(path);
+    if (!ext) {
+        fprintf(stderr, "Warning: File %s has no extension, skipping\n", path);
+        return false;
+    }
+    
+    // Look up the language pack for this extension
+    LanguagePack *pack = find_pack_for_extension(registry, ext);
+    if (!pack || !pack->available || !pack->handle) {
+        fprintf(stderr, "Warning: No language pack available for %s (extension %s)\n", path, ext);
+        return false;
+    }
+    
+    // Read the file contents
+    size_t file_size = 0;
+    char *source = NULL;
+    
+    // Open the file
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "Error: Failed to open file %s: %s\n", path, strerror(errno));
+        return false;
+    }
+    
+    // Get file size
+    fseek(f, 0, SEEK_END);
+    long file_len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    // Check file size limit (5 MB as per spec)
+    if (file_len > 5 * 1024 * 1024) {
+        fprintf(stderr, "Error: File %s exceeds size limit (5 MB)\n", path);
+        fclose(f);
+        return false;
+    }
+    
+    // Allocate memory for the file contents
+    source = arena_push_array(arena, char, file_len + 1);
+    if (!source) {
+        fprintf(stderr, "Error: Failed to allocate memory for file %s\n", path);
+        fclose(f);
+        return false;
+    }
+    
+    // Read the file contents
+    size_t bytes_read = fread(source, 1, file_len, f);
+    fclose(f);
+    
+    if (bytes_read != (size_t)file_len) {
+        fprintf(stderr, "Error: Failed to read file %s: %s\n", path, strerror(errno));
+        return false;
+    }
+    
+    // Null-terminate the buffer
+    source[file_len] = '\0';
+    file_size = file_len;
+    
+    // Parse the file using the language pack
+    bool result = pack->parse_file(path, source, file_size, file, arena);
+    
+    // If parsing fails, report the error and return false
+    if (!result || file->entry_count == 0) {
+        fprintf(stderr, "Error: Failed to parse %s or no entries found\n", path);
+        // Don't add fallback entries - let the error propagate
+        return false;
+    }
+    
+    return result;
+}
+
+/**
+ * Process files and build the codemap using language packs
  */
 bool process_js_ts_files(Codemap *cm, const char **processed_files, size_t processed_count, Arena *arena) {
     fprintf(stderr, "process_js_ts_files called with cm=%p, processed_files=%p, processed_count=%zu, arena=%p\n", 
@@ -1248,38 +1342,24 @@ bool process_js_ts_files(Codemap *cm, const char **processed_files, size_t proce
         }
     }
     
-    // Count how many JS/TS files we have
-    size_t js_ts_file_count = 0;
-    
-    // Debug: Print all files for debugging
-    fprintf(stderr, "Searching for JS/TS files among %zu files\n", processed_count);
-    for (size_t i = 0; i < processed_count; i++) {
-        if (processed_files[i]) {
-            fprintf(stderr, "  Checking file: %s\n", processed_files[i]);
-            if (is_js_ts_file(processed_files[i])) {
-                fprintf(stderr, "  Found JS/TS file: %s\n", processed_files[i]);
-                js_ts_file_count++;
-            }
-        } else {
-            fprintf(stderr, "  Warning: Null file path at index %zu\n", i);
-        }
+    // Initialize and use the global registry
+    bool registry_initialized = initialize_pack_registry(&g_pack_registry, arena);
+    if (registry_initialized) {
+        load_language_packs(&g_pack_registry);
+        build_extension_map(&g_pack_registry, arena);
     }
     
-    // If no JS/TS files, early return
-    if (js_ts_file_count == 0) {
-        fprintf(stderr, "Warning: No JavaScript or TypeScript files found, skipping codemap generation\n");
-        return false;
-    }
-    
-    // For testing purposes, we'll create mock entries to showcase the structure,
-    // since actual Tree-sitter parsing requires the library to be installed
-    
-    // Process each JS/TS file
+    // Process each file
     for (size_t i = 0; i < processed_count; i++) {
         const char *path = processed_files[i];
+        if (!path) continue;
         
-        // Skip non-JS/TS files
-        if (!is_js_ts_file(path)) continue;
+        // Get the file extension
+        const char *ext = get_file_extension(path);
+        if (!ext) {
+            fprintf(stderr, "Warning: File %s has no extension, skipping\n", path);
+            continue;
+        }
         
         // Add the file to the codemap
         CodemapFile *file = codemap_add_file(cm, path, arena);
@@ -1288,66 +1368,30 @@ bool process_js_ts_files(Codemap *cm, const char **processed_files, size_t proce
             continue;
         }
         
-        // Check if we're in test mode and should use mocked entries
-        // Files in a test directory, files with test_ in name, or any JS/TS file if tree-sitter is unavailable
-        bool is_test_file = strstr(path, "test_") != NULL || strstr(path, "/test/") != NULL;
+        // Check if we have language packs loaded
+        if (registry_initialized && g_pack_registry.pack_count > 0 && g_pack_registry.extension_map_size > 0) {
+            // Try to process the file with the appropriate language pack
+            if (process_source_file(path, file, &g_pack_registry, arena)) {
+                continue;  // File processed, continue to next file
+            }
+        }
         
-        if (is_test_file) {
-            // Add mock functions
-            codemap_add_entry(file, "greet", "(name)", "string", "", CM_FUNCTION, arena);
-            codemap_add_entry(file, "add", "(a, b)", "number", "", CM_FUNCTION, arena);
-            codemap_add_entry(file, "formatDate", "(date)", "string", "", CM_FUNCTION, arena);
-            
-            // Add mock class and methods
-            codemap_add_entry(file, "AnimationChain", "", "", "", CM_CLASS, arena);
-            codemap_add_entry(file, "constructor", "(animate)", "", "AnimationChain", CM_METHOD, arena);
-            codemap_add_entry(file, "before", "(callback)", "AnimationChain", "AnimationChain", CM_METHOD, arena);
-            codemap_add_entry(file, "after", "(callback)", "AnimationChain", "AnimationChain", CM_METHOD, arena);
-            
-            // Add mock types
-            codemap_add_entry(file, "Position", "", "", "", CM_TYPE, arena);
-            codemap_add_entry(file, "Range", "", "", "", CM_TYPE, arena);
+        // If we get here, either no packs are loaded or none matched this file
+        // For JavaScript/TypeScript files, show a clear error message
+        if (is_js_ts_file(path)) {
+            fprintf(stderr, "Error: No suitable language pack available for %s\n", path);
+            fprintf(stderr, "To process JavaScript/TypeScript files, you must install Tree-sitter:\n");
+            fprintf(stderr, "  brew install tree-sitter\n");
+            // Don't add any placeholder entries - leave the file empty
         }
         else {
-            // For any JavaScript/TypeScript file, add mock entries for demonstration purposes
-            // This makes the feature work without requiring Tree-sitter installation
-            
-            // Add mock functions based on source file name
-            char basename[128] = {0};
-            const char *lastSlash = strrchr(path, '/');
-            if (lastSlash) {
-                strncpy(basename, lastSlash + 1, sizeof(basename) - 1);
-            } else {
-                strncpy(basename, path, sizeof(basename) - 1);
-            }
-            
-            // Remove extension from basename
-            char *dot = strrchr(basename, '.');
-            if (dot) *dot = '\0';
-            
-            // Create function name from basename
-            char funcName[150] = {0};
-            snprintf(funcName, sizeof(funcName), "%sFunction", basename);
-            
-            // Add mock functions
-            codemap_add_entry(file, funcName, "(param1, param2)", "ReturnType", "", CM_FUNCTION, arena);
-            codemap_add_entry(file, "process", "(data)", "Result", "", CM_FUNCTION, arena);
-            codemap_add_entry(file, "initialize", "()", "void", "", CM_FUNCTION, arena);
-            
-            // Add a mock class with methods
-            codemap_add_entry(file, "CodeModule", "", "", "", CM_CLASS, arena);
-            codemap_add_entry(file, "constructor", "(config)", "", "CodeModule", CM_METHOD, arena);
-            codemap_add_entry(file, "execute", "(input)", "Output", "CodeModule", CM_METHOD, arena);
-            
-            // Add a mock type
-            codemap_add_entry(file, "DataType", "", "", "", CM_TYPE, arena);
+            // Not a supported file type, remove it from the codemap
+            // (this is a bit of a hack, as we're just setting the entry count to 0)
+            file->entry_count = 0;
         }
     }
     
-    // Skip the second file processing loop - it's redundant with the previous one
-    fprintf(stderr, "Skipping redundant file processing loop\n");
-    
-    // Unload the tree-sitter library
+    // Unload the tree-sitter library (legacy code, kept for compatibility)
     unload_tree_sitter();
     
     // If after all processing we have no files with entries, return failure

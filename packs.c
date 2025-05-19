@@ -11,6 +11,9 @@
 #include "arena.h"
 #include "codemap.h"
 
+/* Global pack registry */
+PackRegistry g_pack_registry = {0};
+
 /**
  * Check if a directory exists and is accessible
  */

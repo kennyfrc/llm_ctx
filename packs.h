@@ -40,6 +40,9 @@ typedef struct {
     size_t extension_map_size;    /* Size of extension map */
 } PackRegistry;
 
+/* Global pack registry */
+extern PackRegistry g_pack_registry;
+
 /**
  * Initialize the pack registry
  * Scans the packs directory for available language packs
