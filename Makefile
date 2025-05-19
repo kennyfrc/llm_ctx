@@ -4,6 +4,8 @@ CFLAGS = -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g # A
 # RELEASE_CFLAGS for optimized release builds
 RELEASE_CFLAGS = -std=c99 -Wall -Wextra -O2 -DNDEBUG # -O2 optimization, NDEBUG disables asserts
 
+# No need for external dependencies in JavaScript pack anymore
+
 TARGET = llm_ctx
 TEST_JS_PARSER = test_js_parser
 SRC = main.c gitignore.c codemap.c arena.c packs.c
@@ -74,8 +76,10 @@ tests/test_packs: tests/test_packs.c packs.c arena.c
 tests/test_extension_mapping: tests/test_extension_mapping.c packs.c arena.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-tests/test_js_pack: tests/test_js_pack.c
-	$(CC) $(CFLAGS) -o $@ $^
+# Build test_js_pack with tree-sitter JavaScript statically linked
+tests/test_js_pack: tests/test_js_pack.c packs/javascript/js_pack.c arena.c
+	$(CC) $(CFLAGS) -Itree-sitter-javascript/src -Itree-sitter-javascript/bindings/c -o $@ $^ tree-sitter-javascript/libtree-sitter-javascript.a -L/opt/homebrew/lib -ltree-sitter
+
 
 test: $(TARGET) $(TEST_TARGETS)
 	@echo "Backing up user config file..."
@@ -138,12 +142,14 @@ pack:
 		if [ -f binding.gyp ]; then \
 			npm install || { echo "Failed to run npm install"; exit 1; }; \
 		fi
-	@echo "Compiling parser to parser.so..."
+	@echo "Compiling parser.so with static linking..."
 	@if [ -f tree-sitter-$(LANG)/src/parser.c ]; then \
-		if [ -f tree-sitter-$(LANG)/src/scanner.c ]; then \
-			$(CC) -shared -fPIC -o packs/$(LANG)/parser.so tree-sitter-$(LANG)/src/parser.c tree-sitter-$(LANG)/src/scanner.c || { echo "Failed to compile parser"; exit 1; }; \
+		if [ -f packs/$(LANG)/js_pack.c ]; then \
+			$(CC) -shared -fPIC -o packs/$(LANG)/parser.so packs/$(LANG)/js_pack.c tree-sitter-$(LANG)/src/parser.c tree-sitter-$(LANG)/src/scanner.c -Itree-sitter-$(LANG)/src -Itree-sitter-$(LANG)/bindings/c || { echo "Failed to compile parser"; exit 1; }; \
 		else \
-			$(CC) -shared -fPIC -o packs/$(LANG)/parser.so tree-sitter-$(LANG)/src/parser.c || { echo "Failed to compile parser"; exit 1; }; \
+			echo "Creating language pack C file..."; \
+			cp packs/javascript/js_pack.c packs/$(LANG)/$(LANG)_pack.c; \
+			$(CC) -shared -fPIC -o packs/$(LANG)/parser.so packs/$(LANG)/$(LANG)_pack.c tree-sitter-$(LANG)/src/parser.c tree-sitter-$(LANG)/src/scanner.c -Itree-sitter-$(LANG)/src -Itree-sitter-$(LANG)/bindings/c || { echo "Failed to compile parser"; exit 1; }; \
 		fi; \
 		echo "Tree-sitter $(LANG) pack installed in packs/$(LANG)/parser.so"; \
 	else \

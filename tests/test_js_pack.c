@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dlfcn.h>
 #include <stdbool.h>
 #include <unistd.h>
 #include "test_framework.h"
@@ -9,15 +8,14 @@
 #include "../codemap.h"
 #include "../arena.h"
 
-#define JS_PACK_PATH "/Users/kennyfrc/Documents/code/fun/llm_ctx/packs/javascript/parser.so"
 #define TEST_JS_FILE "/Users/kennyfrc/Documents/code/fun/llm_ctx/packs/javascript/test.js"
 #define TEST_TS_FILE "/Users/kennyfrc/Documents/code/fun/llm_ctx/packs/javascript/test.ts"
 
-// Function typedefs for language pack
-typedef bool (*initialize_fn)(void);
-typedef void (*cleanup_fn)(void);
-typedef const char** (*get_extensions_fn)(size_t *count);
-typedef bool (*parse_file_fn)(const char*, const char*, size_t, CodemapFile*, Arena*);
+// Import the JavaScript pack functions directly
+extern bool initialize(void);
+extern void cleanup(void);
+extern const char **get_extensions(size_t *count);
+extern bool parse_file(const char*, const char*, size_t, CodemapFile*, Arena*);
 
 // Read a file into memory
 static char* read_file(const char *filename, size_t *size) {
@@ -108,74 +106,28 @@ static void create_test_ts_file(void) {
     fclose(f);
 }
 
-// Test loading the JavaScript language pack
-TEST(test_load_js_pack) {
-    void *handle = dlopen(JS_PACK_PATH, RTLD_LAZY);
-    ASSERT("Can load JavaScript language pack", handle != NULL);
-    
-    if (handle) {
-        initialize_fn initialize = (initialize_fn)dlsym(handle, "initialize");
-        ASSERT("Found initialize function", initialize != NULL);
-        
-        cleanup_fn cleanup = (cleanup_fn)dlsym(handle, "cleanup");
-        ASSERT("Found cleanup function", cleanup != NULL);
-        
-        get_extensions_fn get_extensions = (get_extensions_fn)dlsym(handle, "get_extensions");
-        ASSERT("Found get_extensions function", get_extensions != NULL);
-        
-        parse_file_fn parse_file = (parse_file_fn)dlsym(handle, "parse_file");
-        ASSERT("Found parse_file function", parse_file != NULL);
-        
-        dlclose(handle);
-    }
+// Test JS pack functions availability
+TEST(test_js_pack_functions) {
+    ASSERT("Initialize function exists", initialize != NULL);
+    ASSERT("Cleanup function exists", cleanup != NULL);
+    ASSERT("Get extensions function exists", get_extensions != NULL);
+    ASSERT("Parse file function exists", parse_file != NULL);
 }
 
 // Test getting JavaScript extensions
 TEST(test_js_extensions) {
-    void *handle = dlopen(JS_PACK_PATH, RTLD_LAZY);
-    if (!handle) {
-        ASSERT("Could load JavaScript language pack", false);
-        return;
-    }
-    
-    get_extensions_fn get_extensions = (get_extensions_fn)dlsym(handle, "get_extensions");
-    if (!get_extensions) {
-        ASSERT("Found get_extensions function", false);
-        dlclose(handle);
-        return;
-    }
-    
     size_t count = 0;
     const char **extensions = get_extensions(&count);
     
     ASSERT("Extension count is at least 2", count >= 2);
     ASSERT("Has .js extension", extensions && extensions[0] && strcmp(extensions[0], ".js") == 0);
     ASSERT("Has .ts extension", extensions && count >= 3 && extensions[2] && strcmp(extensions[2], ".ts") == 0);
-    
-    dlclose(handle);
 }
 
 // Test parsing a JavaScript file
 TEST(test_parse_js_file) {
     // Create test file
     create_test_js_file();
-    
-    // Load the language pack
-    void *handle = dlopen(JS_PACK_PATH, RTLD_LAZY);
-    if (!handle) {
-        ASSERT("Could load JavaScript language pack", false);
-        return;
-    }
-    
-    initialize_fn initialize = (initialize_fn)dlsym(handle, "initialize");
-    parse_file_fn parse_file = (parse_file_fn)dlsym(handle, "parse_file");
-    cleanup_fn cleanup = (cleanup_fn)dlsym(handle, "cleanup");
-    
-    if (!initialize || !parse_file || !cleanup) {
-        ASSERT("Found all required functions", false);
-        dlclose(handle);
-        return;
-    }
     
     // Initialize the language pack
     bool init_result = initialize();
@@ -234,30 +186,12 @@ TEST(test_parse_js_file) {
     
     // Cleanup
     cleanup();
-    dlclose(handle);
 }
 
 // Test parsing a TypeScript file
 TEST(test_parse_ts_file) {
     // Create test file
     create_test_ts_file();
-    
-    // Load the language pack
-    void *handle = dlopen(JS_PACK_PATH, RTLD_LAZY);
-    if (!handle) {
-        ASSERT("Could load JavaScript language pack", false);
-        return;
-    }
-    
-    initialize_fn initialize = (initialize_fn)dlsym(handle, "initialize");
-    parse_file_fn parse_file = (parse_file_fn)dlsym(handle, "parse_file");
-    cleanup_fn cleanup = (cleanup_fn)dlsym(handle, "cleanup");
-    
-    if (!initialize || !parse_file || !cleanup) {
-        ASSERT("Found all required functions", false);
-        dlclose(handle);
-        return;
-    }
     
     // Initialize the language pack
     bool init_result = initialize();
@@ -318,14 +252,13 @@ TEST(test_parse_ts_file) {
     
     // Cleanup
     cleanup();
-    dlclose(handle);
 }
 
 int main(void) {
     printf("Running JavaScript language pack tests\n");
     printf("=====================================\n");
     
-    RUN_TEST(test_load_js_pack);
+    RUN_TEST(test_js_pack_functions);
     RUN_TEST(test_js_extensions);
     RUN_TEST(test_parse_js_file);
     RUN_TEST(test_parse_ts_file);

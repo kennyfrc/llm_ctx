@@ -37,4 +37,4 @@ __USER_llm_ctx.conf.backup__
 !.llm_ctx.conf.example
 
 tree-sitter-*
-packs/
+# packs/
