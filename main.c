@@ -1888,6 +1888,7 @@ static const struct option long_options[] = {
     {"raw",             no_argument,       0, 'r'},
     {"codemap",         no_argument,       0, 'm'}, /* Generate code map */
     {"list-packs",      no_argument,       0,  2 }, /* List available language packs */
+    {"pack-info",       required_argument, 0,  3 }, /* Get info about a specific language pack */
     {"no-gitignore",    no_argument,       0,  1 }, /* Use a value > 255 for long-only */
     {0, 0, 0, 0} /* Terminator */
 };
@@ -2073,6 +2074,50 @@ int main(int argc, char *argv[]) {
                     } else {
                         printf("No language packs found.\n");
                     }
+                    cleanup(); /* Clean up and exit */
+                    exit(0);
+                }
+                break;
+            case 3: /* --pack-info */
+                {
+                    if (!optarg) {
+                        fprintf(stderr, "Error: --pack-info requires a language pack name\n");
+                        return 1;
+                    }
+                    
+                    if (initialize_pack_registry(&g_pack_registry, &g_arena)) {
+                        load_language_packs(&g_pack_registry);
+                        
+                        bool found = false;
+                        for (size_t i = 0; i < g_pack_registry.pack_count; i++) {
+                            LanguagePack *pack = &g_pack_registry.packs[i];
+                            if (strcmp(pack->name, optarg) == 0) {
+                                found = true;
+                                
+                                printf("Language Pack: %s\n", pack->name);
+                                printf("Status: %s\n", pack->available ? "Available" : "Unavailable");
+                                printf("Path: %s\n", pack->path);
+                                
+                                if (pack->extensions && pack->extension_count > 0) {
+                                    printf("Supported Extensions:\n");
+                                    for (size_t j = 0; j < pack->extension_count; j++) {
+                                        printf("  %s\n", pack->extensions[j]);
+                                    }
+                                } else {
+                                    printf("No extensions defined\n");
+                                }
+                                
+                                break;
+                            }
+                        }
+                        
+                        if (!found) {
+                            printf("Language pack '%s' not found.\n", optarg);
+                        }
+                    } else {
+                        printf("No language packs found.\n");
+                    }
+                    
                     cleanup(); /* Clean up and exit */
                     exit(0);
                 }
