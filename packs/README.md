@@ -6,6 +6,128 @@ This guide explains how to create and use language packs for LLM_CTX's codemap f
 
 Language packs are plugins that enable LLM_CTX to understand the structure of source code in specific programming languages. They extract functions, classes, methods, and other code entities to provide a structured view for better context in LLM prompts.
 
+## Developer Workflow: Creating a Language Pack
+
+Here's the typical workflow for creating a new language pack:
+
+### 1. Getting Started
+
+Start by copying the template or referencing the JavaScript pack:
+
+```bash
+# Option 1: Copy the template
+cp -r packs/template packs/your-language
+cd packs/your-language
+mv template_pack.c your_lang_pack.c
+
+# Option 2: Reference the JavaScript pack
+# Study packs/javascript/js_pack.c as a complete example
+```
+
+### 2. Using an Existing Tree-sitter Grammar
+
+Most languages already have a Tree-sitter grammar available. Here's how to use one:
+
+```bash
+# Clone the Tree-sitter grammar repository
+git clone https://github.com/tree-sitter/tree-sitter-your-language
+
+# Build the grammar
+cd tree-sitter-your-language
+npm install  # If it uses the Node.js build system
+# The grammar is now built in the project directory
+```
+
+### 3. Modifying Your Pack Files
+
+You'll need to update three key files:
+
+1. **Makefile**: Point to your grammar library
+   ```makefile
+   TS_LANG_LIB = ../../tree-sitter-your-language/libtree-sitter-your-language.a
+   
+   parser.so: your_lang_pack.c
+       $(CC) $(CFLAGS) -o $@ $< $(TS_LANG_LIB) -L/opt/homebrew/lib -ltree-sitter
+   ```
+
+2. **tree-sitter.h**: Update the language function declaration
+   ```c
+   extern const TSLanguage *tree_sitter_your_language(void);
+   ```
+
+3. **your_lang_pack.c**: Implement the required interface functions
+   ```c
+   bool initialize(void) { /* ... */ }
+   void cleanup(void) { /* ... */ }
+   const char **get_extensions(size_t *count) { /* ... */ }
+   bool parse_file(const char *path, const char *source, size_t source_len, 
+                  CodemapFile *file, Arena *arena) { /* ... */ }
+   ```
+
+### 4. Testing Your Language Pack
+
+Once your pack is implemented, verify it works:
+
+```bash
+# Build your language pack
+cd packs/your-language
+make
+
+# Test if LLM_CTX can find and load your pack
+cd ../..
+./llm_ctx --list-packs  # Should show your language in the list
+
+# View detailed information about your pack
+./llm_ctx --pack-info your-language  # Should show supported extensions
+
+# Test with an actual file
+./llm_ctx -f "path/to/test/file.ext" -m  # Should show codemap
+```
+
+### 5. Debugging and Troubleshooting
+
+If your language pack doesn't work as expected:
+
+1. **Check for linking errors**: Make sure both Tree-sitter libraries are linked
+2. **Print node types**: Add debug prints in the `process_node` function
+3. **Verify extension mappings**: Check that file extensions are properly registered
+4. **Test with simple files**: Start with minimal code examples
+
+## How the Pack Loading System Works
+
+The language pack system uses a plugin architecture with these components:
+
+### 1. Pack Discovery
+
+When LLM_CTX starts:
+- It scans the `packs/` directory for subdirectories
+- For each subdirectory, it checks if a `parser.so` file exists
+- If found, it's added to the registry as an available language pack
+
+### 2. Dynamic Loading
+
+For each available pack:
+- The `parser.so` file is loaded using `dlopen()`
+- Required functions (`initialize`, `cleanup`, etc.) are resolved using `dlsym()`
+- The pack's `initialize()` function is called
+- Supported file extensions are obtained via `get_extensions()`
+
+### 3. Extension Mapping
+
+After loading all packs:
+- A mapping table is built from file extensions to language packs
+- When a file is processed, its extension is used to find the appropriate pack
+- If no pack is found for an extension, the file is processed as plain text
+
+### 4. File Processing
+
+For each matched file:
+- The file is read into memory
+- The appropriate language pack's `parse_file()` function is called
+- The language pack builds a parse tree using Tree-sitter
+- It traverses the tree to extract code entities (functions, classes, etc.)
+- These entities are added to the codemap
+
 ---
 
 ## Tutorial: Creating Your First Language Pack
