@@ -7,15 +7,20 @@ Currently, the codemap feature in `llm_ctx` is specifically designed for JavaScr
 ## Usage Code / Examples
 
 ```bash
-# Use existing JavaScript support
+# Generate codemap for the entire codebase
+llm_ctx -m
+
+# Generate codemap for specific language files
+llm_ctx -m "src/**/*.js"
+
+# Generate codemap for multiple file patterns
+llm_ctx -m "src/**/*.js,lib/**/*.rb"
+
+# Generate codemap while including file content in context
 llm_ctx -f "src/**/*.js" -m
 
-# After installing Ruby language pack
-make pack ruby
-llm_ctx -f "lib/**/*.rb" -m  # Should work automatically
-
-# Mix multiple languages in one command
-llm_ctx -f "src/**/*.{js,py,rb}" -m  # Shows codemap for all supported languages
+# Generate codemap for entire codebase, ignoring gitignore patterns
+llm_ctx -m --no-gitignore
 
 # List installed language packs
 llm_ctx --list-packs
@@ -86,6 +91,10 @@ Functions:
    * Generate a consistent codemap structure regardless of language
    * Normalize language-specific constructs to common concepts (functions, classes, etc.)
    * Handle mixed-language projects cleanly
+   * Traverse the entire codebase by default when codemap is enabled
+   * Respect gitignore patterns unless explicitly overridden
+   * Allow specific file/directory patterns to limit codemap generation scope
+   * Operate independently of file content selection (-f flag)
 
 4. **Pack Management**
    * Add `make pack <language>` command to download and build language packs
@@ -149,6 +158,10 @@ The design eliminates special cases by using a unified interface for all languag
    * File extension determines the language pack to use
    * If no language pack is available, file is processed normally (content only, no codemap)
    * The process is data-driven, not control-flow driven
+   * Codemap generation operates independently from file content processing
+   * By default, codemap scans the entire codebase for supported file types
+   * When pattern arguments are provided to the codemap flag, only files matching those patterns are processed
+   * Gitignore patterns are respected during codemap file scanning
 
 3. **Normalized Codemap Generation**
    * Each language maps its native constructs to our common model (functions, classes, etc.)
@@ -204,16 +217,12 @@ This approach eliminates edge cases by:
 - Implement --pack-info command for detailed language info
 - Complete test suite for pack-related functionality
 
-### 7. Error Handling & Robustness
-- Implement graceful fallbacks for missing packs
-- Add version checking between packs and main program
-- Create diagnostics for parser failures
-- Test edge cases (corrupted packs, incompatible versions)
-
-### 8. Performance Optimization
-- Add caching for pack discovery and loading
-- Optimize memory usage for multi-language processing
-- Benchmark and tune for large codebases
-- Ensure clean resource allocation/deallocation
+### 7. Enhanced Codemap Independence
+- Decouple codemap generation from file content selection
+- Implement whole codebase traversal by default when -m is used
+- Add support for pattern arguments to -m flag
+- Ensure proper gitignore pattern respect in codemap file scanning
+- Update CLI help text to document new codemap functionality
+- Update relevant tests to verify codemap enhancements
 
 Each slice delivers a functional improvement that can be tested independently, building on previous work while providing value at each step.
