@@ -1871,17 +1871,33 @@ TEST(test_cli_codemap) {
     ASSERT("Output contains <code_map> tag", string_contains(output, "<code_map>"));
     ASSERT("Output contains closing </code_map> tag", string_contains(output, "</code_map>"));
     
-    /* Since we don't have a real Tree-sitter implementation yet,
-     * we can only check for the placeholder message
+    /* Now that we have a real JavaScript language pack implementation,
+     * check for actual code entities instead of the placeholder message
      */
-    ASSERT("Codemap contains placeholder for missing Tree-sitter pack",
-           string_contains(output, "<Tree-sitter pack not installed>"));
+    ASSERT("Codemap does not contain placeholder for missing Tree-sitter pack",
+           !string_contains(output, "<Tree-sitter pack not installed>"));
     
     /* Check for JavaScript file in codemap */
     ASSERT("Codemap contains JavaScript file reference", string_contains(output, "__test_codemap.js"));
     
+    /* Check for functions and classes in JavaScript codemap */
+    ASSERT("Codemap contains helloWorld function", 
+           string_contains(output, "helloWorld"));
+    ASSERT("Codemap contains greet function", 
+           string_contains(output, "greet"));
+    ASSERT("Codemap contains AnimationChain class", 
+           string_contains(output, "AnimationChain"));
+    
     /* Check for TypeScript file in codemap */
     ASSERT("Codemap contains TypeScript file reference", string_contains(output, "__test_utils.ts"));
+    
+    /* Check for TypeScript interfaces, functions and types */
+    ASSERT("Codemap contains Position interface", 
+           string_contains(output, "Position"));
+    ASSERT("Codemap contains positionFromRects function",
+           string_contains(output, "positionFromRects"));
+    ASSERT("Codemap contains Range type", 
+           string_contains(output, "Range"));
     
     /* Check that file_tree and file_context are still present */
     ASSERT("Output still contains file_tree", string_contains(output, "<file_tree>"));
