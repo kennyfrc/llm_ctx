@@ -2423,34 +2423,7 @@ int main(int argc, char *argv[]) {
             }
         } else {
             fprintf(stderr, "Warning: Failed to generate codemap\n");
-            
-            /* Legacy fallback for backward compatibility */
-            fprintf(stderr, "Falling back to legacy JavaScript/TypeScript-only codemap...\n");
-            
-            /* Initialize a temporary codemap */
-            Codemap legacy_cm = codemap_init(&g_arena);
-            
-            /* Process JavaScript/TypeScript files with the legacy function */
-            if (process_js_ts_files(&legacy_cm, (const char **)processed_files, num_processed_files, &g_arena)) {
-                /* Generate codemap and write to temp_file */
-                char *buffer = arena_push_array(&g_arena, char, 1024 * 1024); /* 1MB buffer */
-                if (buffer) {
-                    size_t pos = 0;
-                    codemap_generate(&legacy_cm, buffer, &pos, 1024 * 1024);
-                    
-                    /* Write the buffer to the output file */
-                    if (pos > 0) {
-                        fprintf(temp_file, "%.*s\n", (int)pos, buffer);
-                        fprintf(stderr, "Legacy codemap generated successfully\n");
-                    } else {
-                        fprintf(stderr, "Warning: Empty legacy codemap generated\n");
-                    }
-                } else {
-                    fprintf(stderr, "Warning: Failed to allocate memory for codemap output\n");
-                }
-            } else {
-                fprintf(stderr, "Warning: Failed to process JavaScript/TypeScript files for codemap\n");
-            }
+            /* Do not fallback to JavaScript/TypeScript-only codemap as requested */
         }
     }
     
