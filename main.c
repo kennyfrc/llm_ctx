@@ -1977,7 +1977,7 @@ int main(int argc, char *argv[]) {
     /* Register cleanup handler */
     atexit(cleanup); /* Register cleanup handler early */
 
-    g_arena = arena_create(MiB(64));
+    g_arena = arena_create(MiB(256));
     if (!g_arena.base) fatal("Failed to allocate arena");
 
     /* Create temporary file for output assembly */
