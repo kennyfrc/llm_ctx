@@ -654,7 +654,8 @@ The `-m` or `--codemap` flag enables code mapping, which extracts and displays f
 *   **Notes:**
     *   Without Tree-sitter language packs, code mapping still works using pattern-based extraction
     *   Tree-sitter provides superior results but isn't required
-    *   Performance limits: Files > 5MB or parsing time > 2s are skipped
+    *   Performance limits: Files > 5MB are skipped to avoid excessive memory usage
+    *   No strict timeout limits are enforced during parsing
 
 ## Limitations
 
