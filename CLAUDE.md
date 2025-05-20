@@ -27,12 +27,20 @@ static Arena g_arena;
 // This avoids frequent malloc/free calls and simplifies cleanup.
 ```
 
-Helper functions for arena allocation:
+The program uses the standard arena.h functions for memory allocation:
 
 ```c
-static void *arena_xalloc(size_t size);
-static void *arena_xrealloc(void *oldp, size_t old_size, size_t new_size);
-static char *arena_xstrdup(const char *s);
+// Standard arena allocations
+#define arena_push(arena,T) ((T*)arena_push_size((arena),sizeof(T),__alignof__(T)))
+#define arena_push_array(arena,T,count) ((T*)arena_push_size((arena),sizeof(T)*(count),__alignof__(T)))
+
+// Safe arena allocations (abort on failure)
+#define arena_push_safe(arena,T) ((T*)arena_push_size_safe((arena),sizeof(T),__alignof__(T)))
+#define arena_push_array_safe(arena,T,count) ((T*)arena_push_size_safe((arena),sizeof(T)*(count),__alignof__(T)))
+
+// String duplication
+char *arena_strdup(Arena *a, const char *s);
+char *arena_strdup_safe(Arena *a, const char *s);
 ```
 
 #### 1.2 File Processing
@@ -113,12 +121,23 @@ void arena_clear(Arena *a);
 #### Memory Allocation
 
 ```c
-// Allocate memory with specific size and alignment
+// Standard allocation with specific size and alignment
 void *arena_push_size(Arena *a, size_t size, size_t align);
+
+// Safe allocation that aborts on failure
+void *arena_push_size_safe(Arena *a, size_t size, size_t align);
+
+// String duplication
+char *arena_strdup(Arena *a, const char *s);
+char *arena_strdup_safe(Arena *a, const char *s);
 
 // Convenience macros for typed allocations
 #define arena_push(arena,T) ((T*)arena_push_size((arena),sizeof(T),__alignof__(T)))
 #define arena_push_array(arena,T,count) ((T*)arena_push_size((arena),sizeof(T)*(count),__alignof__(T)))
+
+// Safe versions that abort on failure
+#define arena_push_safe(arena,T) ((T*)arena_push_size_safe((arena),sizeof(T),__alignof__(T)))
+#define arena_push_array_safe(arena,T,count) ((T*)arena_push_size_safe((arena),sizeof(T)*(count),__alignof__(T)))
 ```
 
 #### Position Management
@@ -137,6 +156,8 @@ void arena_set_mark(Arena *a, size_t mark);
 2. **Simplicity**: No need to track individual allocations
 3. **Safety**: No memory leaks or double-frees
 4. **Efficiency**: Quick temp allocations with rollback
+5. **Error Handling**: Safe functions provide automatic error handling with clear error messages
+6. **Consistent API**: All memory allocations follow the same pattern
 
 ## 3. Language Packs and Tree-sitter Integration
 
@@ -318,8 +339,11 @@ To create a new language pack, follow these steps:
 ### 4.2 Memory Management
 
 - The global arena allocator is used for all allocations
+- Standard arena.h functions (arena_push, arena_push_array) are used for non-critical allocations
+- Safe arena.h functions (arena_push_safe, arena_push_array_safe, arena_strdup_safe) are used for critical allocations
 - Language packs receive a pointer to the arena for their allocations
 - This ensures all memory is freed at once when the program exits
+- Mark/reset functionality allows temporary allocations that can be discarded efficiently
 
 ### 4.3 Extension to New Languages
 

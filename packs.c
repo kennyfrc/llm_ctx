@@ -17,7 +17,16 @@
 PackRegistry g_pack_registry = {0};
 
 /* Forward declaration for executable directory function from main.c */
+#ifndef TEST_BUILD
 extern char *get_executable_dir(void);
+#else
+/* Function to get the executable directory - implemented specifically for tests */
+static char *get_executable_dir(void) {
+    /* For tests, just return the current directory */
+    static char current_dir[] = ".";
+    return current_dir;
+}
+#endif
 
 /**
  * Check if a directory exists and is accessible

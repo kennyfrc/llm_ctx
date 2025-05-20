@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 // Custom max_align_t only if system one is not available
 #if !defined(__STDC_VERSION_STDDEF_H__) && !defined(_MSC_VER) && !defined(_MAX_ALIGN_T_DEFINED) && !defined(__APPLE__)
@@ -44,6 +46,15 @@ ARENA_API void arena_set_mark(Arena *a, size_t mark);
 
 #define arena_push(arena,T) ((T*)arena_push_size((arena),sizeof(T),__alignof__(T)))
 #define arena_push_array(arena,T,count) ((T*)arena_push_size((arena),sizeof(T)*(count),__alignof__(T)))
+
+/* Safe versions that exit on failure */
+#define arena_push_safe(arena,T) ((T*)arena_push_size_safe((arena),sizeof(T),__alignof__(T)))
+#define arena_push_array_safe(arena,T,count) ((T*)arena_push_size_safe((arena),sizeof(T)*(count),__alignof__(T)))
+
+/* String duplication and error handling */
+ARENA_API char *arena_strdup(Arena *a, const char *s);
+ARENA_API char *arena_strdup_safe(Arena *a, const char *s);
+ARENA_API void *arena_push_size_safe(Arena *a, size_t size, size_t align);
 
 #ifdef ARENA_IMPLEMENTATION
 
@@ -125,6 +136,35 @@ ARENA_API void *arena_push_size(Arena *a, size_t size, size_t align) {
 
 ARENA_API size_t arena_get_mark(Arena *a) { return a ? a->pos : 0; }
 ARENA_API void arena_set_mark(Arena *a, size_t mark) { if (a) a->pos = mark; }
+
+/* Safe version that aborts on failure */
+ARENA_API void *arena_push_size_safe(Arena *a, size_t size, size_t align) {
+    void *p = arena_push_size(a, size, align);
+    if (!p && size > 0) {
+        fprintf(stderr, "FATAL: Out of memory allocating %zu bytes\n", size);
+        abort();
+    }
+    return p;
+}
+
+/* Duplicate string using arena allocation */
+ARENA_API char *arena_strdup(Arena *a, const char *s) {
+    if (!s) return NULL;
+    size_t len = strlen(s) + 1;
+    char *p = (char *)arena_push_size(a, len, __alignof__(char));
+    if (p) memcpy(p, s, len);
+    return p;
+}
+
+/* Safe version that aborts on failure */
+ARENA_API char *arena_strdup_safe(Arena *a, const char *s) {
+    char *p = arena_strdup(a, s);
+    if (!p && s) {
+        fprintf(stderr, "FATAL: Out of memory duplicating string of length %zu\n", strlen(s));
+        abort();
+    }
+    return p;
+}
 
 #endif /* ARENA_IMPLEMENTATION */
 

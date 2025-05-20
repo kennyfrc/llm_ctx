@@ -89,36 +89,14 @@ static void fatal(const char *fmt, ...) {
     _Exit(EXIT_FAILURE);
 }
 
-/* Allocate memory from the global arena */
-static void *arena_xalloc(size_t size) {
-    void *p = arena_push_size(&g_arena, size, __alignof__(void*));
-    if (!p) fatal("Out of memory allocating %zu bytes", size);
-    return p;
-}
-
-/* Reallocate by allocating new space and copying old_size bytes */
-static void *arena_xrealloc(void *oldp, size_t old_size, size_t new_size) {
-    void *p = arena_xalloc(new_size);
-    if (oldp && old_size) {
-        memcpy(p, oldp, old_size < new_size ? old_size : new_size);
-    }
-    return p;
-}
-
-/* Duplicate string using arena allocation */
-static char *arena_xstrdup(const char *s) {
-    size_t len = strlen(s) + 1;
-    char *p = arena_xalloc(len);
-    memcpy(p, s, len);
-    return p;
-}
+/* Custom arena functions removed - all uses replaced with arena.h equivalents */
 
 /* Read entire FILE* into a NUL-terminated buffer.
  * Caller must free().  Returns NULL on OOM or read error. */
 static char *slurp_stream(FILE *fp) {
     size_t mark = arena_get_mark(&g_arena);
     size_t cap = 4096, len = 0;
-    char *buf = arena_xalloc(cap);
+    char *buf = arena_push_array_safe(&g_arena, char, cap);
 
     int c;
     while ((c = fgetc(fp)) != EOF) {
@@ -129,12 +107,11 @@ static char *slurp_stream(FILE *fp) {
                 return NULL;
             }
             size_t new_cap = cap * 2;
-            char *tmp = arena_xrealloc(buf, cap, new_cap);
-            if (!tmp) {
-                arena_set_mark(&g_arena, mark);
-                errno = ENOMEM;
-                return NULL;
-            }
+            /* Create a new larger buffer */
+            char *tmp = arena_push_array_safe(&g_arena, char, new_cap);
+            /* Copy existing content */
+            memcpy(tmp, buf, len);
+            /* Use the new buffer */
             buf = tmp;
             cap = new_cap;
         }
@@ -191,7 +168,12 @@ static char *slurp_file(const char *path) {
         /* Ensure space for line + newline + null terminator */          \
         while (*(buf_len_ptr) + (len) + 2 > *(buf_cap_ptr)) {             \
             size_t new_cap = (*(buf_cap_ptr) == 0) ? 256 : *(buf_cap_ptr) * 2; \
-            char *new_buffer = arena_xrealloc(*(buffer_ptr), *(buf_cap_ptr), new_cap); \
+            /* Allocate new buffer with larger capacity */ \
+            char *new_buffer = arena_push_array_safe(&g_arena, char, new_cap); \
+            /* Copy existing content if any */ \
+            if (*(buffer_ptr) && *(buf_len_ptr) > 0) { \
+                memcpy(new_buffer, *(buffer_ptr), *(buf_len_ptr)); \
+            } \
             if (!new_buffer) {                                           \
                 *(buffer_ptr) = NULL;                                    \
                 *(buf_cap_ptr) = 0;                                      \
@@ -264,9 +246,9 @@ char *get_executable_dir(void)
     /* Get the directory component */
     char *dir = dirname(resolved_path);  /* modifies in-place */
     
-    /* Use arena_push_size to allocate memory from the arena */
+    /* Use arena.h functions to allocate memory from the arena */
     size_t dir_len = strlen(dir) + 1;
-    cached = arena_push_size(&g_arena, dir_len, __alignof__(char));
+    cached = arena_push_array(&g_arena, char, dir_len);
     if (cached) {
         memcpy(cached, dir, dir_len);
     }
@@ -285,7 +267,7 @@ static bool store_kv(ConfigSettings *s, const char *k, const char *v) {
         s->editor_comments_set = true;
     } else if (strcmp(k, "system_prompt") == 0) {
         /* Replace previous if any; arena allocations persist until cleanup */
-        s->system_prompt_source = arena_xstrdup(v);
+        s->system_prompt_source = arena_strdup_safe(&g_arena, v);
         if (!s->system_prompt_source) {
             errno = ENOMEM;
             return false; /* Allocation failed */
@@ -461,7 +443,7 @@ void add_to_processed_files(const char *filepath) {
     assert(num_processed_files < MAX_FILES);
     
     if (num_processed_files < MAX_FILES) {
-        processed_files[num_processed_files] = arena_xstrdup(filepath);
+        processed_files[num_processed_files] = arena_strdup_safe(&g_arena, filepath);
         /* Check allocation immediately and handle failure gracefully. */
         /* Using fatal() normalizes the error path for OOM conditions. */
         if (!processed_files[num_processed_files]) {
@@ -593,11 +575,11 @@ int compare_file_paths(const void *a, const void *b) {
  */
 char *find_common_prefix(void) {
     if (file_tree_count == 0) {
-        return arena_xstrdup(".");
+        return arena_strdup_safe(&g_arena, ".");
     }
     
     /* Start with the first file's directory */
-    char *prefix = arena_xstrdup(file_tree[0].path);
+    char *prefix = arena_strdup_safe(&g_arena, file_tree[0].path);
     char *last_slash = NULL;
     
     /* Find directory part */
@@ -606,7 +588,7 @@ char *find_common_prefix(void) {
         *last_slash = '\0';
     } else {
         /* If no slash, use current directory */
-        return arena_xstrdup(".");
+        return arena_strdup_safe(&g_arena, ".");
     }
     
     /* Check each file to find common prefix */
@@ -630,13 +612,13 @@ char *find_common_prefix(void) {
             *last_slash = '\0';
         } else {
             /* If no common directory, use current directory */
-            return arena_xstrdup(".");
+            return arena_strdup_safe(&g_arena, ".");
         }
     }
     
     /* If prefix ends up empty, use current directory */
     if (prefix[0] == '\0') {
-        return arena_xstrdup(".");
+        return arena_strdup_safe(&g_arena, ".");
     }
     
     return prefix;
@@ -791,12 +773,12 @@ void generate_file_tree(void) {
         /* If path starts with common prefix, skip it for relative path */
         if (strncmp(path, common_prefix, prefix_len) == 0) {
             if (path[prefix_len] == '/') {
-                file_tree[i].relative_path = arena_xstrdup(path + prefix_len + 1);
+                file_tree[i].relative_path = arena_strdup_safe(&g_arena, path + prefix_len + 1);
             } else {
-                file_tree[i].relative_path = arena_xstrdup(path + prefix_len);
+                file_tree[i].relative_path = arena_strdup_safe(&g_arena, path + prefix_len);
             }
         } else {
-            file_tree[i].relative_path = arena_xstrdup(path);
+            file_tree[i].relative_path = arena_strdup_safe(&g_arena, path);
         }
         
         /* Add to paths array for tree building */
@@ -1052,7 +1034,7 @@ bool process_stdin_content(void) {
 
             /* Allocate buffer and read the full content */
             rewind(content_file_read); /* Rewind again before full read */
-            stdin_content_buffer = arena_xalloc(STDIN_BUFFER_SIZE);
+            stdin_content_buffer = arena_push_array_safe(&g_arena, char, STDIN_BUFFER_SIZE);
             if (!stdin_content_buffer) {
                 /* Post-condition: Allocation failed */
                 assert(stdin_content_buffer == NULL);
@@ -1146,7 +1128,7 @@ void output_file_callback(const char *name, const char *type, const char *conten
     /* Store the special file information */
     strcpy(special_files[num_special_files].filename, name);
     strcpy(special_files[num_special_files].type, type);
-    special_files[num_special_files].content = arena_xstrdup(content);
+    special_files[num_special_files].content = arena_strdup_safe(&g_arena, content);
     
     /* Invariant: memory was allocated successfully */
     assert(special_files[num_special_files].content != NULL);
@@ -1158,7 +1140,7 @@ void output_file_callback(const char *name, const char *type, const char *conten
     
     /* Add to processed files list for content output and tree display */
     if (num_processed_files < MAX_FILES) {
-        processed_files[num_processed_files] = arena_xstrdup(name);
+        processed_files[num_processed_files] = arena_strdup_safe(&g_arena, name);
         /* Check allocation immediately */
         if (!processed_files[num_processed_files]) {
             fatal("Out of memory duplicating special file name: %s", name);
@@ -1193,7 +1175,7 @@ bool collect_file(const char *filepath) {
     // lstat check is slightly redundant as caller likely did it, but safe.
     if (lstat(filepath, &statbuf) == 0 && S_ISREG(statbuf.st_mode) && access(filepath, R_OK) == 0) {
          if (num_processed_files < MAX_FILES) {
-             processed_files[num_processed_files] = arena_xstrdup(filepath);
+             processed_files[num_processed_files] = arena_strdup_safe(&g_arena, filepath);
              /* Check allocation immediately */
              if (!processed_files[num_processed_files]) {
                  /* Use fatal for consistency on OOM */
@@ -1374,7 +1356,7 @@ static char *dup_if_readable(const char *path) {
     struct stat sb;
     if (!path || *path == '\0') return NULL;
     if (stat(path, &sb) == 0 && S_ISREG(sb.st_mode) && access(path, R_OK) == 0) {
-        char *p = arena_xstrdup(path);
+        char *p = arena_strdup_safe(&g_arena, path);
         if (!p) perror("strdup"); /* propagate NULL on OOM */
         return p;
     }
@@ -1621,7 +1603,7 @@ static bool finalize_multiline_block(ConfigSettings *s,
     /* ---------- Trim common indentation ---------- */
     if (min_indent != SIZE_MAX &&
         min_indent >= INDENT_TRIM_THRESHOLD) {
-        char *trimmed = arena_xalloc(len + 1); /* Max possible size */
+        char *trimmed = arena_push_array_safe(&g_arena, char, len + 1); /* Max possible size */
         if (!trimmed) { arena_set_mark(&g_arena, mark); errno = ENOMEM; *buf_ptr = NULL; *len_ptr = 0; return false; }
 
         size_t src = 0, dst = 0;
@@ -1744,7 +1726,7 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
             /* Check for multiline start: key = (nothing follows) */
             if (*value == '\0' && !collecting_multiline) {
                 collecting_multiline = true;
-                pending_key = arena_xstrdup(key);
+                pending_key = arena_strdup_safe(&g_arena, key);
                 if (!pending_key) { fclose(file); return false; /* OOM */ }
 
                 /* Reset buffer */
@@ -1944,7 +1926,7 @@ static void handle_command_arg(const char *arg) {
                 fatal("Cannot open or read instruction file '%s': %s", arg + 1, strerror(errno));
         }
     } else {
-        user_instructions = arena_xstrdup(arg);
+        user_instructions = arena_strdup_safe(&g_arena, arg);
         if (!user_instructions) fatal("Out of memory duplicating -c argument");
     }
 }
@@ -1978,7 +1960,7 @@ static void handle_system_arg(const char *arg) {
         }
     } else {
         /* Case 3: -s with an argument not starting with '@' -> Treat as inline text */
-        system_instructions = arena_xstrdup(arg);
+        system_instructions = arena_strdup_safe(&g_arena, arg);
         if (!system_instructions) fatal("Out of memory duplicating -s argument");
         s_flag_used = true; /* Track that CLI flag was used */
     }
@@ -2077,7 +2059,7 @@ int main(int argc, char *argv[]) {
                     
                     if (*optarg) { // Make sure there's still something after skipping '='
                         // Split the pattern string by commas
-                        char *pattern_copy = arena_xstrdup(optarg);
+                        char *pattern_copy = arena_strdup_safe(&g_arena, optarg);
                         if (!pattern_copy) {
                             fprintf(stderr, "Error: Failed to allocate memory for pattern\n");
                         } else {
@@ -2272,7 +2254,7 @@ int main(int argc, char *argv[]) {
                         }
                     }
                 } else if (source) { /* Inline string */
-                    new_prompt = arena_xstrdup(source);
+                    new_prompt = arena_strdup_safe(&g_arena, source);
                     load_attempted = true; /* We attempted to load from inline text */
                     if (!new_prompt) {
                         fprintf(stderr, "Warning: Out of memory duplicating system prompt from config. Ignoring.\n");
@@ -2432,7 +2414,7 @@ int main(int argc, char *argv[]) {
         /* Use the pattern-based approach to generate the codemap */
         if (generate_codemap_from_patterns(&g_codemap, &g_arena, respect_gitignore)) {
             /* Generate codemap and write to temp_file */
-            char *buffer = arena_push_array(&g_arena, char, 1024 * 1024); /* 1MB buffer */
+            char *buffer = arena_push_array_safe(&g_arena, char, 1024 * 1024); /* 1MB buffer */
             if (buffer) {
                 size_t pos = 0;
                 codemap_generate(&g_codemap, buffer, &pos, 1024 * 1024);

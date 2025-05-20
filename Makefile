@@ -71,10 +71,10 @@ tests/test_stdin: tests/test_stdin.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 tests/test_packs: tests/test_packs.c packs.c arena.c
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -DTEST_BUILD -o $@ $^
 
 tests/test_extension_mapping: tests/test_extension_mapping.c packs.c arena.c
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -DTEST_BUILD -o $@ $^
 
 # Build test_js_pack with tree-sitter JavaScript statically linked
 tests/test_js_pack: tests/test_js_pack.c packs/javascript/js_pack.c arena.c
@@ -94,7 +94,7 @@ tests/test_make_pack: tests/test_make_pack.c
 
 # Build test_codemap_patterns
 tests/test_codemap_patterns: tests/test_codemap_patterns.c codemap.c packs.c arena.c gitignore.c
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -DTEST_BUILD -o $@ $^
 
 
 test: $(TARGET) $(TEST_TARGETS)
