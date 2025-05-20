@@ -18,6 +18,7 @@ static inline void debug_printf(const char *fmt, ...) {
         "[DEBUG] Initializing language pack: ",
         "[DEBUG] Cleaning up language pack: ",
         "[DEBUG] Parsing file with language pack: ",
+        /* Don't suppress [PACK] messages - we want to see them in normal mode */
         "Successfully extracted",
         "Codemap option enabled",
         "Generating codemap",
