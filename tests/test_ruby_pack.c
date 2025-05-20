@@ -7,6 +7,10 @@
 
 #include "../codemap.h"
 #include "../arena.h"
+#include "../debug.h"
+
+/* Define debug_mode for tests */
+bool debug_mode = false;
 
 #define TEST_RUBY_FILE "/Users/kennyfrc/Documents/code/fun/llm_ctx/packs/ruby/test.rb"
 
@@ -151,7 +155,7 @@ TEST(test_parse_ruby_file) {
 }
 
 int main(void) {
-    printf("Running Ruby language pack tests\n");
+    printf("Running language pack tests: ruby\n");
     printf("===================================\n");
     
     RUN_TEST(test_ruby_pack_functions);

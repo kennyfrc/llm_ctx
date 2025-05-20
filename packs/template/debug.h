@@ -14,15 +14,9 @@
 static inline void debug_printf(const char *fmt, ...) {
     /* These are messages we want to ALWAYS suppress */
     const char *always_suppress[] = {
-        "[DEBUG] Initializing JavaScript language pack",
-        "[DEBUG] Initializing Ruby language pack",
-        "[DEBUG] Initializing template language pack",
-        "[DEBUG] Cleaning up JavaScript language pack",
-        "[DEBUG] Cleaning up Ruby language pack",
-        "[DEBUG] Cleaning up template language pack",
-        "[DEBUG] Parsing JavaScript/TypeScript file",
-        "[DEBUG] Parsing Ruby file", 
-        "[DEBUG] Parsing file with tree-sitter"
+        "[DEBUG] Initializing language pack: ",
+        "[DEBUG] Cleaning up language pack: ",
+        "[DEBUG] Parsing file with language pack: "
     };
     
     /* Check if this message should be suppressed completely */
@@ -33,21 +27,6 @@ static inline void debug_printf(const char *fmt, ...) {
     }
     
     /* Only other messages get through to here */
-    va_list ap;
-    va_start(ap, fmt);
-    
-    /* Print message to stderr */
-    vfprintf(stderr, fmt, ap);
-    
-    /* Ensure a newline terminates the message if needed */
-    if (fmt[0] != '\0' && fmt[strlen(fmt) - 1] != '\n') {
-        fputc('\n', stderr);
-    }
-    
-    va_end(ap);
-}
-    
-    /* If we get here, either it's a message we always want to show */
     va_list ap;
     va_start(ap, fmt);
     

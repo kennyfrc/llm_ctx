@@ -11,7 +11,7 @@ OBJS = parser.so test_pack
 # Default target
 all: $(OBJS)
 
-# Build the JavaScript language pack with tree-sitter statically linked
+# Build the javascript language pack with tree-sitter statically linked
 parser.so: js_pack.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< $(TS_JS_LIB) -L/opt/homebrew/lib -ltree-sitter
 
@@ -23,7 +23,7 @@ test_pack: test_pack.c js_pack.c
 clean:
 	rm -f $(OBJS)
 
-# Test the JavaScript language pack
+# Test the javascript language pack
 test: test_pack
 	@echo "Running JavaScript pack tests..."
 	@./test_pack

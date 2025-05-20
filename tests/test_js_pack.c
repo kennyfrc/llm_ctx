@@ -7,6 +7,10 @@
 
 #include "../codemap.h"
 #include "../arena.h"
+#include "../debug.h"
+
+/* Define debug_mode for tests */
+bool debug_mode = false;
 
 #define TEST_JS_FILE "/Users/kennyfrc/Documents/code/fun/llm_ctx/packs/javascript/test.js"
 #define TEST_TS_FILE "/Users/kennyfrc/Documents/code/fun/llm_ctx/packs/javascript/test.ts"
@@ -255,7 +259,7 @@ TEST(test_parse_ts_file) {
 }
 
 int main(void) {
-    printf("Running JavaScript language pack tests\n");
+    printf("Running language pack tests: javascript\n");
     printf("=====================================\n");
     
     RUN_TEST(test_js_pack_functions);

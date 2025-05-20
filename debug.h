@@ -15,12 +15,9 @@ extern bool debug_mode;
 static inline void debug_printf(const char *fmt, ...) {
     /* These are messages we want to suppress in non-debug mode */
     const char *suppress_msgs[] = {
-        "Initializing JavaScript language pack",
-        "Initializing Ruby language pack",
-        "Cleaning up JavaScript language pack",
-        "Cleaning up Ruby language pack",
-        "Parsing JavaScript/TypeScript file",
-        "Parsing Ruby file",
+        "[DEBUG] Initializing language pack: ",
+        "[DEBUG] Cleaning up language pack: ",
+        "[DEBUG] Parsing file with language pack: ",
         "Successfully extracted",
         "Codemap option enabled",
         "Generating codemap",

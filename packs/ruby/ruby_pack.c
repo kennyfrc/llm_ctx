@@ -273,7 +273,7 @@ static void process_node(TSNode node, const char *source, CodemapFile *file, Are
  * Initialize the Ruby pack
  */
 bool initialize(void) {
-    debug_printf("[DEBUG] Initializing Ruby language pack with tree-sitter...");
+    debug_printf("[DEBUG] Initializing language pack: ruby");
     
     // We could do more initialization here if needed
     return true;
@@ -283,7 +283,7 @@ bool initialize(void) {
  * Clean up resources
  */
 void cleanup(void) {
-    debug_printf("[DEBUG] Cleaning up Ruby language pack resources...");
+    debug_printf("[DEBUG] Cleaning up language pack: ruby");
     
     // No resources to clean up in this implementation
 }
@@ -307,7 +307,7 @@ bool parse_file(const char *path, const char *source, size_t source_len, Codemap
         return false;
     }
     
-    debug_printf("[DEBUG] Parsing Ruby file with tree-sitter: %s", path);
+    debug_printf("[DEBUG] Parsing file with language pack: ruby, path: %s", path);
     
     // Create a tree-sitter parser
     TSParser *parser = ts_parser_new();

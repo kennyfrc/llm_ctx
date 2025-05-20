@@ -1,4 +1,4 @@
-# Makefile for Ruby language pack
+# Makefile for ruby language pack
 CC = gcc
 CFLAGS = -Wall -Wextra -fPIC -shared
 
@@ -13,7 +13,7 @@ clean:
 	rm -f parser.so
 
 test: parser.so
-	@echo "Testing Ruby language pack..."
-	@echo "Create a test_ruby_pack tool to validate the Ruby language pack."
+	@echo "Testing language pack: ruby..."
+	@echo "Create a test_ruby_pack tool to validate the ruby language pack."
 
 .PHONY: clean test

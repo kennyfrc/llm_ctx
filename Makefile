@@ -114,9 +114,9 @@ test: $(TARGET) $(TEST_TARGETS)
 	@./tests/test_packs || true
 	@echo "\nRunning extension mapping tests..."
 	@./tests/test_extension_mapping || true
-	@echo "\nRunning JavaScript language pack tests..."
+	@echo "\nRunning language pack tests: javascript..."
 	@./tests/test_js_pack || true
-	@echo "\nRunning Ruby language pack tests..."
+	@echo "\nRunning language pack tests: ruby..."
 	@./tests/test_ruby_pack || true
 	@echo "\nRunning pack info CLI tests..."
 	@./tests/test_pack_info || true

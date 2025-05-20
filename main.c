@@ -2379,15 +2379,7 @@ int main(int argc, char *argv[]) {
     /* Generate and add file tree */
     generate_file_tree();
     
-    /* Output content of each processed file */
-    for (int i = 0; i < num_processed_files; i++) {
-        output_file_content(processed_files[i], temp_file);
-    }
-    
-    /* Add closing file_context tag */
-    if (wrote_file_context) fprintf(temp_file, "</file_context>\n");
-    
-    /* Generate and output codemap if requested */
+    /* Generate and output codemap first (before file context) if requested */
     if (want_codemap) {
         debug_printf("Generating codemap...");
         
@@ -2461,6 +2453,14 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+    
+    /* Output content of each processed file */
+    for (int i = 0; i < num_processed_files; i++) {
+        output_file_content(processed_files[i], temp_file);
+    }
+    
+    /* Add closing file_context tag */
+    if (wrote_file_context) fprintf(temp_file, "</file_context>\n");
     
     /* Flush and close the temp file */
     fclose(temp_file);

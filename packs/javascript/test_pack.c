@@ -80,7 +80,7 @@ const char *TS_TEST_CODE =
 bool test_js_pack(void) {
     bool success = true;
     
-    printf("Testing JavaScript language pack...\n");
+    printf("Testing language pack: javascript\n");
     
     // Initialize the pack
     if (!initialize()) {

@@ -8,6 +8,10 @@
 #include "../packs.h"
 #include "../arena.h"
 #include "../codemap.h"
+#include "../debug.h"
+
+/* Define debug_mode for tests */
+bool debug_mode = false;
 
 /**
  * Test if a given language pack is available

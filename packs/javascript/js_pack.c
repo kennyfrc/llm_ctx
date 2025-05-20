@@ -260,7 +260,7 @@ static void process_node(TSNode node, const char *source, CodemapFile *file, Are
  * Initialize the JavaScript pack
  */
 bool initialize(void) {
-    debug_printf("[DEBUG] Initializing JavaScript language pack with tree-sitter...");
+    debug_printf("[DEBUG] Initializing language pack: javascript");
     
     // We could do more initialization here if needed
     return true;
@@ -270,7 +270,7 @@ bool initialize(void) {
  * Clean up resources
  */
 void cleanup(void) {
-    debug_printf("[DEBUG] Cleaning up JavaScript language pack resources...");
+    debug_printf("[DEBUG] Cleaning up language pack: javascript");
     
     // No resources to clean up in this implementation
 }
@@ -294,7 +294,7 @@ bool parse_file(const char *path, const char *source, size_t source_len, Codemap
         return false;
     }
     
-    debug_printf("[DEBUG] Parsing JavaScript/TypeScript file with tree-sitter: %s", path);
+    debug_printf("[DEBUG] Parsing file with language pack: javascript, path: %s", path);
     
     // Create a tree-sitter parser
     TSParser *parser = ts_parser_new();

@@ -7,6 +7,10 @@
 #include "../arena.h"
 #include "../packs.h"
 #include "../codemap.h"
+#include "../debug.h"
+
+/* Define debug_mode for tests */
+bool debug_mode = false;
 
 int main(void) {
     /* Initialize arena for memory allocations */

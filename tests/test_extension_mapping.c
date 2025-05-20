@@ -6,6 +6,10 @@
 
 #include "../arena.h"
 #include "../packs.h"
+#include "../debug.h"
+
+/* Define debug_mode for tests */
+bool debug_mode = false;
 
 /**
  * Test file extension to language pack mapping
