@@ -222,12 +222,15 @@ static char *slurp_file(const char *path) {
  * shipped binary, enabling “copy-anywhere” workflows without polluting
  * $HOME or /etc.  Falls back silently if platform support is missing.
  */
-static char *get_executable_dir(void)
+/* Made non-static so it can be used by packs.c to locate language packs */
+char *get_executable_dir(void)
 {
     static char *cached = NULL;
     if (cached) return cached;
 
     char pathbuf[PATH_MAX] = {0};
+    char resolved_path[PATH_MAX] = {0};
+    
 #ifdef __linux__
     ssize_t len = readlink("/proc/self/exe", pathbuf, sizeof(pathbuf) - 1);
     if (len <= 0) return NULL; /* Error or empty path */
@@ -236,15 +239,38 @@ static char *get_executable_dir(void)
     uint32_t size = sizeof(pathbuf);
     if (_NSGetExecutablePath(pathbuf, &size) != 0)
         return NULL;            /* buffer too small – very unlikely */
-    /* Use realpath to resolve symlinks, ., .. components */
-    if (!realpath(pathbuf, pathbuf)) return NULL;
 #else
-    /* POSIX fallback: Use argv[0] passed to realpath */
-    if (!g_argv0 || !realpath(g_argv0, pathbuf)) return NULL;
+    /* POSIX fallback: Use argv[0] */
+    if (!g_argv0) return NULL;
+    
+    /* If argv[0] contains a slash, use it directly */
+    if (strchr(g_argv0, '/')) {
+        strncpy(pathbuf, g_argv0, sizeof(pathbuf) - 1);
+        pathbuf[sizeof(pathbuf) - 1] = '\0';
+    } else {
+        /* Otherwise, search in PATH */
+        fprintf(stderr, "Debug: No absolute path in argv[0], using fallback\n");
+        return NULL;
+    }
 #endif
 
-    char *dir = dirname(pathbuf);          /* modifies in-place */
-    cached   = arena_xstrdup(dir);                /* persist after function returns */
+    /* Resolve symlinks, ., and .. components to get the actual binary location */
+    if (!realpath(pathbuf, resolved_path)) {
+        fprintf(stderr, "Debug: Failed to resolve real path for '%s': %s\n", 
+                pathbuf, strerror(errno));
+        return NULL;
+    }
+
+    /* Get the directory component */
+    char *dir = dirname(resolved_path);  /* modifies in-place */
+    
+    /* Use arena_push_size to allocate memory from the arena */
+    size_t dir_len = strlen(dir) + 1;
+    cached = arena_push_size(&g_arena, dir_len, __alignof__(char));
+    if (cached) {
+        memcpy(cached, dir, dir_len);
+    }
+    
     return cached;
 }
 

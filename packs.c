@@ -16,6 +16,9 @@
 /* Global pack registry */
 PackRegistry g_pack_registry = {0};
 
+/* Forward declaration for executable directory function from main.c */
+extern char *get_executable_dir(void);
+
 /**
  * Check if a directory exists and is accessible
  */
@@ -45,13 +48,46 @@ bool initialize_pack_registry(PackRegistry *registry, Arena *arena) {
     registry->extension_map = NULL;
     registry->extension_map_size = 0;
     
-    // Try current directory first
-    const char *packs_dir = "./packs";
+    // Possible locations for packs directory
+    const char *packs_dir_options[2] = {
+        "./packs",  // Current directory first
+        NULL       // Executable directory (filled in below)
+    };
     
-    // Check if packs directory exists
-    if (!directory_exists(packs_dir)) {
-        fprintf(stderr, "Warning: Packs directory not found at %s\n", packs_dir);
+    // Get executable directory path and construct packs path
+    char exe_packs_path[4096] = {0};
+    char *exe_dir = get_executable_dir();
+    if (exe_dir) {
+        snprintf(exe_packs_path, sizeof(exe_packs_path), "%s/packs", exe_dir);
+        packs_dir_options[1] = exe_packs_path;
+    }
+    
+    // Try each location in order
+    const char *packs_dir = NULL;
+    for (int i = 0; i < 2; i++) {
+        if (packs_dir_options[i] && directory_exists(packs_dir_options[i])) {
+            packs_dir = packs_dir_options[i];
+            break;
+        }
+    }
+    
+    // If no packs directory found, return failure
+    if (!packs_dir) {
+        fprintf(stderr, "Warning: Packs directory not found at ./packs or %s\n", 
+                exe_packs_path[0] ? exe_packs_path : "executable directory");
         return false;
+    }
+    
+    /* Show packs directory in debug mode */
+    if (debug_mode) {
+        fprintf(stderr, "Debug: Using packs directory: %s\n", packs_dir);
+        
+        /* Print exe_dir for debugging */
+        if (exe_dir) {
+            fprintf(stderr, "Debug: Executable directory: %s\n", exe_dir);
+        } else {
+            fprintf(stderr, "Debug: Could not determine executable directory\n");
+        }
     }
     
     // Open the packs directory
