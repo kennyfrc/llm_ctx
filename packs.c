@@ -6,10 +6,12 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <dlfcn.h>  /* For dynamic library loading */
+#include <unistd.h> /* For dup, dup2, STDOUT_FILENO */
 
 #include "packs.h"
 #include "arena.h"
 #include "codemap.h"
+#include "debug.h"
 
 /* Global pack registry */
 PackRegistry g_pack_registry = {0};
@@ -326,7 +328,44 @@ size_t load_language_packs(PackRegistry *registry) {
         }
         
         // Initialize the language parser
-        if (!pack->initialize()) {
+        /* In non-debug mode, we will suppress the console output */
+        int saved_stdout = -1;
+        int saved_stderr = -1;
+        FILE *null_file = NULL;
+        
+        if (!debug_mode) {
+            /* Redirect stdout and stderr to /dev/null to suppress output */
+            fflush(stdout);
+            fflush(stderr);
+            saved_stdout = dup(STDOUT_FILENO);
+            saved_stderr = dup(STDERR_FILENO);
+            null_file = fopen("/dev/null", "w");
+            if (null_file != NULL) {
+                dup2(fileno(null_file), STDOUT_FILENO);
+                dup2(fileno(null_file), STDERR_FILENO);
+                fclose(null_file);
+            }
+        }
+        
+        /* Call initialize function */
+        bool init_result = pack->initialize();
+        
+        /* Restore stdout and stderr if we redirected them */
+        if (!debug_mode) {
+            if (saved_stdout >= 0) {
+                fflush(stdout);
+                dup2(saved_stdout, STDOUT_FILENO);
+                close(saved_stdout);
+            }
+            if (saved_stderr >= 0) {
+                fflush(stderr);
+                dup2(saved_stderr, STDERR_FILENO);
+                close(saved_stderr);
+            }
+        }
+        
+        /* Check result */
+        if (!init_result) {
             fprintf(stderr, "Warning: Failed to initialize language pack '%s'\n", pack->name);
             dlclose(pack->handle);
             pack->handle = NULL;
@@ -353,7 +392,41 @@ void cleanup_pack_registry(PackRegistry *registry) {
         
         // Call pack cleanup function if available
         if (pack->cleanup) {
+            /* In non-debug mode, suppress console output */
+            int saved_stdout = -1;
+            int saved_stderr = -1;
+            FILE *null_file = NULL;
+            
+            if (!debug_mode) {
+                /* Redirect stdout and stderr to /dev/null */
+                fflush(stdout);
+                fflush(stderr);
+                saved_stdout = dup(STDOUT_FILENO);
+                saved_stderr = dup(STDERR_FILENO);
+                null_file = fopen("/dev/null", "w");
+                if (null_file != NULL) {
+                    dup2(fileno(null_file), STDOUT_FILENO);
+                    dup2(fileno(null_file), STDERR_FILENO);
+                    fclose(null_file);
+                }
+            }
+            
+            /* Call cleanup function */
             pack->cleanup();
+            
+            /* Restore stdout and stderr if redirected */
+            if (!debug_mode) {
+                if (saved_stdout >= 0) {
+                    fflush(stdout);
+                    dup2(saved_stdout, STDOUT_FILENO);
+                    close(saved_stdout);
+                }
+                if (saved_stderr >= 0) {
+                    fflush(stderr);
+                    dup2(saved_stderr, STDERR_FILENO);
+                    close(saved_stderr);
+                }
+            }
         }
         
         // Close dynamic library handle if open

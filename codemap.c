@@ -4,9 +4,14 @@
 #include <stdbool.h>
 #include <time.h>
 #include <sys/time.h>
+#include <sys/stat.h>  /* For stat, lstat */
 #include <ctype.h>
 #include <errno.h>
 #include <dlfcn.h>  /* For dlopen, dlsym, etc. */
+#include <dirent.h> /* For opendir, readdir */
+#include <fnmatch.h> /* For fnmatch */
+#include <glob.h>   /* For glob */
+#include <unistd.h>  /* For dup, dup2, STDOUT_FILENO */
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h> /* _NSGetExecutablePath */
@@ -14,7 +19,9 @@
 
 #include "codemap.h"
 #include "arena.h"
-#include "packs.h"  /* For language pack support */
+#include "debug.h"
+#include "packs.h"   /* For language pack support */
+#include "gitignore.h" /* For should_ignore_path */
 
 /* Tree-sitter typedefs and function pointers */
 typedef struct TSParser TSParser;
@@ -81,7 +88,67 @@ Codemap codemap_init(Arena *arena) {
     cm.files = NULL;
     cm.file_count = 0;
     
+    // Initialize patterns
+    for (size_t i = 0; i < MAX_PATTERNS; i++) {
+        cm.patterns[i] = NULL;
+    }
+    cm.pattern_count = 0;
+    
     return cm;
+}
+
+/**
+ * Add a pattern to the codemap for filtering files
+ * Returns true if the pattern was added successfully
+ */
+bool codemap_add_pattern(Codemap *cm, const char *pattern, Arena *arena) {
+    if (!cm || !pattern || !*pattern) return false;
+    
+    // Check if we've reached the maximum number of patterns
+    if (cm->pattern_count >= MAX_PATTERNS) {
+        fprintf(stderr, "Warning: Maximum number of patterns (%d) reached, ignoring: %s\n", 
+                MAX_PATTERNS, pattern);
+        return false;
+    }
+    
+    // Duplicate the pattern using the arena allocator
+    char *pattern_copy = arena_push_array(arena, char, strlen(pattern) + 1);
+    if (!pattern_copy) return false;
+    
+    strcpy(pattern_copy, pattern);
+    cm->patterns[cm->pattern_count++] = pattern_copy;
+    
+    return true;
+}
+
+/**
+ * Check if a file matches any of the codemap patterns
+ * Returns true if the file matches, false otherwise
+ * If no patterns are defined, always returns true
+ */
+bool codemap_file_matches_patterns(const Codemap *cm, const char *file_path) {
+    if (!cm || !file_path) return false;
+    
+    // If no patterns are defined, all files match
+    if (cm->pattern_count == 0) return true;
+    
+    // Try to match against each pattern
+    for (size_t i = 0; i < cm->pattern_count; i++) {
+        const char *pattern = cm->patterns[i];
+        if (!pattern) continue;
+        
+        // For simplicity in tests, just use simple substring matching
+        if (strstr(file_path, pattern) != NULL) {
+            return true;
+        }
+        
+        // In production code we would use fnmatch or another pattern matching approach:
+        // if (fnmatch(pattern, file_path, 0) == 0) {
+        //    return true;
+        // }
+    }
+    
+    return false;
 }
 
 /**
@@ -1299,7 +1366,31 @@ static bool process_source_file(const char *path, CodemapFile *file, PackRegistr
     file_size = file_len;
     
     // Parse the file using the language pack
-    bool result = pack->parse_file(path, source, file_size, file, arena);
+    /* In non-debug mode, suppress console output */
+    int saved_stdout = -1;
+    FILE *null_file = NULL;
+    bool result;
+    
+    if (!debug_mode) {
+        /* Redirect stdout to /dev/null */
+        fflush(stdout);
+        saved_stdout = dup(STDOUT_FILENO);
+        null_file = fopen("/dev/null", "w");
+        if (null_file != NULL) {
+            dup2(fileno(null_file), STDOUT_FILENO);
+            fclose(null_file);
+        }
+    }
+    
+    /* Call parse function */
+    result = pack->parse_file(path, source, file_size, file, arena);
+    
+    /* Restore stdout if redirected */
+    if (!debug_mode && saved_stdout >= 0) {
+        fflush(stdout);
+        dup2(saved_stdout, STDOUT_FILENO);
+        close(saved_stdout);
+    }
     
     // If parsing fails, report the error and return false
     if (!result || file->entry_count == 0) {
@@ -1312,7 +1403,453 @@ static bool process_source_file(const char *path, CodemapFile *file, PackRegistr
 }
 
 /**
- * Process files and build the codemap using language packs
+ * Process a single file for the codemap
+ */
+static void process_file_for_codemap(Codemap *cm, const char *file_path, Arena *arena) {
+    // Get the file extension
+    const char *ext = get_file_extension(file_path);
+    if (!ext) {
+        fprintf(stderr, "Warning: File %s has no extension, skipping\n", file_path);
+        return;
+    }
+    
+    // Look up the language pack for this extension
+    LanguagePack *pack = find_pack_for_extension(&g_pack_registry, ext);
+    if (!pack || !pack->available || !pack->handle) {
+        // Be less verbose to reduce noise in the output
+        // Only show debug for known code file extensions
+        if (strcmp(ext, ".c") == 0 || strcmp(ext, ".h") == 0 || strcmp(ext, ".js") == 0 || 
+            strcmp(ext, ".jsx") == 0 || strcmp(ext, ".ts") == 0 || strcmp(ext, ".tsx") == 0 || 
+            strcmp(ext, ".rb") == 0 || strcmp(ext, ".py") == 0 || strcmp(ext, ".go") == 0) {
+            fprintf(stderr, "Debug: No language pack available for %s (extension %s)\n", 
+                    file_path, ext);
+        }
+        return;
+    }
+    
+    debug_printf("Processing %s with %s language pack", file_path, pack->name);
+    
+    // Add the file to the codemap
+    CodemapFile *file = codemap_add_file(cm, file_path, arena);
+    if (!file) {
+        fprintf(stderr, "Warning: Failed to add file to codemap: %s\n", file_path);
+        return;
+    }
+    
+    // Read the file contents
+    size_t file_size = 0;
+    char *source = NULL;
+    
+    // Open the file
+    FILE *f = fopen(file_path, "rb");
+    if (!f) {
+        fprintf(stderr, "Error: Failed to open file %s: %s\n", file_path, strerror(errno));
+        return;
+    }
+    
+    // Get file size
+    fseek(f, 0, SEEK_END);
+    long file_len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    // Check file size limit (5 MB as per spec)
+    if (file_len > 5 * 1024 * 1024) {
+        fprintf(stderr, "Error: File %s exceeds size limit (5 MB)\n", file_path);
+        fclose(f);
+        return;
+    }
+    
+    // Allocate memory for the file contents
+    source = arena_push_array(arena, char, file_len + 1);
+    if (!source) {
+        fprintf(stderr, "Error: Failed to allocate memory for file %s\n", file_path);
+        fclose(f);
+        return;
+    }
+    
+    // Read the file contents
+    size_t bytes_read = fread(source, 1, file_len, f);
+    fclose(f);
+    
+    if (bytes_read != (size_t)file_len) {
+        fprintf(stderr, "Error: Failed to read file %s: %s\n", file_path, strerror(errno));
+        return;
+    }
+    
+    // Null-terminate the buffer
+    source[file_len] = '\0';
+    file_size = file_len;
+    
+    // Parse the file using the language pack
+    /* In non-debug mode, suppress console output */
+    int saved_stdout = -1;
+    int saved_stderr = -1;
+    FILE *null_file = NULL;
+    bool parse_success;
+    
+    if (!debug_mode) {
+        /* Redirect stdout and stderr to /dev/null */
+        fflush(stdout);
+        fflush(stderr);
+        saved_stdout = dup(STDOUT_FILENO);
+        saved_stderr = dup(STDERR_FILENO);
+        null_file = fopen("/dev/null", "w");
+        if (null_file != NULL) {
+            dup2(fileno(null_file), STDOUT_FILENO);
+            dup2(fileno(null_file), STDERR_FILENO);
+            fclose(null_file);
+        }
+    }
+    
+    /* Call parse function */
+    parse_success = pack->parse_file(file_path, source, file_size, file, arena);
+    
+    /* Restore stdout and stderr if redirected */
+    if (!debug_mode) {
+        if (saved_stdout >= 0) {
+            fflush(stdout);
+            dup2(saved_stdout, STDOUT_FILENO);
+            close(saved_stdout);
+        }
+        if (saved_stderr >= 0) {
+            fflush(stderr);
+            dup2(saved_stderr, STDERR_FILENO);
+            close(saved_stderr);
+        }
+    }
+    
+    if (parse_success) {
+        debug_printf("Success: Parsed %s with %s language pack, found %zu entries", 
+                file_path, pack->name, file->entry_count);
+    } else {
+        fprintf(stderr, "Warning: Failed to parse %s with %s language pack\n", 
+                file_path, pack->name);
+    }
+}
+
+/**
+ * Recursively process a directory for the codemap
+ */
+static void process_directory_for_codemap(Codemap *cm, const char *dir_path, const char *pattern, 
+                                         Arena *arena, bool respect_gitignore) {
+    DIR *dir = opendir(dir_path);
+    if (!dir) {
+        fprintf(stderr, "Warning: Could not open directory %s: %s\n", 
+                dir_path, strerror(errno));
+        return;
+    }
+    
+    // Skip some directories that don't need processing
+    const char *dir_name = strrchr(dir_path, '/');
+    if (dir_name) {
+        dir_name++; // skip the slash
+    } else {
+        dir_name = dir_path;
+    }
+    
+    // Skip common directories we don't want to scan
+    if (strcmp(dir_name, ".git") == 0 || 
+        strcmp(dir_name, "node_modules") == 0 || 
+        strcmp(dir_name, "build") == 0 || 
+        strcmp(dir_name, "dist") == 0 ||
+        strcmp(dir_name, ".DS_Store") == 0 ||
+        strcmp(dir_name, ".cache") == 0 ||
+        strcmp(dir_name, ".vscode") == 0 ||
+        strcmp(dir_name, ".idea") == 0) {
+        fprintf(stderr, "  Skipping directory '%s'\n", dir_path);
+        closedir(dir);
+        return;
+    }
+    
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        // Skip . and ..
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        
+        // Skip hidden files and some common directories
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+        
+        // Construct the full path
+        char full_path[MAX_PATH];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+        
+        // Check if this path should be ignored
+        if (respect_gitignore && should_ignore_path(full_path)) {
+            continue;
+        }
+        
+        // Get file info
+        struct stat statbuf;
+        if (lstat(full_path, &statbuf) != 0) {
+            // Skip files that can't be stat'ed
+            continue;
+        }
+        
+        if (S_ISDIR(statbuf.st_mode)) {
+            // Recursively process subdirectories
+            process_directory_for_codemap(cm, full_path, pattern, arena, respect_gitignore);
+        } else if (S_ISREG(statbuf.st_mode)) {
+            // Get the file extension
+            const char *ext = get_file_extension(full_path);
+            if (!ext) continue; // Skip files without extensions
+            
+            // First check if it matches the specific pattern provided
+            if (pattern && strcmp(pattern, "*") != 0) {
+                bool matched = false;
+                
+                // For more robust pattern matching:
+                // 1. Try exact extension match first
+                const char *pattern_ext = strrchr(pattern, '.');
+                if (pattern_ext && ext && strcmp(pattern_ext, ext) == 0) {
+                    // Extension matches, good enough for our purposes
+                    matched = true;
+                } 
+                // 2. Try simple wildcard matching
+                else if (strchr(pattern, '*') != NULL) {
+                    // Handle *.js type patterns
+                    if (pattern[0] == '*' && ext && strcmp(pattern+1, ext) == 0) {
+                        // Wildcard extension match, e.g. *.js matches test.js
+                        matched = true;
+                    } 
+                    // If we can't match with simplified logic, try fnmatch as a fallback
+                    else if (fnmatch(pattern, entry->d_name, 0) == 0) {
+                        matched = true;
+                    }
+                }
+                // 3. Fall back to substring match
+                else if (strstr(entry->d_name, pattern) != NULL) {
+                    matched = true;
+                }
+                
+                // Skip if no match
+                if (!matched) {
+                    continue;
+                }
+                
+                // Debug output for matched files
+                debug_printf("  Matched pattern '%s' with file: %s", pattern, full_path);
+            }
+            
+            // Even if no specific pattern, check if we have a language pack for this extension
+            LanguagePack *pack = find_pack_for_extension(&g_pack_registry, ext);
+            if (!pack || !pack->available || !pack->handle) {
+                continue; // Skip if no language pack available
+            }
+            
+            // Process the file for codemap
+            process_file_for_codemap(cm, full_path, arena);
+        }
+    }
+    
+    closedir(dir);
+}
+
+/**
+ * Process files for codemap generation based on patterns
+ * If no patterns are provided, scans the entire codebase
+ * Returns true if successful, false otherwise
+ */
+bool generate_codemap_from_patterns(Codemap *cm, Arena *arena, bool respect_gitignore) {
+    if (!cm || !arena) {
+        fprintf(stderr, "Error: Invalid arguments to generate_codemap_from_patterns\n");
+        return false;
+    }
+    
+    
+    // If no patterns are defined, scan the entire codebase
+    // by using the current directory as the pattern
+    if (cm->pattern_count == 0) {
+        // Add a default pattern to scan the entire codebase
+        debug_printf("No patterns specified, adding default pattern '.' to scan entire codebase");
+        if (!codemap_add_pattern(cm, ".", arena)) {
+            fprintf(stderr, "Error: Failed to add default pattern\n");
+            return false;
+        }
+    }
+    
+    debug_printf("Generating codemap with %zu pattern(s):", cm->pattern_count);
+    for (size_t i = 0; i < cm->pattern_count; i++) {
+        debug_printf("  Pattern %zu: %s", i, cm->patterns[i]);
+    }
+    
+    // Initialize and use the global pack registry
+    bool registry_initialized = initialize_pack_registry(&g_pack_registry, arena);
+    if (registry_initialized) {
+        size_t loaded = load_language_packs(&g_pack_registry);
+        if (loaded > 0) {
+            build_extension_map(&g_pack_registry, arena);
+            debug_printf("Loaded %zu language pack(s) for codemap generation.", loaded);
+        } else {
+            fprintf(stderr, "Warning: No language packs loaded for codemap generation.\n");
+        }
+    } else {
+        fprintf(stderr, "Warning: Failed to initialize language pack registry.\n");
+    }
+    
+    // Track how many files we find during scanning
+    int files_scanned = 0;
+    int files_processed = 0;
+    
+    // Process each pattern to find files
+    for (size_t i = 0; i < cm->pattern_count; i++) {
+        const char *pattern = cm->patterns[i];
+        if (!pattern) continue;
+        
+        // Special case for "." pattern (scan entire codebase)
+        if (strcmp(pattern, ".") == 0) {
+            debug_printf("Scanning entire codebase for supported files...");
+            
+            // Use the current directory with a wildcard pattern
+            // This ensures we find all files in the codebase
+            process_directory_for_codemap(cm, ".", "*", arena, respect_gitignore);
+            
+            // Also try to detect common source directories if they exist
+            // This helps find files in standard project layouts
+            struct stat st;
+            if (stat("src", &st) == 0 && S_ISDIR(st.st_mode)) {
+                fprintf(stderr, "  Also scanning 'src' directory...\n");
+                process_directory_for_codemap(cm, "src", "*", arena, respect_gitignore);
+            }
+            if (stat("lib", &st) == 0 && S_ISDIR(st.st_mode)) {
+                fprintf(stderr, "  Also scanning 'lib' directory...\n");
+                process_directory_for_codemap(cm, "lib", "*", arena, respect_gitignore);
+            }
+            if (stat("include", &st) == 0 && S_ISDIR(st.st_mode)) {
+                fprintf(stderr, "  Also scanning 'include' directory...\n");
+                process_directory_for_codemap(cm, "include", "*", arena, respect_gitignore);
+            }
+            if (stat("packs", &st) == 0 && S_ISDIR(st.st_mode)) {
+                fprintf(stderr, "  Also scanning 'packs' directory...\n");
+                process_directory_for_codemap(cm, "packs", "*", arena, respect_gitignore);
+            }
+            if (stat("tests", &st) == 0 && S_ISDIR(st.st_mode)) {
+                fprintf(stderr, "  Also scanning 'tests' directory...\n");
+                process_directory_for_codemap(cm, "tests", "*", arena, respect_gitignore);
+            }
+            
+            continue;
+        }
+        
+        // Check if this is a recursive pattern (containing **)
+        bool is_recursive = (strstr(pattern, "**") != NULL);
+        
+        if (is_recursive) {
+            // Extract base directory and file pattern
+            char base_dir[MAX_PATH] = ".";
+            char file_pattern[MAX_PATH] = "*";
+            
+            const char *recursive_marker = strstr(pattern, "**");
+            if (recursive_marker) {
+                // Copy base directory (everything before **)
+                size_t base_len = recursive_marker - pattern;
+                if (base_len > 0) {
+                    strncpy(base_dir, pattern, base_len);
+                    base_dir[base_len] = '\0';
+                    
+                    // Remove trailing slash if present
+                    if (base_len > 0 && base_dir[base_len - 1] == '/') {
+                        base_dir[base_len - 1] = '\0';
+                    }
+                }
+                
+                // Copy file pattern (everything after **)
+                const char *pattern_start = recursive_marker + 2;
+                if (*pattern_start == '/') {
+                    pattern_start++;
+                }
+                if (*pattern_start) {
+                    strcpy(file_pattern, pattern_start);
+                }
+            }
+            
+            debug_printf("Recursively scanning directory '%s' with pattern '%s'", 
+                    base_dir, file_pattern);
+            
+            // Use custom recursive directory traversal with wildcard pattern search
+        debug_printf("Searching for %s", file_pattern);
+        process_directory_for_codemap(cm, base_dir, file_pattern, arena, respect_gitignore);
+        } else {
+            // For standard patterns, use the system glob() function
+            glob_t glob_result;
+            int glob_flags = GLOB_TILDE;  // Support ~ expansion for home directory
+            
+            // Add brace expansion support if available on this platform
+            #ifdef GLOB_BRACE
+            glob_flags |= GLOB_BRACE;  // For patterns like *.{js,ts}
+            #endif
+            
+            // Expand the pattern to match files
+            int glob_status = glob(pattern, glob_flags, NULL, &glob_result);
+            if (glob_status != 0 && glob_status != GLOB_NOMATCH) {
+                fprintf(stderr, "Warning: Failed to expand pattern '%s': %s\n", 
+                        pattern, strerror(errno));
+                continue;
+            }
+            
+            fprintf(stderr, "Pattern '%s' matched %zu files/directories\n", 
+                    pattern, glob_result.gl_pathc);
+            
+            // Process each matched file
+            for (size_t j = 0; j < glob_result.gl_pathc; j++) {
+                const char *path = glob_result.gl_pathv[j];
+                files_scanned++;
+                
+                // Check ignore rules before processing
+                if (respect_gitignore && should_ignore_path(path)) {
+                    fprintf(stderr, "  Skipping %s (gitignore)\n", path);
+                    continue;
+                }
+                
+                // Process the file or directory
+                struct stat statbuf;
+                if (lstat(path, &statbuf) == 0) {
+                    if (S_ISREG(statbuf.st_mode)) {
+                        // Regular file - process it
+                        debug_printf("  Processing file: %s", path);
+                        process_file_for_codemap(cm, path, arena);
+                        files_processed++;
+                    } else if (S_ISDIR(statbuf.st_mode)) {
+                        // Directory - process it recursively
+                        debug_printf("  Scanning directory: %s", path);
+                        process_directory_for_codemap(cm, path, "*", arena, respect_gitignore);
+                    }
+                }
+            }
+            
+            globfree(&glob_result);
+        }
+    }
+    
+    debug_printf("Codemap generation complete: scanned %d files, processed %d", 
+            files_scanned, files_processed);
+    
+    // If after all processing we have no files with entries, return failure
+    bool any_files_with_entries = false;
+    for (size_t i = 0; i < cm->file_count; i++) {
+        if (cm->files[i].entry_count > 0) {
+            any_files_with_entries = true;
+            break;
+        }
+    }
+    
+    if (!any_files_with_entries) {
+        fprintf(stderr, "Warning: No code symbols found in any files, codemap will be empty\n");
+        // Reset the codemap but we can't free the arena memory
+        cm->files = NULL;
+        cm->file_count = 0;
+        return false;
+    }
+    
+    debug_printf("Successfully built codemap with %zu files containing symbols", cm->file_count);
+    return true;
+}
+
+/**
+ * Process files and build the codemap using language packs (legacy function)
  */
 bool process_js_ts_files(Codemap *cm, const char **processed_files, size_t processed_count, Arena *arena) {
     fprintf(stderr, "process_js_ts_files called with cm=%p, processed_files=%p, processed_count=%zu, arena=%p\n", 

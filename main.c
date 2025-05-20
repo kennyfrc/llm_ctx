@@ -33,6 +33,7 @@
 #include "arena.h"
 #include "packs.h"
 #include "codemap.h"
+#include "debug.h"
 
 static Arena g_arena;
 
@@ -342,6 +343,8 @@ static char *system_instructions = NULL;   /* Allocated from arena */
 static bool want_editor_comments = false;   /* -e flag */
 static bool raw_mode = false; /* -r flag */
 static bool want_codemap = false; /* -m flag */
+bool debug_mode = false; /* -d flag */
+static Codemap g_codemap = {0}; /* Global codemap structure */
 
 /**
  * Open the file context block if it hasn't been opened yet.
@@ -805,43 +808,7 @@ void generate_file_tree(void) {
     
     fprintf(temp_file, "</file_tree>\n\n");
     
-    /* Generate and append codemap if -m flag was used */
-    if (want_codemap) {
-        /* Initialize codemap */
-        Codemap cm = codemap_init(&g_arena);
-        
-        /* Initialize and load language packs */
-        bool have_packs = initialize_pack_registry(&g_pack_registry, &g_arena);
-        if (have_packs) {
-            size_t loaded = load_language_packs(&g_pack_registry);
-            if (loaded > 0) {
-                /* Build extension map for lookup */
-                build_extension_map(&g_pack_registry, &g_arena);
-                
-                /* Log language pack loading results */
-                fprintf(stderr, "Loaded %zu language pack(s) for codemap generation.\n", loaded);
-            }
-        }
-        
-        /* Process JavaScript/TypeScript files */
-        if (process_js_ts_files(&cm, (const char **)processed_files, num_processed_files, &g_arena)) {
-            /* Generate codemap and write to temp_file */
-            char *buffer = arena_push_array(&g_arena, char, 1024 * 1024); /* 1MB buffer */
-            if (buffer) {
-                size_t pos = 0;
-                codemap_generate(&cm, buffer, &pos, 1024 * 1024);
-                
-                /* Write the buffer to the output file */
-                if (pos > 0) {
-                    fprintf(temp_file, "%.*s\n", (int)pos, buffer);
-                }
-            } else {
-                fprintf(stderr, "Warning: Failed to allocate memory for codemap output\n");
-            }
-        } else {
-            fprintf(stderr, "Warning: Failed to process JavaScript/TypeScript files for codemap\n");
-        }
-    }
+    /* Note: Codemap generation is now done at the end of main() */
     
     /* Remove temporary tree file */
     unlink(tree_file_path);
@@ -938,8 +905,11 @@ void show_help(void) {
     printf("  -s@-           Read system prompt from standard input (no space after -s)\n");
     printf("  -e             Instruct the LLM to append PR-style review comments\n");
     printf("  -r             Raw mode: omit system instructions and response guide\n");
-    printf("  -m             Generate compact code map for JavaScript/TypeScript files\n");
+    printf("  -m[=PATTERN]   Generate code map (optionally limited to PATTERN)\n");
+    printf("                 Patterns can be comma-separated (e.g., \"src/**/*.js,lib/**/*.rb\")\n");
+    printf("                 If no pattern is provided, scans the entire codebase\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
+    printf("  -d, --debug    Enable debug output (prefixed with [DEBUG])\n");
     printf("  -h             Show this help message\n");
     printf("  --list-packs   List available language packs for code map generation\n");
     printf("  --no-gitignore Ignore .gitignore files when collecting files\n\n");
@@ -958,7 +928,11 @@ void show_help(void) {
     printf("  llm_ctx -c \"Please explain this code\" -f src/*.c\n\n");
     printf("  # Pipe to clipboard\n");
     printf("  git diff | llm_ctx -c \"Review these changes\" | pbcopy\n\n");
-    printf("  # Generate code map from JavaScript/TypeScript files\n");
+    printf("  # Generate code map from all files (scans entire codebase)\n");
+    printf("  llm_ctx -m\n\n");
+    printf("  # Generate code map for specific file patterns\n");
+    printf("  llm_ctx -m=\"src/**/*.js,lib/**/*.rb\"\n\n");
+    printf("  # Generate code map and include file content\n");
     printf("  llm_ctx -f \"src/**/*.ts\" -m\n");
     exit(0);
 }
@@ -1886,7 +1860,8 @@ static const struct option long_options[] = {
     {"files",           no_argument,       0, 'f'}, /* Indicates file args follow */
     {"editor-comments", no_argument,       0, 'e'},
     {"raw",             no_argument,       0, 'r'},
-    {"codemap",         no_argument,       0, 'm'}, /* Generate code map */
+    {"codemap",         optional_argument, 0, 'm'}, /* Generate code map with optional pattern */
+    {"debug",           no_argument,       0, 'd'}, /* Enable debug output */
     {"list-packs",      no_argument,       0,  2 }, /* List available language packs */
     {"pack-info",       required_argument, 0,  3 }, /* Get info about a specific language pack */
     {"no-gitignore",    no_argument,       0,  1 }, /* Use a value > 255 for long-only */
@@ -2017,7 +1992,7 @@ int main(int argc, char *argv[]) {
     /* and adhering to the "minimize execution paths" principle. */
     int opt;
     /* Add 'C' to the short options string. It takes no argument. */
-    while ((opt = getopt_long(argc, argv, "hc:s::freCmd", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s::frem::Cd", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
 
@@ -2057,6 +2032,77 @@ int main(int argc, char *argv[]) {
                 break;
             case 'm': /* -m or --codemap */
                 want_codemap = true;
+                
+                // Initialize codemap if not already done
+                if (!g_codemap.files) {
+                    g_codemap = codemap_init(&g_arena);
+                }
+                
+                // Handle both -m and -m=pattern forms
+                // The -m form has optarg == NULL
+                // The -m=pattern form has optarg starting with '='
+                // The -m pattern form has optarg set to the pattern
+                
+                if (optarg) {
+                    // Skip leading '=' for -m="pattern" form
+                    if (*optarg == '=') {
+                        optarg++;
+                    }
+                    
+                    if (*optarg) { // Make sure there's still something after skipping '='
+                        // Split the pattern string by commas
+                        char *pattern_copy = arena_xstrdup(optarg);
+                        if (!pattern_copy) {
+                            fprintf(stderr, "Error: Failed to allocate memory for pattern\n");
+                        } else {
+                            // Check if the pattern contains brace expansion
+                            if (strchr(pattern_copy, '{') && strchr(pattern_copy, '}')) {
+                                // If it contains braces, don't split at commas
+                                char *trimmed = pattern_copy;
+                                while (*trimmed && isspace(*trimmed)) trimmed++;
+                                char *end = trimmed + strlen(trimmed) - 1;
+                                while (end > trimmed && isspace(*end)) *end-- = '\0';
+                                
+                                if (*trimmed) {
+                                    // Add the whole pattern
+                                    codemap_add_pattern(&g_codemap, trimmed, &g_arena);
+                                }
+                            } else {
+                                // If it doesn't contain braces, split at commas
+                                char *token = strtok(pattern_copy, ",");
+                                while (token) {
+                                    // Trim whitespace
+                                    char *trimmed = token;
+                                    while (*trimmed && isspace(*trimmed)) trimmed++;
+                                    char *end = trimmed + strlen(trimmed) - 1;
+                                    while (end > trimmed && isspace(*end)) *end-- = '\0';
+                                    
+                                    if (*trimmed) {
+                                        // Add the pattern to the codemap
+                                        codemap_add_pattern(&g_codemap, trimmed, &g_arena);
+                                    }
+                                    token = strtok(NULL, ",");
+                                }
+                            }
+                            // We don't need to free pattern_copy as it's allocated from the arena
+                        }
+                    }
+                }
+                
+                // Note: If no pattern is provided or the pattern is empty after processing,
+                // we don't need to do anything special here. The generate_codemap_from_patterns
+                // function will automatically add a default pattern to scan the entire codebase.
+                // For brace patterns, provide a more specific message
+                if (g_codemap.pattern_count > 0 && strstr(g_codemap.patterns[0], "{")) {
+                    debug_printf("Codemap option enabled - will use brace pattern: %s", g_codemap.patterns[0]);
+                } else {
+                    debug_printf("Codemap option enabled - will %s", 
+                           (g_codemap.pattern_count > 0) ? "use specified patterns" : "scan entire codebase");
+                }
+                break;
+            case 'd': /* -d or --debug */
+                debug_mode = true;
+                debug_printf("Debug mode enabled");
                 break;
             case 'C': /* -C (equivalent to -c @-) */
                 /* Reuse the existing handler by simulating the @- argument */
@@ -2297,11 +2343,11 @@ int main(int argc, char *argv[]) {
         /* Stdin mode (no -f, no @- used) */
         if (isatty(STDIN_FILENO)) {
             /* If stdin is a terminal and we are not in file mode (which would be set by -f, -c @-, -s @-, -C),
-             * and prompt-only output isn't allowed (no -c/-s/-e flags used),
+             * and prompt-only output isn't allowed (no -c/-s/-e flags used) and codemap isn't requested,
              * it means the user likely forgot to pipe input or provide file arguments. Show help. */
-            if (!allow_empty_context) {
+            if (!allow_empty_context && !want_codemap) {
                 show_help(); /* Exits */
-            } /* Otherwise, allow proceeding to generate prompt-only output */
+            } /* Otherwise, allow proceeding to generate prompt-only output or codemap */
 
         } else {
             /* Stdin is not a terminal (piped data), process it */
@@ -2311,8 +2357,8 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    /* Check if any files were found or if prompt-only output is allowed */
-    if (files_found == 0 && !allow_empty_context) {
+    /* Check if any files were found or if codemap/prompt-only output is allowed */
+    if (files_found == 0 && !allow_empty_context && !want_codemap) {
         fprintf(stderr, "No files to process\n");
         fclose(temp_file);
         unlink(temp_file_path);
@@ -2333,8 +2379,6 @@ int main(int argc, char *argv[]) {
     /* Generate and add file tree */
     generate_file_tree();
     
-    /* Add file context header and output content of each file */
-    
     /* Output content of each processed file */
     for (int i = 0; i < num_processed_files; i++) {
         output_file_content(processed_files[i], temp_file);
@@ -2342,6 +2386,81 @@ int main(int argc, char *argv[]) {
     
     /* Add closing file_context tag */
     if (wrote_file_context) fprintf(temp_file, "</file_context>\n");
+    
+    /* Generate and output codemap if requested */
+    if (want_codemap) {
+        debug_printf("Generating codemap...");
+        
+        /* We don't need to initialize the codemap here since it was already done when processing 
+         * the -m flag. Preserving the existing patterns is important */
+        
+        /* If in file mode and no patterns specified, add processed files as patterns */
+        if (file_mode && g_codemap.pattern_count == 0 && num_processed_files > 0) {
+            debug_printf("Adding %d processed files as codemap patterns", num_processed_files);
+            for (int i = 0; i < num_processed_files; i++) {
+                if (processed_files[i]) {
+                    codemap_add_pattern(&g_codemap, processed_files[i], &g_arena);
+                }
+            }
+        }
+        
+        
+        /* If no patterns are defined at this point, add a default pattern to scan the entire codebase */
+        if (g_codemap.pattern_count == 0) {
+            debug_printf("No patterns specified, scanning entire codebase");
+            codemap_add_pattern(&g_codemap, ".", &g_arena);
+        }
+        
+        /* Use the pattern-based approach to generate the codemap */
+        if (generate_codemap_from_patterns(&g_codemap, &g_arena, respect_gitignore)) {
+            /* Generate codemap and write to temp_file */
+            char *buffer = arena_push_array(&g_arena, char, 1024 * 1024); /* 1MB buffer */
+            if (buffer) {
+                size_t pos = 0;
+                codemap_generate(&g_codemap, buffer, &pos, 1024 * 1024);
+                
+                /* Write the buffer to the output file */
+                if (pos > 0) {
+                    fprintf(temp_file, "%.*s\n", (int)pos, buffer);
+                    debug_printf("Codemap generated successfully");
+                } else {
+                    fprintf(stderr, "Warning: Empty codemap generated\n");
+                }
+            } else {
+                fprintf(stderr, "Warning: Failed to allocate memory for codemap output\n");
+            }
+        } else {
+            fprintf(stderr, "Warning: Failed to generate codemap\n");
+            
+            /* Legacy fallback for backward compatibility */
+            fprintf(stderr, "Falling back to legacy JavaScript/TypeScript-only codemap...\n");
+            
+            /* Initialize a temporary codemap */
+            Codemap legacy_cm = codemap_init(&g_arena);
+            
+            /* Process JavaScript/TypeScript files with the legacy function */
+            if (process_js_ts_files(&legacy_cm, (const char **)processed_files, num_processed_files, &g_arena)) {
+                /* Generate codemap and write to temp_file */
+                char *buffer = arena_push_array(&g_arena, char, 1024 * 1024); /* 1MB buffer */
+                if (buffer) {
+                    size_t pos = 0;
+                    codemap_generate(&legacy_cm, buffer, &pos, 1024 * 1024);
+                    
+                    /* Write the buffer to the output file */
+                    if (pos > 0) {
+                        fprintf(temp_file, "%.*s\n", (int)pos, buffer);
+                        fprintf(stderr, "Legacy codemap generated successfully\n");
+                    } else {
+                        fprintf(stderr, "Warning: Empty legacy codemap generated\n");
+                    }
+                } else {
+                    fprintf(stderr, "Warning: Failed to allocate memory for codemap output\n");
+                }
+            } else {
+                fprintf(stderr, "Warning: Failed to process JavaScript/TypeScript files for codemap\n");
+            }
+        }
+    }
     
     /* Flush and close the temp file */
     fclose(temp_file);

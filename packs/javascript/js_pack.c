@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdint.h>
+#include "../debug.h"
 
 /**
  * JavaScript language pack for LLM_CTX using tree-sitter statically linked
@@ -259,7 +260,7 @@ static void process_node(TSNode node, const char *source, CodemapFile *file, Are
  * Initialize the JavaScript pack
  */
 bool initialize(void) {
-    printf("Initializing JavaScript language pack with tree-sitter...\n");
+    debug_printf("[DEBUG] Initializing JavaScript language pack with tree-sitter...");
     
     // We could do more initialization here if needed
     return true;
@@ -269,7 +270,7 @@ bool initialize(void) {
  * Clean up resources
  */
 void cleanup(void) {
-    printf("Cleaning up JavaScript language pack resources...\n");
+    debug_printf("[DEBUG] Cleaning up JavaScript language pack resources...");
     
     // No resources to clean up in this implementation
 }
@@ -293,7 +294,7 @@ bool parse_file(const char *path, const char *source, size_t source_len, Codemap
         return false;
     }
     
-    printf("Parsing JavaScript/TypeScript file with tree-sitter: %s\n", path);
+    debug_printf("[DEBUG] Parsing JavaScript/TypeScript file with tree-sitter: %s", path);
     
     // Create a tree-sitter parser
     TSParser *parser = ts_parser_new();
@@ -339,7 +340,7 @@ bool parse_file(const char *path, const char *source, size_t source_len, Codemap
         fprintf(stderr, "WARNING: No code entities found in file: %s\n", path);
         // We don't consider this a failure - just return success with zero entries
     } else {
-        printf("Successfully extracted %zu code entities from %s.\n", file->entry_count, path);
+        debug_printf("Successfully extracted %zu code entities from %s.", file->entry_count, path);
     }
     
     return true;

@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdint.h>
+#include "debug.h"
 
 /**
  * Template Language Pack for LLM_CTX
@@ -161,7 +162,7 @@ static void process_node(TSNode node, const char *source, CodemapFile *file, Are
  * This function must be exported with this exact name
  */
 bool initialize(void) {
-    printf("Initializing template language pack\n");
+    debug_printf("[DEBUG] Initializing template language pack");
     return true;
 }
 
@@ -170,7 +171,7 @@ bool initialize(void) {
  * This function must be exported with this exact name
  */
 void cleanup(void) {
-    printf("Cleaning up template language pack resources\n");
+    debug_printf("[DEBUG] Cleaning up template language pack resources");
 }
 
 /**
@@ -195,7 +196,7 @@ bool parse_file(const char *path, const char *source, size_t source_len,
         return false;
     }
     
-    printf("Parsing file with tree-sitter: %s\n", path);
+    debug_printf("[DEBUG] Parsing file with tree-sitter: %s", path);
     
     /* Create a tree-sitter parser */
     TSParser *parser = ts_parser_new();
