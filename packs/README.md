@@ -6,22 +6,46 @@ This guide explains how to create and use language packs for LLM_CTX's codemap f
 
 Language packs are plugins that enable LLM_CTX to understand the structure of source code in specific programming languages. They extract functions, classes, methods, and other code entities to provide a structured view for better context in LLM prompts.
 
+## New Query-Based Approach
+
+Language packs now use Tree-sitter's query language for pattern matching:
+
+1. **Pattern Definition**: Define patterns in `codemap.scm` using S-expressions
+2. **Minimal C Code**: The C file just loads queries and processes matches
+3. **Easy Maintenance**: Update patterns without recompiling C code
+4. **Declarative**: Describe what to find, not how to find it
+
+Example `codemap.scm`:
+```scheme
+; Functions
+(function_declaration
+  name: (identifier) @function.name
+  parameters: (formal_parameters) @function.params) @function
+
+; Classes  
+(class_declaration
+  name: (identifier) @class.name) @class
+```
+
+This approach replaces hundreds of lines of manual tree traversal with simple, readable patterns.
+
 ## Developer Workflow: Creating a Language Pack
 
-Here's the typical workflow for creating a new language pack:
+With the new query-based approach, creating a language pack is much simpler. You define patterns in a `.scm` file and write minimal C code to process matches.
 
 ### 1. Getting Started
 
-Start by copying the template or referencing the JavaScript pack:
+Start by copying the template:
 
 ```bash
-# Option 1: Copy the template
+# Copy the template
 cp -r packs/template packs/your-language
 cd packs/your-language
 mv template_pack.c your_lang_pack.c
 
-# Option 2: Reference the JavaScript pack
-# Study packs/javascript/js_pack.c as a complete example
+# The template includes:
+# - codemap.scm with example patterns
+# - template_pack.c with the query-based implementation
 ```
 
 ### 2. Using an Existing Tree-sitter Grammar
@@ -40,9 +64,21 @@ npm install  # If it uses the Node.js build system
 
 ### 3. Modifying Your Pack Files
 
-You'll need to update three key files:
+You'll need to update four key files:
 
-1. **Makefile**: Point to your grammar library
+1. **codemap.scm**: Define Tree-sitter query patterns
+   ```scheme
+   ; Function declarations
+   (function_declaration
+     name: (identifier) @function.name
+     parameters: (formal_parameters) @function.params) @function
+   
+   ; Class declarations
+   (class_declaration
+     name: (identifier) @class.name) @class
+   ```
+
+2. **Makefile**: Point to your grammar library
    ```makefile
    TS_LANG_LIB = ../../tree-sitter-your-language/libtree-sitter-your-language.a
    
@@ -50,19 +86,15 @@ You'll need to update three key files:
        $(CC) $(CFLAGS) -o $@ $< $(TS_LANG_LIB) -L/opt/homebrew/lib -ltree-sitter
    ```
 
-2. **tree-sitter.h**: Update the language function declaration
+3. **tree-sitter.h**: Update with Query API declarations
    ```c
    extern const TSLanguage *tree_sitter_your_language(void);
+   // Query API declarations are already included in the template
    ```
 
-3. **your_lang_pack.c**: Implement the required interface functions
-   ```c
-   bool initialize(void) { /* ... */ }
-   void cleanup(void) { /* ... */ }
-   const char **get_extensions(size_t *count) { /* ... */ }
-   bool parse_file(const char *path, const char *source, size_t source_len, 
-                  CodemapFile *file, Arena *arena) { /* ... */ }
-   ```
+4. **your_lang_pack.c**: The template already includes the query-based implementation
+   - Just update the language function and file extensions
+   - The query loading and processing code is ready to use
 
 ### 4. Testing Your Language Pack
 
@@ -275,101 +307,83 @@ static char *copy_substring(const char *source, uint32_t start, uint32_t end, Ar
     return result;
 }
 
-// Node processing function
-static void process_node(TSNode node, const char *source, CodemapFile *file, Arena *arena, const char *container) {
-    if (ts_node_is_null(node)) return;
+// Load query patterns from codemap.scm
+static TSQuery *load_query_file(const TSLanguage *language) {
+    FILE *f = fopen("codemap.scm", "r");
+    if (!f) {
+        fprintf(stderr, "Could not open codemap.scm\n");
+        return NULL;
+    }
     
-    const char *node_type = ts_node_type(node);
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
     
-    // Handle different node types based on your language's grammar
-    // Example for a C-like language:
-    if (strcmp(node_type, "function_definition") == 0) {
-        // Extract function details
-        // This is just an example - adjust for your language's grammar
-        TSNode name_node = ts_node_child(node, 1);  // Assuming function name is second child
+    char *query_source = malloc(size + 1);
+    fread(query_source, 1, size, f);
+    query_source[size] = '\0';
+    fclose(f);
+    
+    uint32_t error_offset;
+    TSQueryError error_type;
+    TSQuery *query = ts_query_new(language, query_source, strlen(query_source), &error_offset, &error_type);
+    
+    if (!query) {
+        fprintf(stderr, "Query compilation failed at offset %u: %d\n", error_offset, error_type);
+    }
+    
+    free(query_source);
+    return query;
+}
+
+// Process query matches
+static void process_match(const TSQueryMatch *match, TSQuery *query, const char *source, 
+                         CodemapFile *file, Arena *arena) {
+    // Extract captures based on pattern names
+    for (uint16_t i = 0; i < match->capture_count; i++) {
+        const TSQueryCapture *capture = &match->captures[i];
+        uint32_t length;
+        const char *capture_name = ts_query_capture_name_for_id(query, capture->index, &length);
         
-        if (!ts_node_is_null(name_node)) {
-            uint32_t start = ts_node_start_byte(name_node);
-            uint32_t end = ts_node_end_byte(name_node);
-            
-            CodemapEntry *entry = &file->entries[file->entry_count++];
-            strncpy(entry->name, copy_substring(source, start, end, arena), sizeof(entry->name) - 1);
-            entry->kind = CM_FUNCTION;
-            
-            // Fill in other fields as needed
-            entry->signature[0] = '\0';
-            entry->return_type[0] = '\0';
-            
-            if (container) {
-                strncpy(entry->container, container, sizeof(entry->container) - 1);
-            } else {
-                entry->container[0] = '\0';
-            }
-        }
+        // Process based on capture name (e.g., "function.name", "class.name", etc.)
+        // See template_pack.c for full implementation
     }
-    
-    // Process children
-    uint32_t child_count = ts_node_child_count(node);
-    for (uint32_t i = 0; i < child_count; i++) {
-        TSNode child = ts_node_child(node, i);
-        process_node(child, source, file, arena, container);
-    }
-}
-
-// Interface functions
-
-static const char *extensions[] = {".yourlang"};  // Replace with your language's extensions
-
-bool initialize(void) {
-    // Initialize any resources needed
-    return true;
-}
-
-void cleanup(void) {
-    // Clean up resources
-}
-
-const char **get_extensions(size_t *count) {
-    *count = sizeof(extensions) / sizeof(extensions[0]);
-    return extensions;
 }
 
 bool parse_file(const char *path, const char *source, size_t source_len, 
                CodemapFile *file, Arena *arena) {
-    printf("Parsing file with tree-sitter: %s\n", path);
-    
-    // Create parser
+    // Create parser and set language
     TSParser *parser = ts_parser_new();
-    if (!parser) {
-        fprintf(stderr, "Failed to create tree-sitter parser\n");
-        return false;
-    }
-    
-    // Set language
     const TSLanguage *language = tree_sitter_your_language();
-    if (!ts_parser_set_language(parser, language)) {
-        fprintf(stderr, "Failed to set language for parser\n");
-        ts_parser_delete(parser);
-        return false;
-    }
+    ts_parser_set_language(parser, language);
     
-    // Parse the source code
+    // Parse the source
     TSTree *tree = ts_parser_parse_string(parser, NULL, source, (uint32_t)source_len);
-    if (!tree) {
-        fprintf(stderr, "Failed to parse source code\n");
+    TSNode root_node = ts_tree_root_node(tree);
+    
+    // Load query patterns from codemap.scm
+    TSQuery *query = load_query_file(language);
+    if (!query) {
+        ts_tree_delete(tree);
         ts_parser_delete(parser);
         return false;
     }
     
-    // Get the root node and process the tree
-    TSNode root_node = ts_tree_root_node(tree);
-    process_node(root_node, source, file, arena, NULL);
+    // Execute queries
+    TSQueryCursor *cursor = ts_query_cursor_new();
+    ts_query_cursor_exec(cursor, query, root_node);
+    
+    TSQueryMatch match;
+    while (ts_query_cursor_next_match(cursor, &match)) {
+        process_match(&match, query, source, file, arena);
+    }
     
     // Clean up
+    ts_query_cursor_delete(cursor);
+    ts_query_delete(query);
     ts_tree_delete(tree);
     ts_parser_delete(parser);
     
-    printf("Successfully extracted %zu code entities from %s.\n", file->entry_count, path);
     return true;
 }
 ```
@@ -456,164 +470,109 @@ int main() {
 
 This section provides practical recipes for common language pack tasks.
 
-### How to handle different code entities
+### How to write query patterns
 
 #### Functions
 
-```c
-// For function declarations/definitions
-if (strcmp(node_type, "function_declaration") == 0 ||
-    strcmp(node_type, "function_definition") == 0) {
-    
-    // Find the identifier/name node
-    TSNode name_node = find_child_by_type(node, "identifier");
-    
-    if (!ts_node_is_null(name_node)) {
-        uint32_t start = ts_node_start_byte(name_node);
-        uint32_t end = ts_node_end_byte(name_node);
-        
-        // Extract the function name
-        char *func_name = copy_substring(source, start, end, arena);
-        
-        // Add to codemap entries
-        CodemapEntry *entry = &file->entries[file->entry_count++];
-        strncpy(entry->name, func_name, sizeof(entry->name) - 1);
-        entry->kind = CM_FUNCTION;
-        
-        // Extract parameters for signature (implementation depends on language grammar)
-        extract_function_signature(node, source, entry, arena);
-    }
-}
+In your `codemap.scm` file:
+
+```scheme
+; Function declarations
+(function_declaration
+  name: (identifier) @function.name
+  parameters: (formal_parameters) @function.params) @function
+
+; Function expressions  
+(function_expression
+  name: (identifier)? @function.name
+  parameters: (formal_parameters) @function.params) @function
+
+; Arrow functions
+(arrow_function
+  parameters: (_) @function.params) @function
 ```
+
+The C code will automatically process these patterns when matches are found.
 
 #### Classes and Methods
 
-```c
-// For class declarations
-if (strcmp(node_type, "class_declaration") == 0) {
-    // Find the class name
-    TSNode name_node = find_child_by_type(node, "identifier");
-    
-    if (!ts_node_is_null(name_node)) {
-        uint32_t start = ts_node_start_byte(name_node);
-        uint32_t end = ts_node_end_byte(name_node);
-        
-        // Extract the class name
-        char *class_name = copy_substring(source, start, end, arena);
-        
-        // Add class to codemap entries
-        CodemapEntry *entry = &file->entries[file->entry_count++];
-        strncpy(entry->name, class_name, sizeof(entry->name) - 1);
-        entry->kind = CM_CLASS;
-        
-        // Find class body to process methods
-        TSNode body_node = find_child_by_type(node, "class_body");
-        if (!ts_node_is_null(body_node)) {
-            // Process body node for methods, passing class_name as container
-            process_node(body_node, source, file, arena, class_name);
-        }
-        
-        // Skip automatic processing of children since we handled the body
-        return;
-    }
-}
+```scheme
+; Class declarations
+(class_declaration
+  name: (identifier) @class.name) @class
 
-// For methods within a class
-if (strcmp(node_type, "method_definition") == 0 && container != NULL) {
-    // Find the method name
-    TSNode name_node = find_child_by_type(node, "property_identifier");
-    
-    if (!ts_node_is_null(name_node)) {
-        uint32_t start = ts_node_start_byte(name_node);
-        uint32_t end = ts_node_end_byte(name_node);
-        
-        // Extract the method name
-        char *method_name = copy_substring(source, start, end, arena);
-        
-        // Add method to codemap entries
-        CodemapEntry *entry = &file->entries[file->entry_count++];
-        strncpy(entry->name, method_name, sizeof(entry->name) - 1);
-        strncpy(entry->container, container, sizeof(entry->container) - 1);
-        entry->kind = CM_METHOD;
-        
-        // Extract parameters for signature
-        extract_method_signature(node, source, entry, arena);
-    }
-}
+; Method definitions (JavaScript)
+(method_definition
+  name: (property_identifier) @method.name
+  parameters: (formal_parameters) @method.params) @method
+
+; Method definitions (Ruby)
+(method
+  name: (identifier) @method.name
+  parameters: (method_parameters)? @method.params) @method
 ```
+
+Note: The current implementation treats methods as functions for simplicity. To maintain class context, you would need to enhance the query processing logic.
 
 ### How to detect and extract interfaces/types
 
-```c
-// For interface or type declarations (e.g., TypeScript)
-if (strcmp(node_type, "interface_declaration") == 0 ||
-    strcmp(node_type, "type_alias_declaration") == 0) {
-    
-    // Find the identifier node
-    TSNode name_node = find_child_by_type(node, "type_identifier");
-    
-    if (!ts_node_is_null(name_node)) {
-        uint32_t start = ts_node_start_byte(name_node);
-        uint32_t end = ts_node_end_byte(name_node);
-        
-        // Extract the type name
-        char *type_name = copy_substring(source, start, end, arena);
-        
-        // Add to codemap entries
-        CodemapEntry *entry = &file->entries[file->entry_count++];
-        strncpy(entry->name, type_name, sizeof(entry->name) - 1);
-        entry->kind = CM_TYPE;
-    }
-}
+```scheme
+; TypeScript interfaces
+(interface_declaration
+  name: (type_identifier) @type.name) @type
+
+; Type aliases
+(type_alias_declaration
+  name: (type_identifier) @type.name) @type
+
+; Ruby modules (treated as types)
+(module
+  name: (constant) @type.name) @type
 ```
 
-### How to handle special cases in class methods
+### Query Pattern Tips
 
-```c
-// Special case for constructors
-if (strcmp(node_type, "method_definition") == 0) {
-    TSNode name_node = ts_node_child(node, 0);
-    const char *method_type = ts_node_type(name_node);
-    
-    if (strcmp(method_type, "constructor") == 0) {
-        // Handle constructor specially
-        CodemapEntry *entry = &file->entries[file->entry_count++];
-        strcpy(entry->name, "constructor");
-        strncpy(entry->container, container, sizeof(entry->container) - 1);
-        entry->kind = CM_METHOD;
-        
-        // Extract constructor parameters
-        extract_method_signature(node, source, entry, arena);
-    }
-}
-```
+1. **Use wildcards for flexibility**:
+   ```scheme
+   ; Match any parameter type
+   parameters: (_)? @function.params
+   ```
 
-### How to create a utility for finding specific child nodes
+2. **Optional captures**:
+   ```scheme
+   ; Function name is optional for anonymous functions
+   name: (identifier)? @function.name
+   ```
 
-```c
-// Utility function to find a child node by its type
-TSNode find_child_by_type(TSNode parent, const char *type) {
-    uint32_t child_count = ts_node_child_count(parent);
-    
-    for (uint32_t i = 0; i < child_count; i++) {
-        TSNode child = ts_node_child(parent, i);
-        const char *child_type = ts_node_type(child);
-        
-        if (strcmp(child_type, type) == 0) {
-            return child;
-        }
-        
-        // Optionally recurse into children
-        TSNode result = find_child_by_type(child, type);
-        if (!ts_node_is_null(result)) {
-            return result;
-        }
-    }
-    
-    // Return null node if not found
-    return ts_node_child(parent, ts_node_child_count(parent)); // This creates a null node
-}
-```
+3. **Multiple patterns for variants**:
+   ```scheme
+   ; Different function syntaxes
+   (function_declaration ...) @function
+   (function_expression ...) @function
+   (arrow_function ...) @function
+   ```
+
+4. **Test your patterns**:
+   Use the Tree-sitter playground or CLI to verify your patterns match correctly.
+
+### Debugging Query Patterns
+
+To debug your patterns:
+
+1. **Use ts-cli to test patterns**:
+   ```bash
+   echo '(function_declaration name: (identifier) @name)' > test.scm
+   tree-sitter query test.scm test.js
+   ```
+
+2. **Add debug output in process_match**:
+   ```c
+   printf("Capture: %.*s (name: %s)\n", 
+          (int)(end - start), source + start, capture_name);
+   ```
+
+3. **Check for query compilation errors**:
+   The error_offset tells you exactly where in your .scm file the error occurred.
 
 ---
 
@@ -656,17 +615,17 @@ LLM_CTX uses an arena allocator to efficiently manage memory for parsed code ent
 3. This avoids individual malloc/free calls and simplifies memory management
 4. The entire arena is freed at once when processing is complete
 
-### Abstract Syntax Tree Traversal
+### Query-Based Pattern Matching
 
-Tree-sitter provides a structured syntax tree that must be traversed to extract code entities:
+The new approach uses Tree-sitter's query language instead of manual tree traversal:
 
-1. Start with the root node from `ts_tree_root_node()`
-2. Recursively visit each node
-3. Identify nodes of interest based on their types (e.g., "function_declaration")
-4. Extract information from the relevant nodes
-5. Build up the codemap entries as you traverse
+1. Define patterns in `codemap.scm` using S-expressions
+2. Tree-sitter compiles these patterns into an efficient query
+3. The query cursor finds all matches in the syntax tree
+4. Each match contains named captures (e.g., `@function.name`)
+5. The C code processes these captures to build codemap entries
 
-The specific node types and structure depend on the language grammar, so you'll need to understand your language's Tree-sitter grammar.
+This approach is more maintainable and declarative than manual traversal.
 
 ---
 
@@ -764,20 +723,70 @@ TSTree *ts_parser_parse_string(TSParser *parser, const TSTree *old_tree,
 void ts_tree_delete(TSTree *tree);
 TSNode ts_tree_root_node(const TSTree *tree);
 
-// Node inspection
-uint32_t ts_node_child_count(TSNode node);
-TSNode ts_node_child(TSNode node, uint32_t index);
-const char *ts_node_type(TSNode node);
-uint32_t ts_node_start_byte(TSNode node);
-uint32_t ts_node_end_byte(TSNode node);
-bool ts_node_is_null(TSNode node);
+// Query API
+TSQuery *ts_query_new(const TSLanguage *language, const char *source, 
+                      uint32_t source_len, uint32_t *error_offset, 
+                      TSQueryError *error_type);
+void ts_query_delete(TSQuery *query);
+TSQueryCursor *ts_query_cursor_new(void);
+void ts_query_cursor_delete(TSQueryCursor *cursor);
+void ts_query_cursor_exec(TSQueryCursor *cursor, const TSQuery *query, TSNode node);
+bool ts_query_cursor_next_match(TSQueryCursor *cursor, TSQueryMatch *match);
+const char *ts_query_capture_name_for_id(const TSQuery *query, uint32_t id, uint32_t *length);
 ```
+
+---
+
+## Migrating from Manual Tree Traversal
+
+If you have an existing language pack using manual tree traversal, here's how to migrate:
+
+1. **Identify the node types you're checking**: Look for `strcmp(node_type, "...")` calls
+2. **Convert to query patterns**: Each node type check becomes a pattern in `codemap.scm`
+3. **Map extractions to captures**: Replace manual `ts_node_child()` calls with named captures
+4. **Simplify the C code**: Replace `process_node()` with query loading and match processing
+
+Example migration:
+
+**Old approach** (manual traversal):
+```c
+if (strcmp(node_type, "function_declaration") == 0) {
+    TSNode name_node = find_child_by_type(node, "identifier");
+    // ... extract and process
+}
+```
+
+**New approach** (query pattern):
+```scheme
+(function_declaration
+  name: (identifier) @function.name) @function
+```
+
+See the JavaScript and Ruby packs for complete migration examples.
 
 ---
 
 ## Troubleshooting
 
 Common issues and their solutions when developing language packs.
+
+### Query Compilation Errors
+
+**Query fails to compile:**
+```
+Query compilation failed at offset 123: Unknown error
+```
+
+**Common causes and solutions**:
+1. **Invalid node types**: Check the grammar's node types using `tree-sitter parse`
+2. **Syntax errors**: Ensure parentheses match and captures are properly named
+3. **Complex patterns**: Simplify nested patterns that Tree-sitter can't handle
+
+**Debug approach**:
+```bash
+# Test your query file
+tree-sitter query codemap.scm test-file.js
+```
 
 ### Linking Problems
 

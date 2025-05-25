@@ -3,17 +3,22 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
 #include "../debug.h"
 
 /**
- * Template Language Pack for LLM_CTX
+ * Template Language Pack for LLM_CTX using tree-sitter queries
  *
  * This is a starting point for creating your own language pack.
  * Replace "your-language" with your target language name.
  */
 
-/* Import Tree-sitter API definitions */
-#include "tree-sitter.h"
+/* Debug mode flag - define locally for shared library, extern for tests */
+#ifdef TEST_BUILD
+extern bool debug_mode;
+#else
+bool debug_mode = false;
+#endif
 
 /* Import required structures from LLM_CTX */
 typedef enum { 
@@ -46,20 +51,119 @@ typedef struct Arena {
 #endif
 } Arena;
 
+/* Import Tree-sitter API definitions */
+#include "tree-sitter.h"
+
 /* Static file extensions array - update with your language's extensions */
 static const char *lang_extensions[] = {".yourlang", NULL};
 static size_t lang_extension_count = 1;  /* Update this count */
 
+/* Query source - loaded once and cached */
+static char *query_source = NULL;
+static TSQuery *compiled_query = NULL;
+
 /**
- * Utility function to copy a substring from source code
+ * Load query file content
+ */
+static char* load_query_file(const char *pack_dir) {
+    char query_path[4096];
+    FILE *f = NULL;
+    
+    // Try several paths to find the query file
+    const char *paths[] = {
+        "packs/your-language/codemap.scm",  // Update this path
+        "./packs/your-language/codemap.scm",
+        "../your-language/codemap.scm",
+        "codemap.scm",
+        NULL
+    };
+    
+    // First try the provided pack_dir
+    if (pack_dir) {
+        snprintf(query_path, sizeof(query_path), "%s/codemap.scm", pack_dir);
+        f = fopen(query_path, "r");
+    }
+    
+    // Try other paths
+    for (int i = 0; paths[i] && !f; i++) {
+        f = fopen(paths[i], "r");
+    }
+    
+    if (!f) {
+        // Try to find where we are and construct path
+        char cwd[4096];
+        if (getcwd(cwd, sizeof(cwd))) {
+            snprintf(query_path, sizeof(query_path), "%s/packs/your-language/codemap.scm", cwd);
+            f = fopen(query_path, "r");
+        }
+    }
+    
+    if (!f) {
+        fprintf(stderr, "ERROR: Could not open codemap.scm (tried multiple paths)\n");
+        return NULL;
+    }
+    
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    char *content = malloc(file_size + 1);
+    if (!content) {
+        fclose(f);
+        return NULL;
+    }
+    
+    size_t read_size = fread(content, 1, file_size, f);
+    content[read_size] = '\0';
+    fclose(f);
+    
+    return content;
+}
+
+/**
+ * Add an entry to the codemap file
+ */
+static CodemapEntry* add_entry(CodemapFile *file, Arena *arena) {
+    if (!file || !arena) return NULL;
+    
+    // Allocate a new array in the arena
+    size_t new_entries_size = sizeof(CodemapEntry) * (file->entry_count + 1);
+    
+    // Check if we have enough space
+    if (arena->pos + new_entries_size > arena->size) {
+        fprintf(stderr, "ERROR: Arena out of memory for new entries\n");
+        return NULL;
+    }
+    
+    // Allocate the new array
+    CodemapEntry *new_entries = (CodemapEntry*)(arena->base + arena->pos);
+    arena->pos += new_entries_size;
+    
+    // Copy existing entries
+    if (file->entry_count > 0 && file->entries) {
+        memcpy(new_entries, file->entries, file->entry_count * sizeof(CodemapEntry));
+    }
+    
+    // Initialize the new entry
+    CodemapEntry *new_entry = &new_entries[file->entry_count];
+    memset(new_entry, 0, sizeof(CodemapEntry));
+    
+    // Update the file structure
+    file->entries = new_entries;
+    file->entry_count++;
+    
+    return new_entry;
+}
+
+/**
+ * Copy a substring from source code
  */
 static char* copy_substring(const char *source, uint32_t start, uint32_t end, Arena *arena) {
     if (!source || start >= end) return NULL;
     
     uint32_t length = end - start;
-    if (length >= 256) length = 255; /* Limit string length */
+    if (length >= 256) length = 255; // Enforce size limit
     
-    /* Allocate from arena */
     if (arena->pos + length + 1 > arena->size) {
         fprintf(stderr, "ERROR: Arena out of memory for substring\n");
         return NULL;
@@ -67,91 +171,76 @@ static char* copy_substring(const char *source, uint32_t start, uint32_t end, Ar
     
     char *str = (char*)(arena->base + arena->pos);
     memcpy(str, source + start, length);
-    str[length] = '\0'; /* Null terminate */
+    str[length] = '\0'; // Null terminate
     
     arena->pos += length + 1;
     return str;
 }
 
 /**
- * Process a Tree-sitter node and extract code entities
+ * Process a query match and extract code entity
  */
-static void process_node(TSNode node, const char *source, CodemapFile *file, Arena *arena, const char *container) {
-    if (ts_node_is_null(node)) return;
+static void process_match(const TSQueryMatch *match, const char *source, 
+                         CodemapFile *file, Arena *arena, TSQuery *query) {
+    // Extract captures
+    char *name = NULL;
+    char *params = NULL;
+    char *container = NULL;
+    CMKind kind = CM_FUNCTION;
     
-    const char *node_type = ts_node_type(node);
-    
-    /* Examples for handling common node types - adjust for your language */
-    
-    /* Example: Function detection */
-    if (strcmp(node_type, "function_definition") == 0 || 
-        strcmp(node_type, "function_declaration") == 0) {
+    for (uint16_t i = 0; i < match->capture_count; i++) {
+        const TSQueryCapture *capture = &match->captures[i];
+        uint32_t capture_name_len;
+        const char *capture_name = ts_query_capture_name_for_id(
+            query, capture->index, &capture_name_len);
         
-        /* Find the function name - this is highly language specific */
-        TSNode name_node = {0};
-        for (uint32_t i = 0; i < ts_node_child_count(node); i++) {
-            TSNode child = ts_node_child(node, i);
-            if (strcmp(ts_node_type(child), "identifier") == 0) {
-                name_node = child;
-                break;
-            }
-        }
+        uint32_t start = ts_node_start_byte(capture->node);
+        uint32_t end = ts_node_end_byte(capture->node);
         
-        if (!ts_node_is_null(name_node)) {
-            uint32_t start = ts_node_start_byte(name_node);
-            uint32_t end = ts_node_end_byte(name_node);
-            char *name = copy_substring(source, start, end, arena);
-            
-            if (name) {
-                /* Add to codemap entries */
-                if (file->entry_count < 1000) { /* Prevent overflow */
-                    /* Allocate new entries array if needed */
-                    size_t new_size = sizeof(CodemapEntry) * (file->entry_count + 1);
-                    CodemapEntry *new_entries = (CodemapEntry*)(arena->base + arena->pos);
-                    arena->pos += new_size;
-                    
-                    /* Copy existing entries */
-                    if (file->entry_count > 0 && file->entries) {
-                        memcpy(new_entries, file->entries, sizeof(CodemapEntry) * file->entry_count);
-                    }
-                    
-                    /* Initialize new entry */
-                    CodemapEntry *entry = &new_entries[file->entry_count];
-                    memset(entry, 0, sizeof(CodemapEntry));
-                    
-                    strncpy(entry->name, name, sizeof(entry->name) - 1);
-                    strcpy(entry->signature, "()"); /* Default empty signature */
-                    strcpy(entry->return_type, "void"); /* Default return type */
-                    
-                    if (container) {
-                        strncpy(entry->container, container, sizeof(entry->container) - 1);
-                    }
-                    
-                    entry->kind = CM_FUNCTION;
-                    
-                    /* Update file with new entries */
-                    file->entries = new_entries;
-                    file->entry_count++;
-                }
-            }
+        // Extract based on capture name
+        if (strncmp(capture_name, "function.name", capture_name_len) == 0 ||
+            strncmp(capture_name, "class.name", capture_name_len) == 0 ||
+            strncmp(capture_name, "method.name", capture_name_len) == 0 ||
+            strncmp(capture_name, "type.name", capture_name_len) == 0) {
+            name = copy_substring(source, start, end, arena);
+        } else if (strncmp(capture_name, "function.params", capture_name_len) == 0 ||
+                   strncmp(capture_name, "method.params", capture_name_len) == 0) {
+            params = copy_substring(source, start, end, arena);
+        } else if (strncmp(capture_name, "class.container", capture_name_len) == 0 ||
+                   strncmp(capture_name, "method.container", capture_name_len) == 0) {
+            container = copy_substring(source, start, end, arena);
         }
     }
     
-    /* Example: Class detection */
-    else if (strcmp(node_type, "class_declaration") == 0) {
-        /* Find the class name - this is highly language specific */
-        /* Similar approach to function detection */
-        /* ... */
+    // Determine kind based on the match pattern
+    for (uint16_t i = 0; i < match->capture_count; i++) {
+        const TSQueryCapture *capture = &match->captures[i];
+        uint32_t capture_name_len;
+        const char *capture_name = ts_query_capture_name_for_id(
+            query, capture->index, &capture_name_len);
         
-        /* Process class methods - recursively visit children with class name as container */
-        /* ... */
+        if (strncmp(capture_name, "class", capture_name_len) == 0) {
+            kind = CM_CLASS;
+            break;
+        } else if (strncmp(capture_name, "type", capture_name_len) == 0) {
+            kind = CM_TYPE;
+            break;
+        } else if (strncmp(capture_name, "method", capture_name_len) == 0) {
+            kind = CM_METHOD;
+            break;
+        }
     }
     
-    /* Recursively process all children */
-    uint32_t child_count = ts_node_child_count(node);
-    for (uint32_t i = 0; i < child_count; i++) {
-        TSNode child = ts_node_child(node, i);
-        process_node(child, source, file, arena, container);
+    // Create codemap entry if we have a name
+    if (name) {
+        CodemapEntry *entry = add_entry(file, arena);
+        if (!entry) return;
+        
+        strncpy(entry->name, name, sizeof(entry->name) - 1);
+        strncpy(entry->signature, params ? params : "()", sizeof(entry->signature) - 1);
+        strncpy(entry->return_type, "void", sizeof(entry->return_type) - 1);
+        strncpy(entry->container, container ? container : "", sizeof(entry->container) - 1);
+        entry->kind = kind;
     }
 }
 
@@ -159,24 +248,41 @@ static void process_node(TSNode node, const char *source, CodemapFile *file, Are
 
 /**
  * Initialize the language pack
- * This function must be exported with this exact name
  */
 bool initialize(void) {
-    debug_printf("[DEBUG] Initializing language pack: template");
+    debug_printf("[DEBUG] Initializing language pack: your-language");
+    
+    // Load the query file
+    if (!query_source) {
+        query_source = load_query_file("packs/your-language");
+        if (!query_source) {
+            fprintf(stderr, "ERROR: Failed to load codemap.scm\n");
+            return false;
+        }
+    }
+    
     return true;
 }
 
 /**
  * Clean up resources when the language pack is unloaded
- * This function must be exported with this exact name
  */
 void cleanup(void) {
-    debug_printf("[DEBUG] Cleaning up language pack: template");
+    debug_printf("[DEBUG] Cleaning up language pack: your-language");
+    
+    if (query_source) {
+        free(query_source);
+        query_source = NULL;
+    }
+    
+    if (compiled_query) {
+        ts_query_delete(compiled_query);
+        compiled_query = NULL;
+    }
 }
 
 /**
  * Return the list of file extensions supported by this language pack
- * This function must be exported with this exact name
  */
 const char **get_extensions(size_t *count) {
     if (count) {
@@ -187,7 +293,6 @@ const char **get_extensions(size_t *count) {
 
 /**
  * Parse a source file and extract code structure information
- * This function must be exported with this exact name
  */
 bool parse_file(const char *path, const char *source, size_t source_len, 
                CodemapFile *file, Arena *arena) {
@@ -196,20 +301,44 @@ bool parse_file(const char *path, const char *source, size_t source_len,
         return false;
     }
     
-    debug_printf("[DEBUG] Parsing file with language pack: template, path: %s", path);
+    debug_printf("[DEBUG] Parsing file with language pack: your-language, path: %s", path);
     
-    /* Create a tree-sitter parser */
+    // Get your language's tree-sitter function
+    const TSLanguage *language = tree_sitter_your_language();
+    
+    // Compile query if not already compiled
+    if (!compiled_query) {
+        uint32_t error_offset;
+        TSQueryError error_type;
+        compiled_query = ts_query_new(language, query_source, strlen(query_source),
+                                     &error_offset, &error_type);
+        
+        if (!compiled_query) {
+            fprintf(stderr, "ERROR: Failed to compile query at offset %u: ", error_offset);
+            switch (error_type) {
+                case TSQueryErrorSyntax:
+                    fprintf(stderr, "Syntax error\n");
+                    break;
+                case TSQueryErrorNodeType:
+                    fprintf(stderr, "Invalid node type\n");
+                    break;
+                case TSQueryErrorField:
+                    fprintf(stderr, "Invalid field\n");
+                    break;
+                case TSQueryErrorCapture:
+                    fprintf(stderr, "Invalid capture\n");
+                    break;
+                default:
+                    fprintf(stderr, "Unknown error\n");
+            }
+            return false;
+        }
+    }
+    
+    // Create a tree-sitter parser
     TSParser *parser = ts_parser_new();
     if (!parser) {
         fprintf(stderr, "ERROR: Failed to create tree-sitter parser\n");
-        return false;
-    }
-    
-    /* Set language to your language */
-    const TSLanguage *language = tree_sitter_your_language();
-    if (!language) {
-        fprintf(stderr, "ERROR: Failed to load language grammar\n");
-        ts_parser_delete(parser);
         return false;
     }
     
@@ -219,7 +348,7 @@ bool parse_file(const char *path, const char *source, size_t source_len,
         return false;
     }
     
-    /* Parse the source code */
+    // Parse the source code
     TSTree *tree = ts_parser_parse_string(parser, NULL, source, (uint32_t)source_len);
     if (!tree) {
         fprintf(stderr, "ERROR: Failed to parse source code\n");
@@ -227,16 +356,30 @@ bool parse_file(const char *path, const char *source, size_t source_len,
         return false;
     }
     
-    /* Get the syntax tree root node */
+    // Execute query
+    TSQueryCursor *cursor = ts_query_cursor_new();
     TSNode root_node = ts_tree_root_node(tree);
+    ts_query_cursor_exec(cursor, compiled_query, root_node);
     
-    /* Process the AST to extract code entities */
-    process_node(root_node, source, file, arena, NULL);
+    // Process matches
+    TSQueryMatch match;
+    uint32_t match_count = 0;
+    while (ts_query_cursor_next_match(cursor, &match)) {
+        process_match(&match, source, file, arena, compiled_query);
+        match_count++;
+    }
     
-    /* Clean up resources */
+    // Clean up tree-sitter resources
+    ts_query_cursor_delete(cursor);
     ts_tree_delete(tree);
     ts_parser_delete(parser);
     
-    printf("Successfully extracted %zu code entities from %s\n", file->entry_count, path);
+    if (file->entry_count == 0) {
+        debug_printf("WARNING: No code entities found in file: %s (processed %u matches)", path, match_count);
+    } else {
+        debug_printf("Successfully extracted %zu code entities from %s (from %u matches).", 
+                    file->entry_count, path, match_count);
+    }
+    
     return true;
 }
