@@ -3,11 +3,19 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
 #include "../debug.h"
 
 /**
- * JavaScript language pack for LLM_CTX using tree-sitter statically linked
+ * JavaScript language pack for LLM_CTX using tree-sitter queries
  */
+
+/* Debug mode flag - define locally for shared library, extern for tests */
+#ifdef TEST_BUILD
+extern bool debug_mode;
+#else
+bool debug_mode = false;
+#endif
 
 // Import exact struct definitions from the main codebase
 typedef enum { 
@@ -48,12 +56,73 @@ typedef struct Arena {
 static const char *js_extensions[] = {".js", ".jsx", ".ts", ".tsx", NULL};
 static size_t js_extension_count = 4;  // Excluding NULL terminator
 
+/* Query source - loaded once and cached */
+static char *query_source = NULL;
+static TSQuery *compiled_query = NULL;
+static const TSLanguage *current_language = NULL;
+
+/**
+ * Load query file content
+ */
+static char* load_query_file(const char *pack_dir) {
+    char query_path[4096];
+    FILE *f = NULL;
+    
+    // Try several paths to find the query file
+    const char *paths[] = {
+        "packs/javascript/codemap.scm",
+        "./packs/javascript/codemap.scm",
+        "../javascript/codemap.scm",
+        "codemap.scm",
+        NULL
+    };
+    
+    // First try the provided pack_dir
+    if (pack_dir) {
+        snprintf(query_path, sizeof(query_path), "%s/codemap.scm", pack_dir);
+        f = fopen(query_path, "r");
+    }
+    
+    // Try other paths
+    for (int i = 0; paths[i] && !f; i++) {
+        f = fopen(paths[i], "r");
+    }
+    
+    if (!f) {
+        // Try to find where we are and construct path
+        char cwd[4096];
+        if (getcwd(cwd, sizeof(cwd))) {
+            snprintf(query_path, sizeof(query_path), "%s/packs/javascript/codemap.scm", cwd);
+            f = fopen(query_path, "r");
+        }
+    }
+    
+    if (!f) {
+        fprintf(stderr, "ERROR: Could not open codemap.scm (tried multiple paths)\n");
+        return NULL;
+    }
+    
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    char *content = malloc(file_size + 1);
+    if (!content) {
+        fclose(f);
+        return NULL;
+    }
+    
+    size_t read_size = fread(content, 1, file_size, f);
+    content[read_size] = '\0';
+    fclose(f);
+    
+    return content;
+}
+
 /**
  * Add an entry to the codemap file
  */
-static CodemapEntry* add_entry(CodemapFile *file, const char *name, const char *signature, 
-                              const char *return_type, const char *container, CMKind kind, 
-                              Arena *arena) {
+static CodemapEntry* add_entry(CodemapFile *file, Arena *arena) {
     if (!file || !arena) return NULL;
     
     // Allocate a new array in the arena
@@ -77,13 +146,6 @@ static CodemapEntry* add_entry(CodemapFile *file, const char *name, const char *
     // Initialize the new entry
     CodemapEntry *new_entry = &new_entries[file->entry_count];
     memset(new_entry, 0, sizeof(CodemapEntry));
-    
-    // Set entry fields safely
-    strncpy(new_entry->name, name ? name : "<anonymous>", sizeof(new_entry->name) - 1);
-    strncpy(new_entry->signature, signature ? signature : "()", sizeof(new_entry->signature) - 1);
-    strncpy(new_entry->return_type, return_type ? return_type : "void", sizeof(new_entry->return_type) - 1);
-    strncpy(new_entry->container, container ? container : "", sizeof(new_entry->container) - 1);
-    new_entry->kind = kind;
     
     // Update the file structure
     file->entries = new_entries;
@@ -115,145 +177,98 @@ static char* copy_substring(const char *source, uint32_t start, uint32_t end, Ar
 }
 
 /**
- * Get node's name if it's an identifier
+ * Process a query match and extract code entity
  */
-static char* get_identifier_name(TSNode node, const char *source, Arena *arena) {
-    const char *node_type = ts_node_type(node);
+static void process_match(const TSQueryMatch *match, const char *source, 
+                         CodemapFile *file, Arena *arena, TSQuery *query) {
+    // Determine the entity type from pattern index
+    // Pattern indices based on order in codemap.scm:
+    // 0: function declaration
+    // 1-2: function expressions  
+    // 3: class declaration
+    // 4: method definition
+    // 5-6: object methods
+    // 7: export function
+    // 8: default export
     
-    if (strcmp(node_type, "identifier") == 0) {
-        // Direct identifier node - extract name
-        uint32_t start = ts_node_start_byte(node);
-        uint32_t end = ts_node_end_byte(node);
-        return copy_substring(source, start, end, arena);
+    CMKind kind = CM_FUNCTION;
+    bool is_anonymous = false;
+    
+    if (match->pattern_index == 3) {
+        kind = CM_CLASS;
+    } else if (match->pattern_index == 4 || match->pattern_index == 5 || match->pattern_index == 6) {
+        kind = CM_METHOD;
     }
     
-    // Check for identifier in child nodes
-    for (uint32_t i = 0; i < ts_node_child_count(node); i++) {
-        TSNode child = ts_node_child(node, i);
-        const char *child_type = ts_node_type(child);
+    // Extract captures
+    char *name = NULL;
+    char *params = NULL;
+    char *container = NULL;
+    
+    for (uint16_t i = 0; i < match->capture_count; i++) {
+        const TSQueryCapture *capture = &match->captures[i];
+        uint32_t capture_name_len;
+        const char *capture_name = ts_query_capture_name_for_id(
+            query, capture->index, &capture_name_len);
         
-        if (strcmp(child_type, "identifier") == 0) {
-            uint32_t start = ts_node_start_byte(child);
-            uint32_t end = ts_node_end_byte(child);
-            return copy_substring(source, start, end, arena);
-        }
-    }
-    
-    return "<anonymous>";
-}
-
-/**
- * Extract parameters from a node
- */
-static char* get_parameters(TSNode node, const char *source, Arena *arena) {
-    // Look for formal_parameters node
-    TSNode params_node = {0};
-    for (uint32_t i = 0; i < ts_node_child_count(node); i++) {
-        TSNode child = ts_node_child(node, i);
-        const char *child_type = ts_node_type(child);
+        uint32_t start = ts_node_start_byte(capture->node);
+        uint32_t end = ts_node_end_byte(capture->node);
         
-        if (strcmp(child_type, "formal_parameters") == 0) {
-            params_node = child;
-            break;
-        }
-    }
-    
-    if (ts_node_is_null(params_node)) {
-        return "()";
-    }
-    
-    uint32_t start = ts_node_start_byte(params_node);
-    uint32_t end = ts_node_end_byte(params_node);
-    char *params = copy_substring(source, start, end, arena);
-    
-    return params ? params : "()";
-}
-
-/**
- * Process tree-sitter nodes and extract code entities
- */
-static void process_node(TSNode node, const char *source, CodemapFile *file, Arena *arena, const char *current_class) {
-    if (ts_node_is_null(node)) return;
-    
-    const char *node_type = ts_node_type(node);
-    
-    // Extract function declarations
-    if (strcmp(node_type, "function_declaration") == 0) {
-        char *name = get_identifier_name(node, source, arena);
-        char *params = get_parameters(node, source, arena);
-        add_entry(file, name, params, "void", "", CM_FUNCTION, arena);
-    }
-    
-    // Extract class declarations
-    else if (strcmp(node_type, "class_declaration") == 0) {
-        char *class_name = get_identifier_name(node, source, arena);
-        add_entry(file, class_name, "", "", "", CM_CLASS, arena);
-        
-        // Find class body to extract methods
-        TSNode class_body = {0};
-        for (uint32_t i = 0; i < ts_node_child_count(node); i++) {
-            TSNode child = ts_node_child(node, i);
-            if (strcmp(ts_node_type(child), "class_body") == 0) {
-                class_body = child;
-                break;
-            }
+        // Extract based on capture name
+        if (strncmp(capture_name, "function.name", capture_name_len) == 0 ||
+            strncmp(capture_name, "class.name", capture_name_len) == 0 ||
+            strncmp(capture_name, "method.name", capture_name_len) == 0 ||
+            strncmp(capture_name, "type.name", capture_name_len) == 0) {
+            name = copy_substring(source, start, end, arena);
+        } else if (strncmp(capture_name, "function.params", capture_name_len) == 0 ||
+                   strncmp(capture_name, "method.params", capture_name_len) == 0) {
+            params = copy_substring(source, start, end, arena);
+        } else if (strncmp(capture_name, "class.container", capture_name_len) == 0) {
+            container = copy_substring(source, start, end, arena);
         }
         
-        if (!ts_node_is_null(class_body)) {
-            // Process methods in the class body
-            for (uint32_t i = 0; i < ts_node_child_count(class_body); i++) {
-                TSNode child = ts_node_child(class_body, i);
-                const char *child_type = ts_node_type(child);
-                
-                if (strcmp(child_type, "method_definition") == 0) {
-                    // For method_definition, need to look more carefully for the method name
-                    char *method_name = NULL;
+        // For methods, try to find the parent class
+        if (kind == CM_METHOD && !container && capture->node.id) {
+            // Look for a class.name capture in the same match
+            for (uint16_t j = 0; j < match->capture_count; j++) {
+                if (i != j) {
+                    const TSQueryCapture *other_capture = &match->captures[j];
+                    uint32_t other_name_len;
+                    const char *other_capture_name = ts_query_capture_name_for_id(
+                        query, other_capture->index, &other_name_len);
                     
-                    // Check if this is a constructor
-                    const char *first_child_type = ts_node_type(ts_node_child(child, 0));
-                    if (strcmp(first_child_type, "constructor") == 0) {
-                        method_name = "constructor";
-                    } else {
-                        // Look for property_identifier child
-                        for (uint32_t j = 0; j < ts_node_child_count(child); j++) {
-                            TSNode prop = ts_node_child(child, j);
-                            const char *prop_type = ts_node_type(prop);
-                            
-                            if (strcmp(prop_type, "property_identifier") == 0) {
-                                uint32_t start = ts_node_start_byte(prop);
-                                uint32_t end = ts_node_end_byte(prop);
-                                method_name = copy_substring(source, start, end, arena);
-                                break;
-                            }
-                        }
+                    if (strncmp(other_capture_name, "class.name", other_name_len) == 0) {
+                        uint32_t class_start = ts_node_start_byte(other_capture->node);
+                        uint32_t class_end = ts_node_end_byte(other_capture->node);
+                        container = copy_substring(source, class_start, class_end, arena);
+                        break;
                     }
-                    
-                    if (!method_name) {
-                        method_name = "<anonymous>";
-                    }
-                    
-                    char *params = get_parameters(child, source, arena);
-                    add_entry(file, method_name, params, "void", class_name, CM_METHOD, arena);
                 }
             }
         }
     }
     
-    // Extract TypeScript interfaces
-    else if (strcmp(node_type, "interface_declaration") == 0) {
-        char *name = get_identifier_name(node, source, arena);
-        add_entry(file, name, "", "", "", CM_TYPE, arena);
-    }
-    
-    // Recursively process child nodes
-    for (uint32_t i = 0; i < ts_node_child_count(node); i++) {
-        TSNode child = ts_node_child(node, i);
+    // Create codemap entry if we have a name
+    if (name || is_anonymous) {
+        CodemapEntry *entry = add_entry(file, arena);
+        if (!entry) return;
         
-        // Skip class_body as we handle it separately in class_declaration
-        if (strcmp(ts_node_type(child), "class_body") != 0) {
-            process_node(child, source, file, arena, current_class);
-        }
+        strncpy(entry->name, name ? name : "<anonymous>", sizeof(entry->name) - 1);
+        strncpy(entry->signature, params ? params : "()", sizeof(entry->signature) - 1);
+        strncpy(entry->return_type, "void", sizeof(entry->return_type) - 1);
+        strncpy(entry->container, container ? container : "", sizeof(entry->container) - 1);
+        entry->kind = kind;
     }
+}
+
+/**
+ * Get the appropriate Tree-sitter language for a file
+ */
+static const TSLanguage* get_language_for_file(const char *path) {
+    // For now, only support JavaScript
+    // TODO: Add TypeScript support when grammars are linked
+    (void)path; // Suppress unused parameter warning
+    return tree_sitter_javascript();
 }
 
 /**
@@ -262,7 +277,15 @@ static void process_node(TSNode node, const char *source, CodemapFile *file, Are
 bool initialize(void) {
     debug_printf("[DEBUG] Initializing language pack: javascript");
     
-    // We could do more initialization here if needed
+    // Load the query file
+    if (!query_source) {
+        query_source = load_query_file("packs/javascript");
+        if (!query_source) {
+            fprintf(stderr, "ERROR: Failed to load codemap.scm\n");
+            return false;
+        }
+    }
+    
     return true;
 }
 
@@ -272,7 +295,17 @@ bool initialize(void) {
 void cleanup(void) {
     debug_printf("[DEBUG] Cleaning up language pack: javascript");
     
-    // No resources to clean up in this implementation
+    if (query_source) {
+        free(query_source);
+        query_source = NULL;
+    }
+    
+    if (compiled_query) {
+        ts_query_delete(compiled_query);
+        compiled_query = NULL;
+    }
+    
+    current_language = NULL;
 }
 
 /**
@@ -286,7 +319,7 @@ const char **get_extensions(size_t *count) {
 }
 
 /**
- * Parse a JavaScript/TypeScript file using tree-sitter
+ * Parse a JavaScript/TypeScript file using tree-sitter queries
  */
 bool parse_file(const char *path, const char *source, size_t source_len, CodemapFile *file, Arena *arena) {
     if (!path || !source || !file || !arena) {
@@ -296,18 +329,48 @@ bool parse_file(const char *path, const char *source, size_t source_len, Codemap
     
     debug_printf("[DEBUG] Parsing file with language pack: javascript, path: %s", path);
     
+    // Get the appropriate language
+    const TSLanguage *language = get_language_for_file(path);
+    
+    // Recompile query if language changed
+    if (language != current_language || !compiled_query) {
+        if (compiled_query) {
+            ts_query_delete(compiled_query);
+        }
+        
+        uint32_t error_offset;
+        TSQueryError error_type;
+        compiled_query = ts_query_new(language, query_source, strlen(query_source),
+                                     &error_offset, &error_type);
+        
+        if (!compiled_query) {
+            fprintf(stderr, "ERROR: Failed to compile query at offset %u: ", error_offset);
+            switch (error_type) {
+                case TSQueryErrorSyntax:
+                    fprintf(stderr, "Syntax error\n");
+                    break;
+                case TSQueryErrorNodeType:
+                    fprintf(stderr, "Invalid node type\n");
+                    break;
+                case TSQueryErrorField:
+                    fprintf(stderr, "Invalid field\n");
+                    break;
+                case TSQueryErrorCapture:
+                    fprintf(stderr, "Invalid capture\n");
+                    break;
+                default:
+                    fprintf(stderr, "Unknown error\n");
+            }
+            return false;
+        }
+        
+        current_language = language;
+    }
+    
     // Create a tree-sitter parser
     TSParser *parser = ts_parser_new();
     if (!parser) {
         fprintf(stderr, "ERROR: Failed to create tree-sitter parser.\n");
-        return false;
-    }
-    
-    // Set the language to JavaScript
-    const TSLanguage *language = tree_sitter_javascript();
-    if (!language) {
-        fprintf(stderr, "ERROR: Failed to load JavaScript grammar.\n");
-        ts_parser_delete(parser);
         return false;
     }
     
@@ -325,22 +388,29 @@ bool parse_file(const char *path, const char *source, size_t source_len, Codemap
         return false;
     }
     
-    // Get the syntax tree root node
+    // Execute query
+    TSQueryCursor *cursor = ts_query_cursor_new();
     TSNode root_node = ts_tree_root_node(tree);
+    ts_query_cursor_exec(cursor, compiled_query, root_node);
     
-    // Process the syntax tree to extract code entities
-    process_node(root_node, source, file, arena, NULL);
+    // Process matches
+    TSQueryMatch match;
+    uint32_t match_count = 0;
+    while (ts_query_cursor_next_match(cursor, &match)) {
+        process_match(&match, source, file, arena, compiled_query);
+        match_count++;
+    }
     
     // Clean up tree-sitter resources
+    ts_query_cursor_delete(cursor);
     ts_tree_delete(tree);
     ts_parser_delete(parser);
     
-    // Check if we found any entries
     if (file->entry_count == 0) {
-        fprintf(stderr, "WARNING: No code entities found in file: %s\n", path);
-        // We don't consider this a failure - just return success with zero entries
+        debug_printf("WARNING: No code entities found in file: %s (processed %u matches)", path, match_count);
     } else {
-        debug_printf("Successfully extracted %zu code entities from %s.", file->entry_count, path);
+        debug_printf("Successfully extracted %zu code entities from %s (from %u matches).", 
+                    file->entry_count, path, match_count);
     }
     
     return true;
