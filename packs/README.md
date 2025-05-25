@@ -6,9 +6,9 @@ This guide explains how to create and use language packs for LLM_CTX's codemap f
 
 Language packs are plugins that enable LLM_CTX to understand the structure of source code in specific programming languages. They extract functions, classes, methods, and other code entities to provide a structured view for better context in LLM prompts.
 
-## New Query-Based Approach
+## How Language Packs Work
 
-Language packs now use Tree-sitter's query language for pattern matching:
+Language packs use Tree-sitter's query language for pattern matching:
 
 1. **Pattern Definition**: Define patterns in `codemap.scm` using S-expressions
 2. **Minimal C Code**: The C file just loads queries and processes matches
@@ -27,11 +27,9 @@ Example `codemap.scm`:
   name: (identifier) @class.name) @class
 ```
 
-This approach replaces hundreds of lines of manual tree traversal with simple, readable patterns.
-
 ## Developer Workflow: Creating a Language Pack
 
-With the new query-based approach, creating a language pack is much simpler. You define patterns in a `.scm` file and write minimal C code to process matches.
+Creating a language pack involves defining patterns in a `.scm` file and writing minimal C code to process matches.
 
 ### 1. Getting Started
 
