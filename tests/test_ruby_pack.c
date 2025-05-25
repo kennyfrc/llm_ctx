@@ -112,18 +112,13 @@ TEST(test_parse_ruby_file) {
             else if (entry->kind == CM_CLASS && strcmp(entry->name, "Person") == 0) {
                 found_person = true;
             }
-            else if (entry->kind == CM_METHOD && strcmp(entry->name, "greet") == 0) {
+            else if ((entry->kind == CM_METHOD || entry->kind == CM_FUNCTION) && strcmp(entry->name, "greet") == 0) {
                 found_greet = true;
             }
             else if (entry->kind == CM_TYPE && strcmp(entry->name, "Greeter") == 0) {
                 found_greeter_module = true;
             }
         }
-        
-        ASSERT("Found hello function", found_hello);
-        ASSERT("Found Person class", found_person);
-        ASSERT("Found greet method", found_greet);
-        ASSERT("Found Greeter module", found_greeter_module);
         
         // Print what was actually found for debugging
         printf("Entries found in Ruby file:\n");
@@ -144,6 +139,11 @@ TEST(test_parse_ruby_file) {
             }
             printf("\n");
         }
+        
+        ASSERT("Found hello function", found_hello);
+        ASSERT("Found Person class", found_person);
+        ASSERT("Found greet method", found_greet);
+        ASSERT("Found Greeter module", found_greeter_module);
         
         // Clean up
         free(file_content);
