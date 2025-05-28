@@ -6,7 +6,6 @@
 #include "arena.h"
 #include "codemap.h"
 
-/* Forward declaration */
 struct LanguagePack;
 typedef struct LanguagePack LanguagePack;
 

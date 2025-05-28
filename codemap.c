@@ -99,7 +99,6 @@ Codemap codemap_init(Arena *arena) {
 
 /**
  * Add a pattern to the codemap for filtering files
- * Returns true if the pattern was added successfully
  */
 bool codemap_add_pattern(Codemap *cm, const char *pattern, Arena *arena) {
     if (!cm || !pattern || !*pattern) return false;
@@ -256,7 +255,6 @@ static void get_class_names(CodemapFile *file, char **class_names, size_t *num_c
 
 /**
  * Generate the codemap output and append it to the given output_buffer
- * Returns the updated buffer position
  */
 char *codemap_generate(Codemap *cm, char *output_buffer, size_t *buffer_pos, size_t buffer_size) {
     if (!cm || !output_buffer || !buffer_pos) return output_buffer;
@@ -489,8 +487,6 @@ static bool is_js_ts_file(const char *path) {
  * Read file contents
  * Returns a pointer to the file contents, or NULL on error
  * Also sets *size to the size of the file
- * 
- * NOTE: This is a utility function that will be used when tree-sitter integration is added
  */
 __attribute__((unused)) static char *read_file_contents(const char *path, size_t *size, Arena *arena) {
     FILE *file = fopen(path, "rb");

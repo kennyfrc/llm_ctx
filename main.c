@@ -30,7 +30,6 @@
 #  include <mach-o/dyld.h> /* _NSGetExecutablePath */
 #endif
 #include "gitignore.h"
-#define ARENA_IMPLEMENTATION
 #include "arena.h"
 #include "packs.h"
 #include "codemap.h"
@@ -38,7 +37,6 @@
 
 static Arena g_arena;
 
-/* Forward declaration for cleanup function called by fatal() */
 void cleanup(void);
 
 /* Structure to hold settings parsed directly from the config file */
@@ -89,8 +87,6 @@ static void fatal(const char *fmt, ...) {
     /* if stdio state is corrupted. */
     _Exit(EXIT_FAILURE);
 }
-
-/* Custom arena functions removed - all uses replaced with arena.h equivalents */
 
 /* Read entire FILE* into a NUL-terminated buffer.
  * Caller must free().  Returns NULL on OOM or read error. */
@@ -257,8 +253,6 @@ char *get_executable_dir(void)
     return cached;
 }
 
-/* Helper function to store a key-value pair */
-/* Returns true on success, false on OOM */
 static bool store_kv(ConfigSettings *s, const char *k, const char *v) {
     if (strcmp(k, "copy_to_clipboard") == 0) {
         s->copy_to_clipboard = (strcasecmp(v, "true") == 0 || strcmp(v, "1") == 0 || strcasecmp(v, "yes") == 0);
@@ -267,7 +261,6 @@ static bool store_kv(ConfigSettings *s, const char *k, const char *v) {
         s->editor_comments = (strcasecmp(v, "true") == 0 || strcmp(v, "1") == 0 || strcasecmp(v, "yes") == 0);
         s->editor_comments_set = true;
     } else if (strcmp(k, "system_prompt") == 0) {
-        /* Replace previous if any; arena allocations persist until cleanup */
         s->system_prompt_source = arena_strdup_safe(&g_arena, v);
         if (!s->system_prompt_source) {
             errno = ENOMEM;
@@ -279,13 +272,11 @@ static bool store_kv(ConfigSettings *s, const char *k, const char *v) {
     return true;
 }
 
-/* Forward declaration for finalize_multiline_block needed by parse_config_file */
 static bool finalize_multiline_block(ConfigSettings *s,
                                      char *key,
                                      char **buf_ptr,
                                      size_t *len_ptr,
                                      size_t min_indent);
-/* Forward declaration for parse_config_file needed by main */
 bool parse_config_file(const char *config_path, ConfigSettings *settings);
 
 /* ========================= EXISTING CODE ======================= */
@@ -446,8 +437,6 @@ void add_to_processed_files(const char *filepath) {
     
     if (num_processed_files < MAX_FILES) {
         processed_files[num_processed_files] = arena_strdup_safe(&g_arena, filepath);
-        /* Check allocation immediately and handle failure gracefully. */
-        /* Using fatal() normalizes the error path for OOM conditions. */
         if (!processed_files[num_processed_files]) {
             fatal("Out of memory duplicating file path: %s", filepath);
         }
@@ -514,7 +503,6 @@ void add_to_file_tree(const char *filepath) {
     /* Add to file tree array */
     file_tree[file_tree_count++] = new_file;
     
-    /* Post-condition: file tree was updated */
     assert(file_tree_count > 0);
 }
 
@@ -817,8 +805,6 @@ void generate_file_tree(void) {
     }
     
     fprintf(temp_file, "</file_tree>\n\n");
-    
-    /* Note: Codemap generation is now done at the end of main() */
     
     /* Remove temporary tree file */
     unlink(tree_file_path);
@@ -2098,14 +2084,10 @@ int main(int argc, char *argv[]) {
                                     token = strtok(NULL, ",");
                                 }
                             }
-                            // We don't need to free pattern_copy as it's allocated from the arena
                         }
                     }
                 }
                 
-                // Note: If no pattern is provided or the pattern is empty after processing,
-                // we don't need to do anything special here. The generate_codemap_from_patterns
-                // function will automatically add a default pattern to scan the entire codebase.
                 // For brace patterns, provide a more specific message
                 if (g_codemap.pattern_count > 0 && strstr(g_codemap.patterns[0], "{")) {
                     debug_printf("Codemap option enabled - will use brace pattern: %s", g_codemap.patterns[0]);

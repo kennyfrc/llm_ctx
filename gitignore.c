@@ -23,7 +23,6 @@ void reset_gitignore_patterns(void) {
  * Returns 1 if the path should be ignored, 0 otherwise
  */
 int should_ignore_path(const char *path) {
-    /* Pre-condition: valid path pointer */
     assert(path != NULL);
     
     if (!respect_gitignore || num_ignore_patterns == 0) {
@@ -91,9 +90,7 @@ int should_ignore_path(const char *path) {
  * Add a pattern to the ignore list
  */
 void add_ignore_pattern(char *pattern) {
-    /* Pre-condition: pattern pointer is valid */
     assert(pattern != NULL);
-    /* Pre-condition: we have space for more patterns */
     assert(num_ignore_patterns < MAX_IGNORE_PATTERNS);
     
     if (num_ignore_patterns >= MAX_IGNORE_PATTERNS) {
@@ -140,11 +137,9 @@ void add_ignore_pattern(char *pattern) {
     new_pattern.pattern[MAX_PATH - 1] = '\0';
     ignore_patterns[num_ignore_patterns] = new_pattern;
     
-    /* Pre-condition for next call: ensure we don't exceed array bounds */
     assert(num_ignore_patterns < MAX_IGNORE_PATTERNS);
     num_ignore_patterns++;
     
-    /* Post-condition: pattern was properly added */
     assert(strcmp(ignore_patterns[num_ignore_patterns-1].pattern, pattern) == 0);
     assert(ignore_patterns[num_ignore_patterns-1].is_negation == is_negation);
     assert(ignore_patterns[num_ignore_patterns-1].match_only_dir == match_only_dir);
@@ -154,7 +149,6 @@ void add_ignore_pattern(char *pattern) {
  * Load patterns from a .gitignore file
  */
 void load_gitignore_file(const char *filepath) {
-    /* Pre-condition: filepath is valid */
     assert(filepath != NULL);
     
     FILE *file = fopen(filepath, "r");
@@ -183,7 +177,6 @@ void load_all_gitignore_files(void) {
     char current_dir[MAX_PATH];
     char gitignore_path[MAX_PATH * 2];
     
-    /* Pre-condition: ensure we have space for patterns */
     assert(num_ignore_patterns < MAX_IGNORE_PATTERNS);
     
     /* Get the current working directory */
@@ -191,7 +184,6 @@ void load_all_gitignore_files(void) {
         return;
     }
     
-    /* Invariant: current_dir is now a valid path */
     assert(current_dir[0] != '\0');
     
     /* First, try to load .gitignore from the current directory */

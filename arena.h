@@ -124,7 +124,6 @@ ARENA_API void arena_clear(Arena *a) {
     if (!a) return;
     a->pos = 0;
 #ifdef ARENA_ENABLE_COMMIT
-    // no commit tracking for now; assume fully committed
 #endif
 }
 

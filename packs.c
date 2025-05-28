@@ -114,7 +114,6 @@ bool initialize_pack_registry(PackRegistry *registry, Arena *arena) {
         // Skip hidden files and special entries
         if (entry->d_name[0] == '.') continue;
         
-        // Check if it's a directory
         char path[4096];
         snprintf(path, sizeof(path), "%s/%s", packs_dir, entry->d_name);
         
@@ -144,13 +143,11 @@ bool initialize_pack_registry(PackRegistry *registry, Arena *arena) {
         // Skip hidden files and special entries
         if (entry->d_name[0] == '.') continue;
         
-        // Check if it's a directory
         char dir_path[4096];
         snprintf(dir_path, sizeof(dir_path), "%s/%s", packs_dir, entry->d_name);
         
         if (!directory_exists(dir_path)) continue;
         
-        // Check if parser.so exists in the directory
         char parser_path[4096];
         snprintf(parser_path, sizeof(parser_path), "%s/parser.so", dir_path);
         
@@ -409,7 +406,6 @@ size_t load_language_packs(PackRegistry *registry) {
             }
         }
         
-        /* Check result */
         if (!init_result) {
             fprintf(stderr, "Warning: Failed to initialize language pack '%s'\n", pack->name);
             dlclose(pack->handle);

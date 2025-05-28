@@ -43,7 +43,6 @@ Codemap codemap_init(Arena *arena);
 
 /**
  * Add a pattern to the codemap for filtering files
- * Returns true if the pattern was added successfully
  */
 bool codemap_add_pattern(Codemap *cm, const char *pattern, Arena *arena);
 
@@ -63,7 +62,6 @@ CodemapEntry *codemap_add_entry(CodemapFile *file, const char *name, const char 
 
 /**
  * Generate the codemap output and append it to the given output_buffer
- * Returns the updated buffer position
  */
 char *codemap_generate(Codemap *cm, char *output_buffer, size_t *buffer_pos, size_t buffer_size);
 
