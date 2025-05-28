@@ -30,6 +30,7 @@
 #  include <mach-o/dyld.h> /* _NSGetExecutablePath */
 #endif
 #include "gitignore.h"
+#define ARENA_IMPLEMENTATION
 #include "arena.h"
 #include "packs.h"
 #include "codemap.h"

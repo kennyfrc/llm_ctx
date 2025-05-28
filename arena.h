@@ -68,6 +68,11 @@ ARENA_API void *arena_push_size_safe(Arena *a, size_t size, size_t align);
 #include <stdlib.h>
 #include <assert.h>
 
+ARENA_API size_t arena_align_forward(size_t p, size_t a) {
+    if (a == 0) a = sizeof(void*); // Use pointer size as default alignment
+    return (p + (a - 1)) & ~(a - 1);
+}
+
 ARENA_API Arena arena_create(size_t reserve) {
     Arena a = {0};
 #ifdef _WIN32
