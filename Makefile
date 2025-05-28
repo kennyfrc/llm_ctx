@@ -78,11 +78,11 @@ tests/test_extension_mapping: tests/test_extension_mapping.c packs.c arena.c
 
 # Build test_js_pack with tree-sitter JavaScript statically linked
 tests/test_js_pack: tests/test_js_pack.c packs/javascript/js_pack.c arena.c
-	$(CC) $(CFLAGS) -Itree-sitter-javascript/src -Itree-sitter-javascript/bindings/c -o $@ $^ tree-sitter-javascript/libtree-sitter-javascript.a -L/opt/homebrew/lib -ltree-sitter
+	$(CC) $(CFLAGS) -DTEST_BUILD -Itree-sitter-javascript/src -Itree-sitter-javascript/bindings/c -o $@ $^ tree-sitter-javascript/libtree-sitter-javascript.a -L/opt/homebrew/lib -ltree-sitter
 
 # Build test_ruby_pack with tree-sitter Ruby statically linked
 tests/test_ruby_pack: tests/test_ruby_pack.c packs/ruby/ruby_pack.c arena.c
-	$(CC) $(CFLAGS) -Itree-sitter-ruby/src -Itree-sitter-ruby/bindings/c -o $@ $^ tree-sitter-ruby/libtree-sitter-ruby.a -L/opt/homebrew/lib -ltree-sitter
+	$(CC) $(CFLAGS) -DTEST_BUILD -Itree-sitter-ruby/src -Itree-sitter-ruby/bindings/c -o $@ $^ tree-sitter-ruby/libtree-sitter-ruby.a -L/opt/homebrew/lib -ltree-sitter
 
 # Build test_pack_info
 tests/test_pack_info: tests/test_pack_info.c

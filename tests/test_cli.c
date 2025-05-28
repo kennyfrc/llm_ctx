@@ -252,8 +252,21 @@ char *run_command(const char *cmd) {
     }
     
     char tmp[1024];
+    size_t buffer_len = strlen(buffer);
     while (fgets(tmp, sizeof(tmp), pipe) != NULL) {
-        strcat(buffer, tmp);
+        size_t tmp_len = strlen(tmp);
+        if (buffer_len + tmp_len < sizeof(buffer) - 1) {
+            strcat(buffer, tmp);
+            buffer_len += tmp_len;
+        } else {
+            /* Buffer would overflow, truncate */
+            size_t space_left = sizeof(buffer) - buffer_len - 1;
+            if (space_left > 0) {
+                strncat(buffer, tmp, space_left);
+                buffer[sizeof(buffer) - 1] = '\0';
+            }
+            break;
+        }
     }
     
     int status = pclose(pipe);
@@ -372,6 +385,8 @@ TEST(test_cli_help_message) {
            string_contains(output, "-f"));
     ASSERT("Help message includes -e flag",
            string_contains(output, "-e"));
+    ASSERT("Help message includes -t flag",
+           string_contains(output, "-t"));
 }
 
 /* Test directory handling - should process files in directory but not show directory itself (prefixed) */
