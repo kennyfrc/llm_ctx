@@ -39,8 +39,8 @@ __USER_llm_ctx.conf.backup__
 tree-sitter-*
 # packs/
 CLAUDE.md
-spec.md
 
-# Documentation and notes that shouldn't be in version control
+# Internal documentation and notes that shouldn't be in version control
 docs/
 cami.md
+spec.md
