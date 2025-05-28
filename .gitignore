@@ -40,3 +40,7 @@ tree-sitter-*
 # packs/
 CLAUDE.md
 spec.md
+
+# Documentation and notes that shouldn't be in version control
+docs/
+cami.md
