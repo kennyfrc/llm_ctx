@@ -3,6 +3,7 @@ llm_ctx
 llm_ctx.dSYM/
 *.o
 *.out
+*.so
 test_*
 !test_*.c
 !test_*.h
