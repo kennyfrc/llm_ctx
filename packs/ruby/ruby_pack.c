@@ -35,11 +35,11 @@ typedef struct {
 
 typedef struct {
     char           path[4096];
-    CodemapEntry  *entries;   /* arena array */
+    CodemapEntry  *entries;    /* arena array */
     size_t         entry_count;
 } CodemapFile;
 
-// Import the actual Arena type definition
+// Import the actual Arena type definition from arena.h
 typedef struct Arena {
     unsigned char *base;
     size_t pos;
@@ -52,13 +52,17 @@ typedef struct Arena {
 // Include tree-sitter API
 #include "tree-sitter.h"
 
+// External tree-sitter language declaration
+extern const TSLanguage *tree_sitter_ruby(void);
+
 /* Static extensions array */
-static const char *ruby_extensions[] = {".rb", ".rake", ".gemspec", NULL};
-static size_t ruby_extension_count = 3;  // Excluding NULL terminator
+static const char *ruby_extensions[] = {".rb", ".rake", ".ru", ".gemspec", NULL};
+static size_t ruby_extension_count = 4;  // Excluding NULL terminator
 
 /* Query source - loaded once and cached */
 static char *query_source = NULL;
 static TSQuery *compiled_query = NULL;
+static const TSLanguage *current_language = NULL;
 
 /**
  * Load query file content
@@ -176,32 +180,26 @@ static char* copy_substring(const char *source, uint32_t start, uint32_t end, Ar
 }
 
 /**
- * Extract parameters from Ruby method_parameters node
- */
-static char* extract_ruby_params(TSNode params_node, const char *source, Arena *arena) {
-    if (ts_node_is_null(params_node)) {
-        return "()";
-    }
-    
-    uint32_t start = ts_node_start_byte(params_node);
-    uint32_t end = ts_node_end_byte(params_node);
-    
-    // Ruby parameters are already in the right format, just copy them
-    return copy_substring(source, start, end, arena);
-}
-
-/**
  * Process a query match and extract code entity
  */
 static void process_match(const TSQueryMatch *match, const char *source, 
                          CodemapFile *file, Arena *arena, TSQuery *query) {
-    // Determine the entity type from the pattern tag
-    // Pattern tags in order: @function, @class, @type, @method, etc.
+    // Determine the entity type from pattern index
+    // Pattern indices based on order in Ruby codemap.scm:
+    // 0: method definition
+    // 1: class definition
+    // 2: module definition
     
     CMKind kind = CM_FUNCTION;
+    bool is_anonymous = false;
     
-    // The pattern tag gives us hints about what kind of entity this is
-    // (Note: pattern predicates could be used for more advanced filtering)
+    if (match->pattern_index == 0) {
+        kind = CM_METHOD;  // Ruby methods are functions
+    } else if (match->pattern_index == 1) {
+        kind = CM_CLASS;
+    } else if (match->pattern_index == 2) {
+        kind = CM_TYPE;  // Modules are types
+    }
     
     // Extract captures
     char *name = NULL;
@@ -221,58 +219,42 @@ static void process_match(const TSQueryMatch *match, const char *source,
         if (strncmp(capture_name, "function.name", capture_name_len) == 0 ||
             strncmp(capture_name, "class.name", capture_name_len) == 0 ||
             strncmp(capture_name, "method.name", capture_name_len) == 0 ||
-            strncmp(capture_name, "type.name", capture_name_len) == 0 ||
-            strncmp(capture_name, "property.name", capture_name_len) == 0) {
-            
-            // For Ruby symbols, remove the leading colon
-            if (strcmp(ts_node_type(capture->node), "simple_symbol") == 0) {
-                name = copy_substring(source, start + 1, end, arena);
-            } else {
-                name = copy_substring(source, start, end, arena);
-            }
+            strncmp(capture_name, "type.name", capture_name_len) == 0) {
+            name = copy_substring(source, start, end, arena);
         } else if (strncmp(capture_name, "function.params", capture_name_len) == 0 ||
                    strncmp(capture_name, "method.params", capture_name_len) == 0) {
-            params = extract_ruby_params(capture->node, source, arena);
-        } else if (strncmp(capture_name, "class.container", capture_name_len) == 0 ||
-                   strncmp(capture_name, "module.container", capture_name_len) == 0 ||
-                   strncmp(capture_name, "method.container", capture_name_len) == 0 ||
-                   strncmp(capture_name, "parent.class", capture_name_len) == 0 ||
-                   strncmp(capture_name, "parent.module", capture_name_len) == 0) {
+            params = copy_substring(source, start, end, arena);
+        } else if (strncmp(capture_name, "class.container", capture_name_len) == 0) {
             container = copy_substring(source, start, end, arena);
         }
-    }
-    
-    // Determine kind based on the match pattern
-    // Look for the main capture to determine the entity type
-    bool has_container = false;
-    for (uint16_t i = 0; i < match->capture_count; i++) {
-        const TSQueryCapture *capture = &match->captures[i];
-        uint32_t capture_name_len;
-        const char *capture_name = ts_query_capture_name_for_id(
-            query, capture->index, &capture_name_len);
         
-        if (strstr(capture_name, ".container")) {
-            has_container = true;
-        }
-        
-        if (strncmp(capture_name, "class", capture_name_len) == 0 ||
-            strstr(capture_name, "class.in_module")) {
-            kind = CM_CLASS;
-        } else if (strncmp(capture_name, "type", capture_name_len) == 0) {
-            kind = CM_TYPE;
-        } else if (strncmp(capture_name, "method", capture_name_len) == 0 ||
-                   strstr(capture_name, "method.in_class") ||
-                   strstr(capture_name, "method.in_module")) {
-            kind = has_container ? CM_METHOD : CM_FUNCTION;
+        // For methods, try to find the parent class
+        if (kind == CM_METHOD && !container && capture->node.id) {
+            // Look for a class.name capture in the same match
+            for (uint16_t j = 0; j < match->capture_count; j++) {
+                if (i != j) {
+                    const TSQueryCapture *other_capture = &match->captures[j];
+                    uint32_t other_name_len;
+                    const char *other_capture_name = ts_query_capture_name_for_id(
+                        query, other_capture->index, &other_name_len);
+                    
+                    if (strncmp(other_capture_name, "class.name", other_name_len) == 0) {
+                        uint32_t class_start = ts_node_start_byte(other_capture->node);
+                        uint32_t class_end = ts_node_end_byte(other_capture->node);
+                        container = copy_substring(source, class_start, class_end, arena);
+                        break;
+                    }
+                }
+            }
         }
     }
     
     // Create codemap entry if we have a name
-    if (name) {
+    if (name || is_anonymous) {
         CodemapEntry *entry = add_entry(file, arena);
         if (!entry) return;
         
-        strncpy(entry->name, name, sizeof(entry->name) - 1);
+        strncpy(entry->name, name ? name : "<anonymous>", sizeof(entry->name) - 1);
         strncpy(entry->signature, params ? params : "()", sizeof(entry->signature) - 1);
         strncpy(entry->return_type, "void", sizeof(entry->return_type) - 1);
         strncpy(entry->container, container ? container : "", sizeof(entry->container) - 1);
@@ -281,14 +263,23 @@ static void process_match(const TSQueryMatch *match, const char *source,
 }
 
 /**
- * Initialize the Ruby pack
+ * Get the appropriate Tree-sitter language for a file
+ */
+static const TSLanguage* get_language_for_file(const char *path) {
+    // Only support Ruby for this pack
+    (void)path; // Suppress unused parameter warning
+    return tree_sitter_ruby();
+}
+
+/**
+ * Initialize the JavaScript pack
  */
 bool initialize(void) {
     debug_printf("[DEBUG] Initializing language pack: ruby");
     
     // Load the query file
     if (!query_source) {
-        query_source = load_query_file("packs/ruby");
+        query_source = load_query_file("packs/javascript");
         if (!query_source) {
             fprintf(stderr, "ERROR: Failed to load codemap.scm\n");
             return false;
@@ -302,7 +293,7 @@ bool initialize(void) {
  * Clean up resources
  */
 void cleanup(void) {
-    debug_printf("[DEBUG] Cleaning up language pack: ruby");
+    debug_printf("[DEBUG] Cleaning up language pack: javascript");
     
     if (query_source) {
         free(query_source);
@@ -313,6 +304,8 @@ void cleanup(void) {
         ts_query_delete(compiled_query);
         compiled_query = NULL;
     }
+    
+    current_language = NULL;
 }
 
 /**
@@ -334,13 +327,17 @@ bool parse_file(const char *path, const char *source, size_t source_len, Codemap
         return false;
     }
     
-    debug_printf("[DEBUG] Parsing file with language pack: ruby, path: %s", path);
+    debug_printf("[DEBUG] Parsing file with language pack: javascript, path: %s", path);
     
-    // Get Ruby language
-    const TSLanguage *language = tree_sitter_ruby();
+    // Get the appropriate language
+    const TSLanguage *language = get_language_for_file(path);
     
-    // Compile query if not already compiled
-    if (!compiled_query) {
+    // Recompile query if language changed
+    if (language != current_language || !compiled_query) {
+        if (compiled_query) {
+            ts_query_delete(compiled_query);
+        }
+        
         uint32_t error_offset;
         TSQueryError error_type;
         compiled_query = ts_query_new(language, query_source, strlen(query_source),
@@ -366,6 +363,8 @@ bool parse_file(const char *path, const char *source, size_t source_len, Codemap
             }
             return false;
         }
+        
+        current_language = language;
     }
     
     // Create a tree-sitter parser

@@ -237,7 +237,7 @@ int string_contains(const char *str, const char *substr) {
 /* Run a command, capturing stdout and stderr, and return output */
 char *run_command(const char *cmd) {
     // Increased buffer size to handle potentially large outputs + stderr
-    static char buffer[32768]; 
+    static char buffer[327680];  // 320KB (10x larger) 
     buffer[0] = '\0';
     char cmd_redir[2048]; // Buffer for command + redirection
 
@@ -1832,8 +1832,21 @@ TEST(test_cli_codemap) {
     char ts_file_path[1024];
     FILE *js_file, *ts_file;
     
+    /* Create isolated test directory */
+    char codemap_dir[1024];
+    snprintf(codemap_dir, sizeof(codemap_dir), "%s/codemap_test", TEST_DIR);
+    mkdir(codemap_dir, 0755);
+    
+    /* Create empty config in test dir to prevent upward search */
+    char config_path[1024];
+    snprintf(config_path, sizeof(config_path), "%s/.llm_ctx.conf", codemap_dir);
+    FILE *config = fopen(config_path, "w");
+    if (config) {
+        fclose(config);
+    }
+    
     /* Create JavaScript test file */
-    snprintf(js_file_path, sizeof(js_file_path), "%s/__test_codemap.js", TEST_DIR);
+    snprintf(js_file_path, sizeof(js_file_path), "%s/__test_codemap.js", codemap_dir);
     js_file = fopen(js_file_path, "w");
     if (js_file) {
         fprintf(js_file, "// JavaScript test file for codemap\n");
@@ -1860,7 +1873,7 @@ TEST(test_cli_codemap) {
     }
     
     /* Create TypeScript test file */
-    snprintf(ts_file_path, sizeof(ts_file_path), "%s/__test_utils.ts", TEST_DIR);
+    snprintf(ts_file_path, sizeof(ts_file_path), "%s/__test_utils.ts", codemap_dir);
     ts_file = fopen(ts_file_path, "w");
     if (ts_file) {
         fprintf(ts_file, "// TypeScript test file for codemap\n");
@@ -1878,8 +1891,8 @@ TEST(test_cli_codemap) {
         fclose(ts_file);
     }
     
-    /* Run with -m flag */
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -m -f %s/__test_*.?s", getenv("PWD"), TEST_DIR);
+    /* Run with -m flag with absolute paths */
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -m -f %s/__test_*.?s", getenv("PWD"), codemap_dir);
     char *output = run_command(cmd);
     
     /* Check for code_map block */

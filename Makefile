@@ -171,11 +171,11 @@ pack:
 	@echo "Compiling parser.so with static linking..."
 	@if [ -f tree-sitter-$(LANG)/src/parser.c ]; then \
 		if [ -f packs/$(LANG)/js_pack.c ]; then \
-			$(CC) -shared -fPIC -o packs/$(LANG)/parser.so packs/$(LANG)/js_pack.c tree-sitter-$(LANG)/src/parser.c tree-sitter-$(LANG)/src/scanner.c -Itree-sitter-$(LANG)/src -Itree-sitter-$(LANG)/bindings/c || { echo "Failed to compile parser"; exit 1; }; \
+			$(CC) -shared -fPIC -o packs/$(LANG)/parser.so packs/$(LANG)/js_pack.c tree-sitter-$(LANG)/src/parser.c tree-sitter-$(LANG)/src/scanner.c -Itree-sitter-$(LANG)/src -Itree-sitter-$(LANG)/bindings/c -L/opt/homebrew/lib -ltree-sitter || { echo "Failed to compile parser"; exit 1; }; \
 		else \
 			echo "Creating language pack C file..."; \
 			cp packs/javascript/js_pack.c packs/$(LANG)/$(LANG)_pack.c; \
-			$(CC) -shared -fPIC -o packs/$(LANG)/parser.so packs/$(LANG)/$(LANG)_pack.c tree-sitter-$(LANG)/src/parser.c tree-sitter-$(LANG)/src/scanner.c -Itree-sitter-$(LANG)/src -Itree-sitter-$(LANG)/bindings/c || { echo "Failed to compile parser"; exit 1; }; \
+			$(CC) -shared -fPIC -o packs/$(LANG)/parser.so packs/$(LANG)/$(LANG)_pack.c tree-sitter-$(LANG)/src/parser.c tree-sitter-$(LANG)/src/scanner.c -Itree-sitter-$(LANG)/src -Itree-sitter-$(LANG)/bindings/c -L/opt/homebrew/lib -ltree-sitter || { echo "Failed to compile parser"; exit 1; }; \
 		fi; \
 		echo "Tree-sitter $(LANG) pack installed in packs/$(LANG)/parser.so"; \
 	else \
