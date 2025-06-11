@@ -21,7 +21,6 @@
 #define USER_CONFIG_BACKUP ".llm_ctx.conf.backup"
 
 /* Declare test functions */
-extern void test_cli_config_discovery_binary_dir(void);
 void test_cli_codemap(void);
 void test_cli_output_to_file(void);
 void test_cli_e_flag_custom_guide(void);
@@ -214,12 +213,6 @@ void setup_test_env(void) {
     f = fopen(TEST_DIR "/.git/objects/dummy", "w"); // Example file inside subdir
     if (f) { fprintf(f, "dummy object\n"); fclose(f); }
 
-    /* Create a default .llm_ctx.conf in the *root* test dir */
-    FILE *conf = fopen(TEST_DIR "/.llm_ctx.conf", "w"); // Base config
-    if (conf) {
-        fprintf(conf, "# Default test config (root)\n");
-        fclose(conf);
-    }
 }
 
 /* Clean up the test environment */
@@ -876,182 +869,11 @@ TEST(test_cli_utf32be_file) {
     ASSERT("Output does NOT contain binary skipped placeholder for UTF-32BE (EXPECTED FAILURE)", !string_contains(output, "[Binary file content skipped]"));
 }
 
-/* Test config file: system_prompt = inline text, no CLI flag */
-TEST(test_cli_config_system_prompt_inline) {
-    char cmd[2048];
-    char conf_path[1024];
-    snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-    const char *config_sys_prompt = "System prompt from config file (inline).";
 
-    /* Create config file */
-    FILE *conf = fopen(conf_path, "w");
-    ASSERT("Config file created for sys prompt inline test", conf != NULL);
-    if (!conf) return;
-    fprintf(conf, "system_prompt=%s\n", config_sys_prompt);
-    fclose(conf);
 
-    /* Run llm_ctx without -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
-    char *output = run_command(cmd);
 
-    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
-    ASSERT("Output contains correct system prompt (from config inline)", string_contains(output, config_sys_prompt));
-    ASSERT("Output does NOT contain default system prompt phrase", !string_contains(output, "Pragmatic Programming Principles"));
 
-    unlink(conf_path);
-}
 
-/* Test config file: system_prompt = @file, no CLI flag */
-TEST(test_cli_config_system_prompt_at_file) {
-    char cmd[2048];
-    char conf_path[1024];
-    char sys_prompt_file_path[1024];
-    snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-    snprintf(sys_prompt_file_path, sizeof(sys_prompt_file_path), "%s/__sys_prompt_config.txt", TEST_DIR);
-    const char *config_sys_prompt = "System prompt from config file (@file).";
-
-    /* Create the system prompt file */
-    FILE *sys_file = fopen(sys_prompt_file_path, "w");
-    ASSERT("System prompt file created for config test", sys_file != NULL);
-    if (!sys_file) return;
-    fprintf(sys_file, "%s", config_sys_prompt);
-    fclose(sys_file);
-
-    /* Create config file pointing to the system prompt file */
-    FILE *conf = fopen(conf_path, "w");
-    ASSERT("Config file created for sys prompt @file test", conf != NULL);
-    if (!conf) { unlink(sys_prompt_file_path); return; }
-    fprintf(conf, "system_prompt=@%s\n", "__sys_prompt_config.txt"); // Relative path within TEST_DIR
-    fclose(conf);
-
-    /* Run llm_ctx without -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
-    char *output = run_command(cmd);
-
-    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
-    ASSERT("Output contains correct system prompt (from config @file)", string_contains(output, config_sys_prompt));
-    ASSERT("Output does NOT contain default system prompt phrase", !string_contains(output, "Pragmatic Programming Principles"));
-
-    unlink(conf_path);
-    unlink(sys_prompt_file_path);
-}
-
-/* Test config file: system_prompt = @nonexistent, no CLI flag (should warn and use default) */
-TEST(test_cli_config_system_prompt_at_nonexistent) {
-    char cmd[2048];
-    char conf_path[1024];
-    snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-
-    /* Create config file pointing to a nonexistent file */
-    FILE *conf = fopen(conf_path, "w");
-    ASSERT("Config file created for sys prompt @nonexistent test", conf != NULL);
-    if (!conf) return;
-    fprintf(conf, "system_prompt=@__nonexistent_sys_prompt.txt\n");
-    fclose(conf);
-
-    /* Run llm_ctx without -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
-    char *output = run_command(cmd); // Captures stderr
-
-    /* Check for warning message on stderr */
-    ASSERT("Output contains warning about nonexistent system prompt file", string_contains(output, "Warning: Cannot read system prompt file"));
-    /* Check that NO system prompt was used (since default is gone and file failed) */
-    ASSERT("Output does NOT contain <system_instructions> (fallback)", !string_contains(output, "<system_instructions>"));
-    ASSERT("Output does NOT contain default system prompt phrase (fallback)", !string_contains(output, "Pragmatic Programming Principles"));
-
-    unlink(conf_path);
-}
-
-/* Test config file: system_prompt = ..., CLI -s overrides */
-TEST(test_cli_config_system_prompt_override_cli_default) {
-    char cmd[2048];
-    char conf_path[1024];
-    snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-    const char *config_sys_prompt = "This should be ignored due to bare -s flag.";
-
-    /* Create config file */
-    FILE *conf = fopen(conf_path, "w");
-    ASSERT("Config file created for sys prompt override test", conf != NULL);
-    if (!conf) return;
-    fprintf(conf, "system_prompt=%s\n", config_sys_prompt);
-    fclose(conf);
-
-    /* Run llm_ctx WITH bare -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -s -f __regular.txt", TEST_DIR, getenv("PWD"));
-    char *output = run_command(cmd);
-
-    // Check that NO system instructions are present because bare -s prevents config loading.
-    ASSERT("Output does NOT contain <system_instructions> (bare -s overrides config)", !string_contains(output, "<system_instructions>"));
-    ASSERT("Output does NOT contain config system prompt", !string_contains(output, config_sys_prompt));
-
-    unlink(conf_path);
-}
-
-/* Test config file: system_prompt = ..., CLI -s@file overrides */
-TEST(test_cli_config_system_prompt_override_cli_at_file) {
-    char cmd[2048];
-    char conf_path[1024];
-    char cli_sys_prompt_file_path[1024];
-    snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-    snprintf(cli_sys_prompt_file_path, sizeof(cli_sys_prompt_file_path), "%s/__sys_prompt_cli.txt", TEST_DIR);
-    const char *config_sys_prompt = "This should be overridden by CLI -s@file.";
-    const char *cli_sys_prompt = "System prompt from CLI file.";
-
-    /* Create the CLI system prompt file */
-    FILE *cli_sys_file = fopen(cli_sys_prompt_file_path, "w");
-    ASSERT("CLI system prompt file created", cli_sys_file != NULL);
-    if (!cli_sys_file) return;
-    fprintf(cli_sys_file, "%s", cli_sys_prompt);
-    fclose(cli_sys_file);
-
-    /* Create config file */
-    FILE *conf = fopen(conf_path, "w");
-    ASSERT("Config file created for sys prompt override @file test", conf != NULL);
-    if (!conf) { unlink(cli_sys_prompt_file_path); return; }
-    fprintf(conf, "system_prompt=%s\n", config_sys_prompt);
-    fclose(conf);
-
-    /* Run llm_ctx WITH -s@file flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -s@%s -f __regular.txt", TEST_DIR, getenv("PWD"), "__sys_prompt_cli.txt");
-    char *output = run_command(cmd);
-
-    /* Check that the prompt from the CLI file was used */
-    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
-    ASSERT("Output contains correct system prompt (from CLI @file)", string_contains(output, cli_sys_prompt));
-    ASSERT("Output does NOT contain config system prompt", !string_contains(output, config_sys_prompt));
-    ASSERT("Output does NOT contain default system prompt phrase", !string_contains(output, "Pragmatic Programming Principles"));
-
-    unlink(conf_path);
-    unlink(cli_sys_prompt_file_path);
-}
-
-/* Test config file: system_prompt = multiline value */
-TEST(test_cli_config_system_prompt_multiline) {
-    char cmd[2048];
-    char conf_path[1024];
-    snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-    /* Test setup matching the intended scenario for indentation */
-    /* After uniform de-indent (min-indent = 2), the stored value is: */
-    const char *expected_combined_prompt = "Line 1.\n  Line 2 indented.\nLine 3 same indent.";
-    /* Create config file with multiline prompt */
-    FILE *conf = fopen(conf_path, "w");
-    ASSERT("Config file created for sys prompt multiline test", conf != NULL);
-    if (!conf) return;
-    fprintf(conf, "system_prompt=\n"); // Start multiline
-    fprintf(conf, "  Line 1.\n");             // Indent 2
-    fprintf(conf, "    Line 2 indented.\n"); // Indent 4
-    fprintf(conf, "  Line 3 same indent.\n"); // Indent 2
-    fclose(conf);
-
-    /* Run llm_ctx without -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
-    char *output = run_command(cmd);
-
-    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
-    ASSERT("Output contains correct combined multiline system prompt", string_contains(output, expected_combined_prompt));
-
-    unlink(conf_path);
-}
 // ============================================================================
 // Tests for -c @file / @- / = variants
 // ============================================================================
@@ -1328,80 +1150,8 @@ TEST(test_cli_e_flag_custom_guide) {
 }
 
 
-/* Test config file: editor_comments = true, no CLI flag */
-TEST(test_cli_config_editor_comments_true) {
-    char cmd[2048];
-    char conf_path[1024];
-    snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-    const char *instructions = "Test instructions for config editor comments.";
-    const char *expected_reply_with_review_start = "    2. Return **PR-style code review comments**";
 
-    /* Create config file with editor_comments=true */
-    FILE *conf = fopen(conf_path, "w");
-    ASSERT("Config file created for editor_comments=true test", conf != NULL);
-    if (!conf) return;
-    fprintf(conf, "editor_comments=true\n");
-    fclose(conf);
 
-    /* Run llm_ctx without -e flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
-    char *output = run_command(cmd);
-
-    ASSERT("Output contains <response_guide>", string_contains(output, "<response_guide>"));
-    ASSERT("Output contains correct 'PR-style' reply format (from config)", string_contains(output, expected_reply_with_review_start));
-
-    unlink(conf_path); // Clean up config file
-}
-
-/* Test config file: editor_comments = false, no CLI flag */
-TEST(test_cli_config_editor_comments_false) {
-    char cmd[2048];
-    char conf_path[1024];
-    snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-    const char *instructions = "Test instructions for config editor comments false.";
-    const char *expected_reply_no_review = "    2. No code-review block is required.";
-
-    /* Create config file with editor_comments=false */
-    FILE *conf = fopen(conf_path, "w");
-    ASSERT("Config file created for editor_comments=false test", conf != NULL);
-    if (!conf) return;
-    fprintf(conf, "editor_comments=false\n");
-    fclose(conf);
-
-    /* Run llm_ctx without -e flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
-    char *output = run_command(cmd);
-
-    ASSERT("Output contains <response_guide>", string_contains(output, "<response_guide>"));
-    ASSERT("Output contains correct 'No code-review' reply format (from config)", string_contains(output, expected_reply_no_review));
-
-    unlink(conf_path); // Clean up config file
-}
-
-/* Test config file: editor_comments = false, CLI -e overrides */
-TEST(test_cli_config_editor_comments_override) {
-    char cmd[2048];
-    char conf_path[1024];
-    snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-    const char *instructions = "Test instructions for config override.";
-    const char *expected_reply_with_review_start = "    2. Return **PR-style code review comments**";
-
-    /* Create config file with editor_comments=false */
-    FILE *conf = fopen(conf_path, "w");
-    ASSERT("Config file created for override test", conf != NULL);
-    if (!conf) return;
-    fprintf(conf, "editor_comments=false\n");
-    fclose(conf);
-
-    /* Run llm_ctx WITH -e flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -e -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
-    char *output = run_command(cmd);
-
-    ASSERT("Output contains <response_guide>", string_contains(output, "<response_guide>"));
-    ASSERT("Output contains correct 'PR-style' reply format (CLI override)", string_contains(output, expected_reply_with_review_start));
-
-    unlink(conf_path); // Clean up config file
-}
 
 /* Test prompt-only output: -c flag with no files/stdin */
 TEST(test_cli_prompt_only_c) {
@@ -1535,212 +1285,11 @@ TEST(test_cli_s_glued_inline) {
     ASSERT("Output contains glued inline system prompt", string_contains(output, "gluedtext"));
 }
 
-// ============================================================================
-// Tests for .llm_ctx.conf
-// ============================================================================
 
-/* Test config file: copy_to_clipboard = true */
-TEST(test_cli_config_copy_clipboard_true) {
-    char cmd[2048];
-    char conf_path[1024]; // Path in TEST_DIR
-    snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
 
-    /* Create config file with copy=true */
-    FILE *conf = fopen(conf_path, "w");
-    ASSERT("Config file created for copy=true test", conf != NULL);
-    if (!conf) return;
-    fprintf(conf, "copy_to_clipboard=true\n");
-    fclose(conf);
 
-    /* Run llm_ctx in the test directory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
-    char *output = run_command(cmd); /* run_command captures stderr */
 
-    /* Check that stdout is empty (content should NOT be printed) */
-    ASSERT("Output does NOT contain regular file content (stdout suppressed)", !string_contains(output, "Regular file content"));
-    /* Check that the confirmation message IS present on stderr */
-    ASSERT("Output contains clipboard confirmation message (stderr)", string_contains(output, "Content copied to clipboard."));
-}
 
-/* Test config file: copy_to_clipboard = false */
-TEST(test_cli_config_copy_clipboard_false) {
-    char cmd[2048];
-    char conf_path[1024]; // Path in TEST_DIR
-    snprintf(conf_path, sizeof(conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-
-    /* Ensure config file exists but copy is false (or absent) */
-    FILE *conf = fopen(conf_path, "w"); /* Overwrite or create */
-    ASSERT("Config file created/overwritten for copy=false test", conf != NULL);
-    if (!conf) return;
-    fprintf(conf, "copy_to_clipboard=false\n");
-    fclose(conf);
-
-    /* Run llm_ctx in the test directory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
-    char *output = run_command(cmd); /* run_command captures stderr */
-
-    /* Check that the copy mechanism wasn't triggered (no stderr message, stdout present) */
-    /* Stdout should contain the content */
-    ASSERT("Output contains regular file content (stdout)", string_contains(output, "Regular file content"));
-}
-
-/* Test config file discovery: Load from parent directory */
-TEST(test_cli_config_discovery_parent) {
-    char cmd[2048];
-    char parent_conf_path[1024];
-    char subdir_path[1024];
-
-    snprintf(parent_conf_path, sizeof(parent_conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-    snprintf(subdir_path, sizeof(subdir_path), "%s/__subdir", TEST_DIR);
-
-    /* Create config file in parent (TEST_DIR) */
-    FILE *conf = fopen(parent_conf_path, "w");
-    ASSERT("Parent config file created", conf != NULL);
-    if (!conf) return;
-    fprintf(conf, "copy_to_clipboard=true\n");
-    fclose(conf);
-
-    /* Create a subdirectory */
-    mkdir(subdir_path, 0755);
-    /* Ensure no config file exists in the subdirectory */
-    char subdir_conf_path[1024];
-    snprintf(subdir_conf_path, sizeof(subdir_conf_path), "%s/.llm_ctx.conf", subdir_path);
-    unlink(subdir_conf_path); // Remove if it exists from previous tests
-
-    /* Run llm_ctx from the subdirectory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f %s/__regular.txt", subdir_path, getenv("PWD"), TEST_DIR);
-    char *output = run_command(cmd);
-
-    /* Check if the setting from the parent config was applied (copy=true means no stdout) */
-    ASSERT("Output does NOT contain regular file content (stdout suppressed by parent config)", !string_contains(output, "Regular file content"));    
-    ASSERT("Output contains clipboard confirmation message (stderr from parent config)", string_contains(output, "Content copied to clipboard."));
-
-    /* Clean up */
-    rmdir(subdir_path);
-    unlink(parent_conf_path); // Clean up parent config
-}
-
-/* Test config file discovery: CWD takes precedence over parent */
-TEST(test_cli_config_discovery_cwd_over_parent) {
-    char cmd[2048];
-    char parent_conf_path[1024];
-    char subdir_path[1024];
-    char subdir_conf_path[1024];
-
-    snprintf(parent_conf_path, sizeof(parent_conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-    snprintf(subdir_path, sizeof(subdir_path), "%s/__subdir_override", TEST_DIR);
-    snprintf(subdir_conf_path, sizeof(subdir_conf_path), "%s/.llm_ctx.conf", subdir_path);
-
-    /* Create config file in parent (TEST_DIR) with copy=true */
-    FILE *parent_conf = fopen(parent_conf_path, "w");
-    ASSERT("Parent config file created", parent_conf != NULL);
-    if (!parent_conf) return;
-    fprintf(parent_conf, "copy_to_clipboard=true\n");
-    fclose(parent_conf);
-
-    /* Create subdirectory */
-    mkdir(subdir_path, 0755);
-
-    /* Create config file in subdirectory with copy=false */
-    FILE *subdir_conf = fopen(subdir_conf_path, "w");
-    ASSERT("Subdir config file created", subdir_conf != NULL);
-    if (!subdir_conf) { rmdir(subdir_path); unlink(parent_conf_path); return; }
-    fprintf(subdir_conf, "copy_to_clipboard=false\n");
-    fclose(subdir_conf);
-
-    /* Run llm_ctx from the subdirectory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f %s/__regular.txt", subdir_path, getenv("PWD"), TEST_DIR);
-    char *output = run_command(cmd);
-
-    /* Check that the setting from the subdir config (false) was applied (stdout present) */
-    ASSERT("Output contains regular file content (stdout)", string_contains(output, "Regular file content"));
-
-    /* Clean up */
-    unlink(subdir_conf_path);
-    rmdir(subdir_path);
-    unlink(parent_conf_path);
-}
-
-/* Test config file discovery: LLM_CTX_CONFIG environment variable override */
-TEST(test_cli_config_discovery_env_override) {
-    char cmd[2048];
-    char env_conf_path[1024] = "/tmp/llm_ctx_env_test.conf"; // Outside TEST_DIR
-    char cwd_conf_path[1024];
-
-    snprintf(cwd_conf_path, sizeof(cwd_conf_path), "%s/.llm_ctx.conf", TEST_DIR);
-
-    /* 1. Create the config file specified by the env var (copy=true) */
-    FILE *env_conf = fopen(env_conf_path, "w");
-    ASSERT("Env override config file created", env_conf != NULL);
-    if (!env_conf) return;
-    fprintf(env_conf, "copy_to_clipboard=true\n");
-    fclose(env_conf);
-
-    /* 2. Create a conflicting config file in CWD (copy=false) */
-    FILE *cwd_conf = fopen(cwd_conf_path, "w");
-    ASSERT("CWD config file created for env override test", cwd_conf != NULL);
-    if (!cwd_conf) { unlink(env_conf_path); return; }
-    fprintf(cwd_conf, "copy_to_clipboard=false\n");
-    fclose(cwd_conf);
-
-    /* 3. Set the environment variable */
-    setenv("LLM_CTX_CONFIG", env_conf_path, 1);
-
-    /* 4. Run llm_ctx from the test directory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
-    char *output = run_command(cmd);
-
-    /* 5. Assert that the env var config (copy=true) was used */
-    ASSERT("Output does NOT contain regular file content (env override)", !string_contains(output, "Regular file content"));
-    ASSERT("Output contains clipboard confirmation message (env override)", string_contains(output, "Content copied to clipboard."));
-
-    /* 6. Clean up */
-    unsetenv("LLM_CTX_CONFIG");
-    unlink(env_conf_path);
-    unlink(cwd_conf_path); // Remove the CWD config created for this test
-}
-
-/* Test config file discovery: XDG config directory */
-TEST(test_cli_config_discovery_xdg) {
-    char cmd[2048];
-    char xdg_dir_path[1024];
-    char xdg_conf_path[1024];
-    char dot_config_path[1024];
-    const char *home = getenv("HOME");
-    ASSERT("HOME environment variable is set", home != NULL);
-    if (!home) return; // Cannot proceed without HOME
-
-    snprintf(dot_config_path, sizeof(dot_config_path), "%s/.config", home);
-    snprintf(xdg_dir_path, sizeof(xdg_dir_path), "%s/llm_ctx", dot_config_path);
-    snprintf(xdg_conf_path, sizeof(xdg_conf_path), "%s/.llm_ctx.conf", xdg_dir_path);
-
-    /* 1. Create the XDG directory structure */
-    mkdir(dot_config_path, 0755); // Ensure .config exists
-    mkdir(xdg_dir_path, 0755);
-
-    /* 2. Create the XDG config file (copy=true) */
-    FILE *xdg_conf = fopen(xdg_conf_path, "w");
-    ASSERT("XDG config file created", xdg_conf != NULL);
-    if (!xdg_conf) { rmdir(xdg_dir_path); return; }
-    fprintf(xdg_conf, "copy_to_clipboard=true\n");
-    fclose(xdg_conf);
-
-    /* 3. Ensure no CWD config exists */
-    unlink(strcat(strdup(TEST_DIR), "/.llm_ctx.conf"));
-
-    /* 4. Run llm_ctx from the test directory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
-    char *output = run_command(cmd);
-
-    /* 5. Assert that the XDG config (copy=true) was used */
-    ASSERT("Output does NOT contain regular file content (XDG config)", !string_contains(output, "Regular file content"));
-    ASSERT("Output contains clipboard confirmation message (XDG config)", string_contains(output, "Content copied to clipboard."));
-
-    /* 6. Clean up */
-    unlink(xdg_conf_path);
-    rmdir(xdg_dir_path);
-    /* Note: We don't remove ~/.config or ~/. */
-}
 
 // ============================================================================
 // Main Test Runner
@@ -1807,9 +1356,6 @@ int main(void) {
     RUN_TEST(test_cli_e_flag_custom_guide);
 
     /* Tests for config file editor_comments (Slice 4) */
-    RUN_TEST(test_cli_config_editor_comments_true);
-    RUN_TEST(test_cli_config_editor_comments_false);
-    RUN_TEST(test_cli_config_editor_comments_override);
     RUN_TEST(test_cli_prompt_only_c);
     RUN_TEST(test_cli_C_flag_prompt_only);
 
@@ -1822,25 +1368,9 @@ int main(void) {
     RUN_TEST(test_cli_s_glued_inline);
 
     /* Tests for config file system_prompt (Slice 5) */
-    RUN_TEST(test_cli_config_system_prompt_inline);
-    RUN_TEST(test_cli_config_system_prompt_at_file);
-    RUN_TEST(test_cli_config_system_prompt_at_nonexistent);
-    RUN_TEST(test_cli_config_system_prompt_override_cli_default);
-    RUN_TEST(test_cli_config_system_prompt_override_cli_at_file);
-    RUN_TEST(test_cli_config_system_prompt_multiline);
 
     /* Tests for config file (Slice 1) */
-    RUN_TEST(test_cli_config_copy_clipboard_true);
-    RUN_TEST(test_cli_config_copy_clipboard_false);
     /* Tests for config file discovery (Slice 2) */
-    RUN_TEST(test_cli_config_discovery_parent);
-    /* New tests for config file discovery (Commit 87871e4) */
-    RUN_TEST(test_cli_config_discovery_env_override);
-    RUN_TEST(test_cli_config_discovery_xdg);
-    RUN_TEST(test_cli_config_discovery_cwd_over_parent);
-    /* Test for config file discovery next to executable (Slice 3 / Commit 080e75f) */
-    /* This test is defined in test_config_binary_dir.c */
-    RUN_TEST(test_cli_config_discovery_binary_dir);
     
     /* Test for codemap functionality */
     RUN_TEST(test_cli_codemap);

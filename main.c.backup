@@ -53,6 +53,8 @@ static char *g_output_file = NULL;
 
 /* Initialized in main() */
 /* Freed in cleanup() */
+
+
 /* ========================= NEW HELPERS ========================= */
 
 /* Fatal error helper: prints message to stderr, performs cleanup, and exits. */
@@ -115,6 +117,8 @@ static char *slurp_stream(FILE *fp) {
     }
     return buf;
 }
+
+
 /* Convenience: slurp a *file*.  Returns NULL (and sets errno) on error. */
 static char *slurp_file(const char *path) {
     FILE *fp = fopen(path, "r");
@@ -144,6 +148,40 @@ static char *slurp_file(const char *path) {
     return txt;
 }
 
+/* Helper macro to grow buffer and append one line + '\n' */
+/* Returns true on success, false on OOM */
+#define APPEND_TO_BUFFER(src, len, buffer_ptr, buf_len_ptr, buf_cap_ptr) \
+    ({                                                                   \
+        bool success = true;                                             \
+        /* Ensure space for line + newline + null terminator */          \
+        while (*(buf_len_ptr) + (len) + 2 > *(buf_cap_ptr)) {             \
+            size_t new_cap = (*(buf_cap_ptr) == 0) ? 256 : *(buf_cap_ptr) * 2; \
+            /* Allocate new buffer with larger capacity */ \
+            char *new_buffer = arena_push_array_safe(&g_arena, char, new_cap); \
+            /* Copy existing content if any */ \
+            if (*(buffer_ptr) && *(buf_len_ptr) > 0) { \
+                memcpy(new_buffer, *(buffer_ptr), *(buf_len_ptr)); \
+            } \
+            if (!new_buffer) {                                           \
+                *(buffer_ptr) = NULL;                                    \
+                *(buf_cap_ptr) = 0;                                      \
+                *(buf_len_ptr) = 0;                                      \
+                errno = ENOMEM;                                          \
+                success = false;                                         \
+                break;                                                   \
+            }                                                            \
+            *(buffer_ptr) = new_buffer;                                  \
+            *(buf_cap_ptr) = new_cap;                                    \
+        }                                                                \
+        if (success) {                                                   \
+            /* Append the line content and a newline */                  \
+            memcpy(*(buffer_ptr) + *(buf_len_ptr), (src), (len));        \
+            *(buf_len_ptr) += (len);                                     \
+            (*(buffer_ptr))[(*(buf_len_ptr))++] = '\n';                  \
+            (*(buffer_ptr))[*(buf_len_ptr)] = '\0'; /* Keep null-terminated */ \
+        }                                                                \
+        success; /* Return status */                                     \
+    })
 
 /**
  * get_executable_dir() – return malloc-ed absolute directory that
@@ -329,6 +367,8 @@ static void add_response_guide(const char *problem) {
         fprintf(temp_file, "</response_guide>\n\n");
     }
 }
+
+
 /**
  * Check if a file has already been processed to avoid duplicates
  * 
@@ -480,6 +520,8 @@ void add_directory_tree(const char *base_dir) {
 
     closedir(dir);
 }
+
+
 /**
  * Compare function for sorting file paths
  */
@@ -744,6 +786,8 @@ void generate_file_tree(void) {
         file_tree[i].relative_path = NULL;
     }
 }
+
+
 /**
  * Check if a file stream contains binary data.
  * Reads the first BINARY_CHECK_SIZE bytes and looks for null bytes
@@ -810,6 +854,8 @@ bool is_binary(FILE *file) {
 
     return likely_binary;
 }
+
+
 /**
  * Display help message with usage instructions and examples
  */
@@ -1276,6 +1322,117 @@ void find_recursive(const char *base_dir, const char *pattern) {
     closedir(dir);
 }
 
+/* Helper: strdup() only if @path is a readable, regular file */
+static char *dup_if_readable(const char *path) {
+    struct stat sb;
+    if (!path || *path == '\0') return NULL;
+    if (stat(path, &sb) == 0 && S_ISREG(sb.st_mode) && access(path, R_OK) == 0) {
+        char *p = arena_strdup_safe(&g_arena, path);
+        if (!p) perror("strdup"); /* propagate NULL on OOM */
+        return p;
+    }
+    return NULL;
+}
+
+/**
+ * Discover the configuration file using a cosmiconfig-style strategy:
+ *   1. $LLM_CTX_CONFIG env override
+ *   2. walk-up from CWD for .llm_ctx.conf
+ *   3. $XDG_CONFIG_HOME/llm_ctx/.llm_ctx.conf  (or $HOME/.config/…)
+ *   4. $HOME/.llm_ctx.conf                     (legacy)
+ *   5. <binary-dir>/.llm_ctx.conf              (portable install)
+ *
+ * Returns malloc’d path or NULL when none found.
+ */
+char *find_config_file(void) {
+char buf[PATH_MAX * 2];
+
+    char *p = NULL; // Declare p once for reuse
+    /* ---------- 1. explicit env override ---------- */
+    char *env = getenv("LLM_CTX_CONFIG"); // Declare env before the if
+    if (env) {
+        p = dup_if_readable(env);
+        if (p) return p; /* user knows best */ // env override precedence
+    } /* silently continue if not readable */
+
+    /* ---------- 2. project hierarchy walk-up ---------- */
+    if (getcwd(buf, sizeof buf) != NULL) {
+        char current_path[PATH_MAX * 2]; // Buffer to hold the path being checked
+        strcpy(current_path, buf); // Start with CWD
+
+        for (;;) {
+            size_t len = strlen(current_path);
+            if (len + sizeof("/.llm_ctx.conf") < sizeof buf) {
+                memcpy(buf, current_path, len);
+                strcpy(buf + len, "/.llm_ctx.conf");
+            } else {
+                buf[0] = '\0';
+            }
+            p = dup_if_readable(buf); // Reuse p
+            if (p) return p;                          // first hit wins
+
+            /* stop at root */
+            char *slash = strrchr(current_path, '/');
+            if (!slash || slash == current_path) break; // Reached root or error
+            *slash = '\0';                            // ascend (modify current_path)
+        }
+    }
+
+    /* ---------- 3. XDG-style per-user config dir ---------- */
+    const char *xdg = getenv("XDG_CONFIG_HOME");
+    const char *home = getenv("HOME");
+    if (!xdg && home) {                               // spec §3 – default to $HOME/.config  ([XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/?utm_source=chatgpt.com))
+        size_t len = strlen(home);
+        if (len + sizeof("/.config/llm_ctx/.llm_ctx.conf") < sizeof buf) {
+            memcpy(buf, home, len);
+            strcpy(buf + len, "/.config/llm_ctx/.llm_ctx.conf");
+        } else {
+            buf[0] = '\0';
+        }
+        p = dup_if_readable(buf); // Reuse p
+        if (p) return p;
+    } else if (xdg) {
+        size_t len2 = strlen(xdg);
+        if (len2 + sizeof("/llm_ctx/.llm_ctx.conf") < sizeof buf) {
+            memcpy(buf, xdg, len2);
+            strcpy(buf + len2, "/llm_ctx/.llm_ctx.conf");
+        } else {
+            buf[0] = '\0';
+        }
+        p = dup_if_readable(buf); // Reuse p
+        if (p) return p;
+    }
+
+    /* ---------- 4. legacy file in $HOME ---------- */
+    if (home) {
+        size_t len3 = strlen(home);
+        if (len3 + sizeof("/.llm_ctx.conf") < sizeof buf) {
+            memcpy(buf, home, len3);
+            strcpy(buf + len3, "/.llm_ctx.conf");
+        } else {
+            buf[0] = '\0';
+        }
+        p = dup_if_readable(buf); // Reuse p
+        if (p) return p;
+    }
+
+    /* ---------- 5. binary-sibling fallback ---------- */
+    char *exe_dir = get_executable_dir(); // Declare exe_dir before the if
+    if (exe_dir) {
+        size_t len4 = strlen(exe_dir);
+        if (len4 + sizeof("/.llm_ctx.conf") < sizeof buf) {
+            memcpy(buf, exe_dir, len4);
+            strcpy(buf + len4, "/.llm_ctx.conf");
+        } else {
+            buf[0] = '\0';
+        }
+        p = dup_if_readable(buf); // Reuse p
+        if (p) return p;
+    }
+
+    return NULL; /* none found */
+}
+
 /**
  * Process a glob pattern to find matching files
  */
@@ -1370,6 +1527,227 @@ bool process_pattern(const char *pattern) {
     return (files_found > initial_files_found);
 }
 
+/* Trim leading/trailing whitespace from a string in-place */
+static char *trim_whitespace(char *str) {
+    char *end;
+
+    /* Trim leading space */
+    while (isspace((unsigned char)*str)) str++;
+
+    if (*str == 0) /* All spaces? */
+        return str;
+
+    /* Trim trailing space */
+    end = str + strlen(str) - 1;
+    while (end > str && isspace((unsigned char)*end)) end--;
+
+    /* Write new null terminator character */
+    end[1] = '\0';
+
+    return str;
+}
+
+/*
+ * Trim common indentation whenever it is at least two spaces.
+ *  • 2‑space indents are routinely used for YAML / Markdown blocks and the
+ *    test‑suite expects them to be stripped.
+ *  • 1‑space indents are left intact so that authors can still force a single
+ *    leading space when they really want one.
+ */
+#define INDENT_TRIM_THRESHOLD 2
+
+/* Helper function to finalize a multiline block */
+static bool finalize_multiline_block(ConfigSettings *s,
+                                     char *key,
+                                     char **buf_ptr,
+                                     size_t *len_ptr,
+                                     size_t min_indent) {
+    size_t mark = arena_get_mark(&g_arena);
+    char *buf = *buf_ptr;
+    size_t len = *len_ptr;
+
+    /* Drop trailing NL */
+    if (len > 0 && buf[len - 1] == '\n') {
+        buf[--len] = '\0';
+    }
+
+    /* ---------- Trim common indentation ---------- */
+    if (min_indent != SIZE_MAX &&
+        min_indent >= INDENT_TRIM_THRESHOLD) {
+        char *trimmed = arena_push_array_safe(&g_arena, char, len + 1); /* Max possible size */
+        if (!trimmed) { arena_set_mark(&g_arena, mark); errno = ENOMEM; *buf_ptr = NULL; *len_ptr = 0; return false; }
+
+        size_t src = 0, dst = 0;
+        bool at_line_start = true;
+
+        while (src < len) {
+            if (at_line_start) {
+                /* Skip up to min_indent spaces or TABs */
+                size_t skipped = 0;
+                while (src < len && skipped < min_indent &&
+                       (buf[src] == ' ' || buf[src] == '\t')) {
+                    ++src; ++skipped;
+                }
+                at_line_start = false;
+            }
+            trimmed[dst++] = buf[src];
+            if (buf[src++] == '\n') at_line_start = true;
+        }
+        trimmed[dst] = '\0';
+        buf  = trimmed; /* Point to the new trimmed buffer */
+        len  = dst;     /* Update length */
+    }
+
+    bool success = store_kv(s, key, buf);
+    arena_set_mark(&g_arena, mark); /* discard temporary buffer */
+    *buf_ptr = NULL;
+    *len_ptr = 0;
+    return success;
+}
+
+/* Parse the configuration file */
+bool parse_config_file(const char *config_path, ConfigSettings *settings) {
+    FILE *file = fopen(config_path, "r");
+    if (!file) {
+        /* Don't treat not found as fatal, just return false */
+        if (errno == ENOENT) {
+            return false;
+        }
+        /* Other errors (e.g., permission denied) could be warned */
+        /* fprintf(stderr, "Warning: Could not open config file %s: %s\n", config_path, strerror(errno)); */
+        return false;
+    }
+
+    /* State for multiline value collection */
+    bool collecting_multiline = false;
+    char *pending_key = NULL;
+    char *pending_value_buffer = NULL;
+    size_t pending_value_cap = 0;
+    size_t pending_value_len = 0;
+    size_t min_indent = SIZE_MAX; /* Track minimum indentation for multiline */
+
+
+    char line[1024];
+    while (fgets(line, sizeof(line), file)) {
+        char *trimmed_line = trim_whitespace(line);
+
+        /* Handle multiline value collection */
+        /* ---------- Already inside a multiline value ---------- */
+        if (collecting_multiline) {
+            /* Whitespace‑only line  → keep a *pure* blank line inside block   */
+            if (strspn(line, " \t\r\n") == strlen(line)) {
+                /* Append just a newline */
+                /* Append exactly ONE newline (payload length 0; macro adds \n) */
+                if (!APPEND_TO_BUFFER("", 0, &pending_value_buffer, &pending_value_len, &pending_value_cap)) {
+                    fclose(file);
+                    return false; /* OOM */
+                }
+                continue; /* Stay in multiline block */
+            }
+
+
+            /* Still indented? keep it in the block - even if it starts with '#' */
+            if (line[0] == ' ' || line[0] == '\t') {
+                /* Keep original line content, just find length up to newline */
+                size_t raw_len = strcspn(line, "\r\n");
+                /* Append raw line content + newline */
+                if (!APPEND_TO_BUFFER(line, raw_len, &pending_value_buffer, &pending_value_len, &pending_value_cap)) {
+                    fclose(file);
+                    return false; /* OOM in APPEND_TO_BUFFER */
+                }
+                /* Track minimum indentation */
+                size_t indent = strspn(line, " \t");
+                if (indent < min_indent) {
+                    min_indent = indent;
+                }
+                continue; /* Stay in multiline block */
+            } else {
+                /* Not indented, multiline value ends here. Finalize and fall through. */
+                collecting_multiline = false;
+                if (!finalize_multiline_block(settings, pending_key, &pending_value_buffer, &pending_value_len, min_indent)) {
+                    /* Handle potential error from finalize/store_kv */
+                    fclose(file);
+                    return false;
+                }
+                pending_key = NULL;
+                /* Reset buffer pointers after finalize frees the buffer */
+                pending_value_buffer = NULL;
+                pending_value_cap = 0;
+                pending_value_len = 0;
+                /* Fall through to process the current line as a new key/value */
+            }
+        }
+
+        trimmed_line = trim_whitespace(line); /* Re-trim after potential multiline exit */
+
+        /* Skip empty lines and comments (ONLY when not inside a block) */
+        if (trimmed_line[0] == '\0' || trimmed_line[0] == '#') {
+            continue;
+        }
+
+        /* ---------------- single-line parsing ---------------- */
+        char *key = trimmed_line;
+        char *value = strpbrk(trimmed_line, "=:"); /* Accept '=' or ':' */
+
+        if (value) {
+            *value = '\0'; /* Split key and value */
+            value++;       /* Move to start of value */
+            key = trim_whitespace(key);
+            value = trim_whitespace(value);
+            /* Check for multiline start: key = (nothing follows) */
+            if (*value == '\0' && !collecting_multiline) {
+                collecting_multiline = true;
+                pending_key = arena_strdup_safe(&g_arena, key);
+                if (!pending_key) { fclose(file); return false; /* OOM */ }
+
+                /* Reset buffer */
+                pending_value_buffer = NULL;
+                pending_value_cap = 0;
+                pending_value_len = 0;
+                min_indent = SIZE_MAX; /* Reset min_indent tracking */
+
+                /* Set flag early if it's system_prompt */
+                if (strcmp(key, "system_prompt") == 0) {
+                    settings->system_prompt_set = true;
+                }
+                continue; /* Go to next line to start collecting */
+            }
+
+            /* --- Handle single-line values --- */
+            /* Strip optional surrounding quotes (only for single-line values) */
+            if ((*value == '"'  && value[strlen(value)-1] == '"') ||
+                (*value == '\'' && value[strlen(value)-1] == '\'')) {
+                value[strlen(value)-1] = '\0'; /* Remove trailing quote */
+                value++;                       /* Advance past leading quote */
+            }
+
+            /* Store the single-line key-value pair */
+            if (!store_kv(settings, key, value)) {
+                fclose(file);
+                return false; /* OOM in strdup */
+            }
+        } /* Ignore lines without delimiter for now */
+    }
+
+    /* End of file: finalize any pending multiline value */
+    if (collecting_multiline) {
+        /* Remove last newline if buffer is not empty */
+        if (pending_value_len > 0 && pending_value_buffer[pending_value_len - 1] == '\n') {
+            pending_value_len--;
+            pending_value_buffer[pending_value_len] = '\0';
+        }
+
+        if (!finalize_multiline_block(settings, pending_key, &pending_value_buffer, &pending_value_len, min_indent)) {
+            /* Handle potential error */
+            fclose(file);
+            return false;
+        }
+    }
+
+    fclose(file);
+    return true;
+}
+
 /**
  * Copy the given buffer content to the system clipboard.
  * Uses platform-specific commands.
@@ -1452,6 +1830,8 @@ void cleanup(void) {
 
     arena_destroy(&g_arena);
 }
+
+
 /* Define command-line options for getopt_long */
 /* Moved #include <getopt.h> to the top */
 static const struct option long_options[] = {
@@ -1478,6 +1858,8 @@ static bool e_flag_used = false; /* Track if -e was used */
 static bool r_flag_used = false; /* Track if -r was used */
 static bool g_stdin_consumed_for_option = false; /* Track if stdin was used for @- */
 /* No specific CLI flag for copy yet, so no copy_flag_used needed */
+
+
 
 /* Helper to handle argument for -c/--command */
 static void handle_command_arg(const char *arg) {
@@ -1622,13 +2004,15 @@ static void handle_output_arg(const char *arg) {
         fatal("Error: -o requires @ prefix for files (e.g., -o@output.txt). Use -o alone for stdout.");
     }
 }
+
+
 /**
  * Main function - program entry point
  */
 int main(int argc, char *argv[]) {
     g_argv0 = argv[0]; /* Store for get_executable_dir fallback */
     bool allow_empty_context = false; /* Can we finish with no file content? */
-    /* ConfigSettings loaded_settings; */ /* Config loading has been removed */
+    ConfigSettings loaded_settings; /* Declare here for broader scope */
     /* Register cleanup handler */
     atexit(cleanup); /* Register cleanup handler early */
 
@@ -1658,6 +2042,8 @@ int main(int argc, char *argv[]) {
     while ((opt = getopt_long(argc, argv, "hc:s::fre::m::CtdTo::", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
+
+
                 show_help(); /* Exits */
                 break;
             case 'c': /* -c or --command */
@@ -1881,10 +2267,75 @@ int main(int argc, char *argv[]) {
     int file_args_start = optind;
 
     /* --- Configuration File Loading --- */
-    /* Configuration file loading has been removed */
+    /* Find config file by searching upwards */
+    char *config_path = find_config_file();
+    bool config_set_system = false; // Track if config *tried* to set system prompt
+    bool config_set_editor = false;
+
+    if (config_path) {
+        memset(&loaded_settings, 0, sizeof(ConfigSettings)); /* Initialize before parsing */
+        if (parse_config_file(config_path, &loaded_settings)) { /* Parse into the main scope variable */
+            /* Merge copy_to_clipboard (no CLI override yet) */
+            if (loaded_settings.copy_to_clipboard_set) {
+                g_effective_copy_to_clipboard = loaded_settings.copy_to_clipboard;
+            }
+            /* Store config value for editor_comments if set */
+            if (loaded_settings.editor_comments_set) {
+                config_set_editor = true; // Mark that config set it
+                /* We'll apply the toggle logic later */
+            }
+            /* Merge system_prompt (respect CLI override) */
+            if (loaded_settings.system_prompt_set && !s_flag_used) {
+                config_set_system = true; /* Mark that config tried to set it */
+                char *source = loaded_settings.system_prompt_source;
+                char *new_prompt = NULL;
+                bool load_attempted = false; /* Track if we tried loading from config */
+
+                if (source && source[0] == '@') {
+                    if (strcmp(source, "@-") == 0) {
+                        fprintf(stderr, "Warning: system_prompt=@- in config file is not supported. Ignoring.\n");
+                    } else {
+                        /* Resolve path relative to config file */
+                        char config_dir_buf[PATH_MAX];
+                        strncpy(config_dir_buf, config_path, PATH_MAX - 1);
+                        config_dir_buf[PATH_MAX - 1] = '\0';
+                        char *config_dir = dirname(config_dir_buf);
+
+                        char abs_path[PATH_MAX];
+                        snprintf(abs_path, sizeof(abs_path), "%s/%s", config_dir, source + 1);
+
+                        new_prompt = slurp_file(abs_path);
+                        load_attempted = true; /* We attempted to load from a file */
+                        if (!new_prompt) {
+                            fprintf(stderr, "Warning: Cannot read system prompt file '%s' (resolved from '%s' in config): %s. Ignoring.\n", abs_path, source, strerror(errno));
+                            /* new_prompt remains NULL, indicating failure */
+                        }
+                    }
+                } else if (source) { /* Inline string */
+                    new_prompt = arena_strdup_safe(&g_arena, source);
+                    load_attempted = true; /* We attempted to load from inline text */
+                    if (!new_prompt) {
+                        fprintf(stderr, "Warning: Out of memory duplicating system prompt from config. Ignoring.\n");
+                        /* new_prompt is NULL, indicating failure */
+                    }
+                }
+
+                if (new_prompt) {
+                    /* Successfully loaded/duplicated prompt from config */
+                    system_instructions = new_prompt;
+                } else if (load_attempted) {
+                    /* Attempted to load from config (file or inline) but failed (file not found, OOM) */
+                    /* Warning: Config specified a prompt, but loading failed or resulted in empty. */
+                    fprintf(stderr, "Warning: system_prompt specified in config file '%s' but could not be loaded (file missing or empty). Ignoring.\n", config_path);
+                } /* else: no system_prompt in config, system_instructions remains as set by CLI or NULL */
+            }
+        }
+        /* config_path was allocated from the arena */
+    }
+
     /* --- Finalize editor_comments setting (apply toggle logic) --- */
-    /* Determine initial state (default false) */
-    bool initial_want_editor_comments = false;
+    /* Determine initial state based on config (or default false) */
+    bool initial_want_editor_comments = config_set_editor ? loaded_settings.editor_comments : false;
     /* Apply toggle if -e flag was used */
     if (e_flag_used) {
         want_editor_comments = !initial_want_editor_comments;
@@ -1895,9 +2346,14 @@ int main(int argc, char *argv[]) {
     /* Determine if prompt-only output is allowed based on final settings */
     /* Allow if user instructions were given (-c/-C/--command) */
     /* OR if system instructions were explicitly set (via -s or config) */
-    /* OR if editor comments were requested (via -e) */
+    /* OR if editor comments were requested (via -e or config) */
     /* OR if stdin was consumed by an option like -c @- or -s @- */
-    allow_empty_context = c_flag_used || s_flag_used || e_flag_used || g_stdin_consumed_for_option;
+    allow_empty_context = c_flag_used || s_flag_used || config_set_system || e_flag_used || config_set_editor || g_stdin_consumed_for_option;
+    if (config_path && loaded_settings.system_prompt_source) {
+        /* Allocated from arena; nothing to free */
+    }
+
+
     if (!raw_mode) {
         /* Add user instructions first, if provided */
         add_user_instructions(user_instructions);

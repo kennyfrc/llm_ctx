@@ -9,8 +9,8 @@ RELEASE_CFLAGS = -std=c99 -Wall -Wextra -O2 -DNDEBUG # -O2 optimization, NDEBUG 
 TARGET = llm_ctx
 TEST_JS_PARSER = test_js_parser
 SRC = main.c gitignore.c codemap.c arena.c packs.c
-TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c tests/test_config.c tests/test_packs.c tests/test_extension_mapping.c tests/test_js_pack.c tests/test_ruby_pack.c tests/test_pack_info.c tests/test_make_pack.c tests/test_codemap_patterns.c
-TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin tests/test_config tests/test_packs tests/test_extension_mapping tests/test_js_pack tests/test_ruby_pack tests/test_pack_info tests/test_make_pack tests/test_codemap_patterns tests/test_tree_flags
+TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c tests/test_packs.c tests/test_extension_mapping.c tests/test_js_pack.c tests/test_ruby_pack.c tests/test_pack_info.c tests/test_make_pack.c tests/test_codemap_patterns.c
+TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin tests/test_packs tests/test_extension_mapping tests/test_js_pack tests/test_ruby_pack tests/test_pack_info tests/test_make_pack tests/test_codemap_patterns tests/test_tree_flags
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 
@@ -56,16 +56,9 @@ tests/test_gitignore: tests/test_gitignore.c gitignore.c
 
 # Note: test_cli depends on main.c (for config parsing logic) and gitignore.c
 # test_cli is an integration test, it runs the main llm_ctx executable.
-# It needs its own source file compiled AND the source file containing the
-# test_cli_config_discovery_binary_dir function.
-tests/test_cli: tests/test_cli.c tests/test_config_binary_dir.c
-	$(CC) $(CFLAGS) -o $@ $^ # Use $^ to link all prerequisites
-
-# Note: test_config depends on main.c (for config parsing logic) and gitignore.c
-# test_config is an integration test, it runs the main llm_ctx executable.
-# It only needs its own source file compiled.
-tests/test_config: tests/test_config.c
-	$(CC) $(CFLAGS) -o $@ $< # Use $< to only link the first prerequisite (test_config.c)
+# test_cli is an integration test
+tests/test_cli: tests/test_cli.c
+	$(CC) $(CFLAGS) -o $@ $<
 
 tests/test_stdin: tests/test_stdin.c
 	$(CC) $(CFLAGS) -o $@ $^
@@ -100,16 +93,10 @@ tests/test_tree_flags: tests/test_tree_flags.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 test: $(TARGET) $(TEST_TARGETS)
-	@echo "Backing up user config file..."
-	@mv -f ".llm_ctx.conf" "__USER_llm_ctx.conf.backup__" 2>/dev/null || true
-	@echo "Creating temporary empty config file..."
-	@touch .llm_ctx.conf # Create dummy to stop upward search
 	@echo "\nRunning unit tests..."
 	@./tests/test_gitignore || true
 	@echo "\nRunning integration tests..."
 	@./tests/test_cli || true
-	@echo "\nRunning config parser tests..."
-	@./tests/test_config || true
 	@echo "\nRunning stdin pipe tests..."
 	@./tests/test_stdin || true
 	@echo "\nRunning pack registry tests..."
@@ -128,10 +115,6 @@ test: $(TARGET) $(TEST_TARGETS)
 	@./tests/test_make_pack.sh || true
 	@echo "\nRunning codemap patterns tests..."
 	@./tests/test_codemap_patterns || true
-	@echo "\nRemoving temporary config file..."
-	@rm -f ".llm_ctx.conf" # Remove dummy
-	@echo "\nRestoring user config file..."
-	@mv -f "__USER_llm_ctx.conf.backup__" ".llm_ctx.conf" 2>/dev/null || true
 	@echo "Test run complete."
 	@# Exit with non-zero status if any test failed (requires more complex tracking or a test runner)
 
