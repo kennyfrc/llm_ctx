@@ -921,10 +921,8 @@ void show_help(void) {
     printf("  -f [FILE...]   Process files instead of stdin content\n");
     printf("  -t             Generate file tree only for specified files\n");
     printf("  -T             Generate complete directory tree (global tree)\n");
-    printf("  -o, --output [FILE]\n");
-    printf("                 Output to stdout or file instead of clipboard\n");
-    printf("                 Without argument: print to stdout\n");
-    printf("                 With argument: write to specified file\n");
+    printf("  -o             Output to stdout instead of clipboard\n");
+    printf("  -o@FILE        Write output to FILE (no space after -o)\n");
     printf("  -d, --debug    Enable debug output (prefixed with [DEBUG])\n");
     printf("  -h             Show this help message\n");
     printf("  --list-packs   List available language packs for code map generation\n");
@@ -2022,6 +2020,30 @@ static void handle_editor_arg(const char *arg) {
     }
 }
 
+/* Helper to handle argument for -o/--output */
+static void handle_output_arg(const char *arg) {
+    /* Always disable clipboard when -o is used */
+    g_effective_copy_to_clipboard = false;
+    
+    /* Case 1: -o without argument -> Output to stdout */
+    if (arg == NULL) {
+        g_output_file = NULL; /* stdout is the default */
+        return;
+    }
+    
+    /* Case 2: -o@filename -> Output to file */
+    if (arg[0] == '@') {
+        if (arg[1] == '\0') {
+            fatal("Error: -o@ requires a filename after @");
+        }
+        g_output_file = arena_strdup_safe(&g_arena, arg + 1); /* skip '@' */
+        if (!g_output_file) fatal("Out of memory duplicating output filename");
+    } else {
+        /* Case 3: For backward compatibility, treat non-@ argument as error */
+        fatal("Error: -o requires @ prefix for files (e.g., -o@output.txt). Use -o alone for stdout.");
+    }
+}
+
 
 /**
  * Main function - program entry point
@@ -2178,15 +2200,14 @@ int main(int argc, char *argv[]) {
                 file_mode = 1; /* Enable file mode to process files */
                 break;
             case 'o': /* -o or --output with optional file argument */
-                g_effective_copy_to_clipboard = false;
-                if (optarg) {
-                    /* User provided a filename */
-                    g_output_file = arena_strdup_safe(&g_arena, optarg);
-                    if (!g_output_file) {
-                        fatal("Failed to allocate memory for output filename");
-                    }
+                /* Handle similar to -s and -e: check if there's a non-option argument following */
+                if (optarg == NULL              /* no glued arg */
+                    && optind < argc            /* something left */
+                    && argv[optind][0] != '-') {/* not next flag  */
+                    handle_output_arg(argv[optind++]); /* treat as arg, consume */
+                } else {
+                    handle_output_arg(optarg);  /* glued/NULL */
                 }
-                /* If no optarg, output goes to stdout (g_output_file remains NULL) */
                 break;
             case 'C': /* -C (equivalent to -c @-) */
                 /* Reuse the existing handler by simulating the @- argument */

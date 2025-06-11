@@ -1999,9 +1999,9 @@ TEST(test_cli_output_to_file) {
         fclose(f);
     }
     
-    /* Test output to file with -o */
+    /* Test output to file with -o@ */
     snprintf(output_file, sizeof(output_file), "%s/__output_result.txt", TEST_DIR);
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o%s -f %s 2>&1", getenv("PWD"), output_file, test_file);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o@%s -f %s 2>&1", getenv("PWD"), output_file, test_file);
     char *output = run_command(cmd);
     
     /* Check that confirmation message was printed to stderr */
@@ -2022,13 +2022,13 @@ TEST(test_cli_output_to_file) {
         ASSERT("Output contains test content", string_contains(buffer, "This is test content for file output"));
     }
     
-    /* Test with --output= syntax */
+    /* Test with --output=@ syntax */
     snprintf(output_file, sizeof(output_file), "%s/__output_result2.txt", TEST_DIR);
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx --output=%s -f %s 2>&1", getenv("PWD"), output_file, test_file);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx --output=@%s -f %s 2>&1", getenv("PWD"), output_file, test_file);
     output = run_command(cmd);
     
     /* Check that this also works */
-    ASSERT("--output= syntax confirms file was written", string_contains(output, "Content written to"));
+    ASSERT("--output=@ syntax confirms file was written", string_contains(output, "Content written to"));
     
     /* Cleanup */
     snprintf(cmd, sizeof(cmd), "rm -f %s/__test_output.txt %s/__output_result.txt %s/__output_result2.txt", 
