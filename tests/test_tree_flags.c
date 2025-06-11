@@ -96,7 +96,7 @@ static void cleanup_test_files(void) {
 TEST(test_t_flag_limited_tree) {
     setup_test_files();
     
-    char *output = run_command("./llm_ctx -t -f test_tree_dir/src/main.c test_tree_dir/lib/helper.c");
+    char *output = run_command("./llm_ctx -t -o -f test_tree_dir/src/main.c test_tree_dir/lib/helper.c");
     
     /* Should contain the specified files */
     ASSERT("Output should contain main.c", string_contains(output, "main.c"));
@@ -118,7 +118,7 @@ TEST(test_T_flag_global_tree) {
     setup_test_files();
     
     /* Test with just one file specified */
-    char *output = run_command("./llm_ctx -T -f test_tree_dir/src/main.c");
+    char *output = run_command("./llm_ctx -T -o -f test_tree_dir/src/main.c");
     
     /* Should contain ALL files in the directory tree */
     ASSERT("Output should contain main.c", string_contains(output, "main.c"));
@@ -137,7 +137,7 @@ TEST(test_T_flag_global_tree) {
 TEST(test_t_flag_with_patterns) {
     setup_test_files();
     
-    char *output = run_command("./llm_ctx -t -f 'test_tree_dir/src/*.c'");
+    char *output = run_command("./llm_ctx -t -o -f 'test_tree_dir/src/*.c'");
     
     /* Should contain only .c files from src */
     ASSERT("Output should contain main.c", string_contains(output, "main.c"));
@@ -154,7 +154,7 @@ TEST(test_t_flag_with_patterns) {
 TEST(test_T_flag_with_patterns) {
     setup_test_files();
     
-    char *output = run_command("./llm_ctx -T -f 'test_tree_dir/src/*.c'");
+    char *output = run_command("./llm_ctx -T -o -f 'test_tree_dir/src/*.c'");
     
     /* Should contain all .c files from src (matched) */
     ASSERT("Output should contain main.c", string_contains(output, "main.c"));
@@ -172,12 +172,12 @@ TEST(test_tree_flags_no_content) {
     setup_test_files();
     
     /* Test -t flag */
-    char *output_t = run_command("./llm_ctx -t -f test_tree_dir/src/main.c");
+    char *output_t = run_command("./llm_ctx -t -o -f test_tree_dir/src/main.c");
     ASSERT("Output -t should NOT contain <file_context>", !string_contains(output_t, "<file_context>"));
     ASSERT("Output -t should NOT contain file content", !string_contains(output_t, "int main"));
     
     /* Test -T flag */
-    char *output_T = run_command("./llm_ctx -T -f test_tree_dir/src/main.c");
+    char *output_T = run_command("./llm_ctx -T -o -f test_tree_dir/src/main.c");
     ASSERT("Output -T should NOT contain <file_context>", !string_contains(output_T, "<file_context>"));
     ASSERT("Output -T should NOT contain file content", !string_contains(output_T, "int main"));
     
@@ -189,7 +189,7 @@ TEST(test_normal_mode_shows_full_tree) {
     setup_test_files();
     
     /* Without -t or -T, should show full tree and content */
-    char *output = run_command("./llm_ctx -f test_tree_dir/src/main.c");
+    char *output = run_command("./llm_ctx -o -f test_tree_dir/src/main.c");
     
     /* Should contain the full tree (like -T) */
     ASSERT("Output should contain main.c", string_contains(output, "main.c"));

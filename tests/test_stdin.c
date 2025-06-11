@@ -176,7 +176,7 @@ TEST(test_stdin_json_detection) {
     snprintf(input_cmd, sizeof(input_cmd), "cat %s/__sample.json", TEST_DIR);
 
     /* Create llm_ctx command */
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o", getenv("PWD"));
     
     char *output = run_command_with_stdin(input_cmd, cmd);
     
@@ -194,7 +194,7 @@ TEST(test_stdin_markdown_detection) {
     snprintf(input_cmd, sizeof(input_cmd), "cat %s/__sample.md", TEST_DIR);
 
     /* Create llm_ctx command */
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o", getenv("PWD"));
     
     char *output = run_command_with_stdin(input_cmd, cmd);
     
@@ -212,7 +212,7 @@ TEST(test_stdin_xml_detection) {
     snprintf(input_cmd, sizeof(input_cmd), "cat %s/__sample.xml", TEST_DIR);
 
     /* Create llm_ctx command */
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o", getenv("PWD"));
     
     char *output = run_command_with_stdin(input_cmd, cmd);
     
@@ -230,7 +230,7 @@ TEST(test_stdin_diff_detection) {
     snprintf(input_cmd, sizeof(input_cmd), "cat %s/__sample.diff", TEST_DIR);
 
     /* Create llm_ctx command */
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o", getenv("PWD"));
     
     char *output = run_command_with_stdin(input_cmd, cmd);
     
@@ -245,7 +245,7 @@ TEST(test_stdin_file_list) {
 
     /* Use direct llm_ctx calls for files (prefixed) */
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -f %s/__sample.json %s/__sample.md %s/__sample.xml",
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -f %s/__sample.json %s/__sample.md %s/__sample.xml",
              getenv("PWD"), TEST_DIR, TEST_DIR, TEST_DIR);
 
     /* Run the command and capture output */
@@ -273,7 +273,7 @@ TEST(test_stdin_with_instructions) {
     snprintf(input_cmd, sizeof(input_cmd), "cat %s/__sample.json", TEST_DIR);
 
     /* Create llm_ctx command with instructions */
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c \"Test instruction\"", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -c \"Test instruction\"", getenv("PWD"));
     
     char *output = run_command_with_stdin(input_cmd, cmd);
     
@@ -305,7 +305,7 @@ TEST(test_stdin_content_fits_in_buffer) {
     char cmd[1024];
     char input_cmd[1024];
     snprintf(input_cmd, sizeof(input_cmd), "cat %s", FITS_CONTENT_FILE);
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o", getenv("PWD"));
     char *output = run_command_with_stdin(input_cmd, cmd);
 
     /* 3. Assertions for content fitting */
@@ -340,7 +340,7 @@ TEST(test_stdin_content_exceeds_buffer_truncation) {
     char cmd[1024];
     char input_cmd[1024];
     snprintf(input_cmd, sizeof(input_cmd), "cat %s", EXCEEDS_CONTENT_FILE);
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o", getenv("PWD"));
     char *output = run_command_with_stdin(input_cmd, cmd);
 
     /* 3. Assertions for truncation */
@@ -359,7 +359,7 @@ TEST(test_stdin_binary_null_byte) {
     char cmd[1024];
     char input_cmd[1024];
     snprintf(input_cmd, sizeof(input_cmd), "cat %s/__binary_null.bin", TEST_DIR);
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o", getenv("PWD"));
     char *output = run_command_with_stdin(input_cmd, cmd);
 
     // Desired expectation: Header and placeholder, no raw content.
@@ -375,7 +375,7 @@ TEST(test_stdin_binary_control_chars) {
     char cmd[1024];
     char input_cmd[1024];
     snprintf(input_cmd, sizeof(input_cmd), "cat %s/__binary_control.bin", TEST_DIR);
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o", getenv("PWD"));
     char *output = run_command_with_stdin(input_cmd, cmd);
 
     // Desired expectation: Header and placeholder, no raw content.
@@ -390,7 +390,7 @@ TEST(test_stdin_binary_image_magic) {
     char cmd[1024];
     char input_cmd[1024];
     snprintf(input_cmd, sizeof(input_cmd), "cat %s/__image.png", TEST_DIR);
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o", getenv("PWD"));
     char *output = run_command_with_stdin(input_cmd, cmd);
 
     // Desired expectation: Header and placeholder, no raw content.
@@ -405,7 +405,7 @@ TEST(test_stdin_empty_file) {
     char cmd[1024];
     char input_cmd[1024];
     snprintf(input_cmd, sizeof(input_cmd), "cat %s/__empty.txt", TEST_DIR);
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o", getenv("PWD"));
     char *output = run_command_with_stdin(input_cmd, cmd);
 
     // Desired expectation: Output the header and empty fences, similar to an empty file via -f.
@@ -419,7 +419,7 @@ TEST(test_stdin_utf8_file) {
     char cmd[1024];
     char input_cmd[1024];
     snprintf(input_cmd, sizeof(input_cmd), "cat %s/__utf8.txt", TEST_DIR);
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o", getenv("PWD"));
     char *output = run_command_with_stdin(input_cmd, cmd);
 
     ASSERT("Output contains stdin_content header", string_contains(output, "File: stdin_content"));

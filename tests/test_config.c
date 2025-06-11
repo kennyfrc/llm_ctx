@@ -84,7 +84,7 @@ TEST(test_config_multiline_blank_lines) {
     fclose(f);
 
     char cmd[256];
-    snprintf(cmd,sizeof(cmd),"cd %s && %s/llm_ctx -f __regular.txt",TEST_DIR,getenv("PWD"));
+    snprintf(cmd,sizeof(cmd),"cd %s && %s/llm_ctx -o -f __regular.txt",TEST_DIR,getenv("PWD"));
     char *out = run_command(cmd);
 
     ASSERT("contains Line A", strstr(out,"Line A"));
@@ -103,7 +103,7 @@ TEST(test_config_multiline_headings) {
     fclose(f);
 
     char cmd[256];
-    snprintf(cmd,sizeof(cmd),"cd %s && %s/llm_ctx -f __regular.txt",TEST_DIR,getenv("PWD"));
+    snprintf(cmd,sizeof(cmd),"cd %s && %s/llm_ctx -o -f __regular.txt",TEST_DIR,getenv("PWD"));
     char *out = run_command(cmd);
 
     ASSERT("contains ## Heading", strstr(out,"## Heading"));
@@ -121,7 +121,7 @@ TEST(test_config_multiline_indented_comment) {
     fclose(f);
 
     char cmd[256];
-    snprintf(cmd,sizeof(cmd),"cd %s && %s/llm_ctx -f __regular.txt",TEST_DIR,getenv("PWD"));
+    snprintf(cmd,sizeof(cmd),"cd %s && %s/llm_ctx -o -f __regular.txt",TEST_DIR,getenv("PWD"));
     char *out = run_command(cmd);
 
     ASSERT("contains '# Still part of prompt'",
@@ -140,7 +140,7 @@ TEST(test_config_multiline_trim_indent) {
     fclose(f);
 
     char cmd[256];
-    snprintf(cmd,sizeof(cmd),"cd %s && %s/llm_ctx -f __regular.txt",TEST_DIR,getenv("PWD"));
+    snprintf(cmd,sizeof(cmd),"cd %s && %s/llm_ctx -o -f __regular.txt",TEST_DIR,getenv("PWD"));
     char *out = run_command(cmd);
 
     /* Expect "Zero\n  TwoSpaces\n" after removing common 6 spaces */

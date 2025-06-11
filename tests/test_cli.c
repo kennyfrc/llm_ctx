@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <limits.h>
 #include "test_framework.h"
 
 /**
@@ -22,6 +23,8 @@
 /* Declare test functions */
 extern void test_cli_config_discovery_binary_dir(void);
 void test_cli_codemap(void);
+void test_cli_output_to_file(void);
+void test_cli_e_flag_custom_guide(void);
 
 /* Set up the test environment */
 void setup_test_env(void) {
@@ -301,7 +304,7 @@ void global_teardown(void) {
 TEST(test_cli_gitignore_default) {
     char cmd[1024];
     // Use shell expansion `$(echo ...)` to generate file list for llm_ctx
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f $(echo __*.txt)", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f $(echo __*.txt)", TEST_DIR, getenv("PWD"));
 
     char *output = run_command(cmd);
 
@@ -316,7 +319,7 @@ TEST(test_cli_gitignore_default) {
 TEST(test_cli_no_gitignore) {
     char cmd[1024];
     // Use shell expansion `$(echo ...)` to generate file list for llm_ctx
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore $(echo __*.txt)", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f --no-gitignore $(echo __*.txt)", TEST_DIR, getenv("PWD"));
 
     char *output = run_command(cmd);
 
@@ -333,7 +336,7 @@ TEST(test_cli_ignore_logs) {
     // Use shell expansion `$(echo ...)` to generate file list for llm_ctx
     // Note: '*' might pick up directories; consider `$(ls -p | grep -v / | tr '\\n' ' ')` for files only if needed,
     // but `echo *` is simpler for now and likely sufficient if llm_ctx handles directory args gracefully.
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f $(echo *)", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f $(echo *)", TEST_DIR, getenv("PWD"));
 
     char *output = run_command(cmd);
 
@@ -355,7 +358,7 @@ TEST(test_cli_ignore_dirs) {
 
     /* Test by running inside the directory and using shell expansion */
     // This aligns the test with others and avoids potential issues with llm_ctx handling directory paths directly in -f.
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f $(echo *)", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f $(echo *)", TEST_DIR, getenv("PWD"));
 
     char *output = run_command(cmd);
 
@@ -404,7 +407,7 @@ TEST(test_directory_handling) {
 
     /* Run the command with the directory as argument (prefixed) */
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -f %s/__nested", getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -f %s/__nested", getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     /* Directory should not be in the output */
@@ -446,7 +449,7 @@ TEST(test_file_tree_structure) {
     /* Run the command with the root directory */
     char cmd[1024];
     // Run from parent of TEST_DIR to get predictable tree root
-    snprintf(cmd, sizeof(cmd), "cd /tmp && %s/llm_ctx -f %s", getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "cd /tmp && %s/llm_ctx -o -f %s", getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     /* Check if the file tree structure is properly shown (prefixed) */
@@ -491,7 +494,7 @@ TEST(test_cli_recursive_glob_all) {
     // Use `find` command to generate the list of files recursively, mimicking '**/*'
     // This avoids relying on shell's potentially inconsistent `**/*` support and llm_ctx's internal globbing.
     // We pipe `find` output to `tr` to replace newlines with spaces for the -f argument.
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f $(find . -type f | tr '\\n' ' ')", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f $(find . -type f | tr '\\n' ' ')", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Should include files from root and __src/** (found by `find`)
@@ -518,7 +521,7 @@ TEST(test_cli_recursive_glob_all) {
 TEST(test_cli_recursive_glob_specific) {
     char cmd[1024];
     // Use `find` command to generate the list of specific C files recursively.
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f $(find __src -name '*.c' -type f | tr '\\n' ' ')", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f $(find __src -name '*.c' -type f | tr '\\n' ' ')", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Should include only .c files within __src and its subdirectories (found by `find`)
@@ -537,7 +540,7 @@ TEST(test_cli_recursive_glob_no_gitignore) {
     char cmd[1024];
     // Use `find` command to generate the list of files recursively, mimicking '**/*'
     // Pass --no-gitignore to llm_ctx.
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore $(find . -type f | tr '\\n' ' ')", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f --no-gitignore $(find . -type f | tr '\\n' ' ')", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Should include ALL files found by `find`, including those normally ignored
@@ -559,7 +562,7 @@ TEST(test_cli_recursive_glob_no_gitignore) {
 TEST(test_cli_glob_question_mark) {
     char cmd[1024];
     // Use single quotes to prevent shell expansion of '?'
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '__test_?.txt'", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f '__test_?.txt'", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Should NOT include __test_a.txt and __test_b.txt because they match '__test_*.txt' in .gitignore
@@ -574,7 +577,7 @@ TEST(test_cli_glob_question_mark) {
 TEST(test_cli_glob_brackets) {
     char cmd[1024];
     // Use single quotes to prevent shell expansion of '[]'
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '__test_[ab].txt'", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f '__test_[ab].txt'", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Should NOT include __test_a.txt and __test_b.txt because they match '__test_*.txt' in .gitignore
@@ -588,7 +591,7 @@ TEST(test_cli_glob_brackets) {
 TEST(test_cli_glob_brackets_range) {
     char cmd[1024];
     // Use single quotes and --no-gitignore because *.log files are ignored by default
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore '__test_[1-2].log'", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f --no-gitignore '__test_[1-2].log'", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Should include __test_1.log and __test_2.log (matching '[1-2]')
@@ -602,7 +605,7 @@ TEST(test_cli_glob_brackets_range) {
 TEST(test_cli_glob_brackets_negation) {
     char cmd[1024];
     // Use single quotes and --no-gitignore because *.log files are ignored by default
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore '__test_[!1].log'", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f --no-gitignore '__test_[!1].log'", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Should include __test_2.log (matching '[!1]') but not __test_1.log
@@ -617,7 +620,7 @@ TEST(test_cli_glob_brace_expansion) {
     char cmd[1024];
     // Use single quotes to prevent shell expansion of '{}'
     // This tests if the underlying glob() function (with GLOB_BRACE) works.
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '__brace_test.{c,h}'", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f '__brace_test.{c,h}'", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Should include .c and .h files matching the brace expansion
@@ -631,7 +634,7 @@ TEST(test_cli_glob_brace_expansion) {
 TEST(test_cli_native_recursive_glob_all) {
     char cmd[1024];
     // Pass '**/*' directly to llm_ctx using single quotes
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '**/*'", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f '**/*'", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Should behave similarly to the `find`-based test, respecting .gitignore
@@ -656,7 +659,7 @@ TEST(test_cli_native_recursive_glob_all) {
 TEST(test_cli_native_recursive_glob_specific) {
     char cmd[1024];
     // Pass '__src/**/*.c' directly to llm_ctx using single quotes
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '__src/**/*.c'", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f '__src/**/*.c'", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Should include only .c files within __src and its subdirectories
@@ -673,7 +676,7 @@ TEST(test_cli_native_recursive_glob_specific) {
 TEST(test_cli_native_recursive_glob_no_gitignore) {
     char cmd[1024];
     // Pass '**/*' directly to llm_ctx with --no-gitignore
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore '**/*'", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f --no-gitignore '**/*'", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Should include ALL files, including those normally ignored
@@ -694,7 +697,7 @@ TEST(test_cli_native_recursive_glob_no_gitignore) {
 TEST(test_cli_recursive_glob_excludes_dot_git) {
     char cmd[1024];
     // Use single quotes around the recursive glob pattern to ensure llm_ctx handles it
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f '**/*'", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f '**/*'", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
  
     // Should include regular files (with ./ prefix from find_recursive starting at '.')
@@ -718,7 +721,7 @@ TEST(test_cli_recursive_glob_excludes_dot_git) {
 TEST(test_cli_binary_null_byte) {
     char cmd[1024];
     // Use --no-gitignore to ensure the file is processed
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore __binary_null.bin", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f --no-gitignore __binary_null.bin", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Desired expectation: Header and placeholder, no raw content.
@@ -734,7 +737,7 @@ TEST(test_cli_binary_null_byte) {
 /* Test handling of file containing control characters (current behavior: include raw) */
 TEST(test_cli_binary_control_chars) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore __binary_control.bin", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f --no-gitignore __binary_control.bin", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Desired expectation: Header and placeholder, no raw content.
@@ -747,7 +750,7 @@ TEST(test_cli_binary_control_chars) {
 /* Test handling of file with image magic bytes (current behavior: include raw) */
 TEST(test_cli_binary_image_magic) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore __image.png", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f --no-gitignore __image.png", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Desired expectation: Header and placeholder, no raw content.
@@ -760,7 +763,7 @@ TEST(test_cli_binary_image_magic) {
 /* Test handling of an empty file (current behavior: include header and empty fence) */
 TEST(test_cli_empty_file) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore __empty.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f --no-gitignore __empty.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains empty file header", string_contains(output, "File: __empty.txt"));
@@ -772,7 +775,7 @@ TEST(test_cli_empty_file) {
 /* Test handling of a file with UTF-8 characters (current behavior: include raw) */
 TEST(test_cli_utf8_file) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f --no-gitignore __utf8.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f --no-gitignore __utf8.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains UTF8 file header", string_contains(output, "File: __utf8.txt"));
@@ -784,7 +787,7 @@ TEST(test_cli_utf8_file) {
 /* Test handling of a typical assembly file */
 TEST(test_cli_assembly_file) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __test.asm", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __test.asm", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains ASM file header", string_contains(output, "File: __test.asm"));
@@ -797,7 +800,7 @@ TEST(test_cli_assembly_file) {
 /* Test handling of a file with Latin-1 (ISO-8859-1) characters */
 TEST(test_cli_latin1_file) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __latin1.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __latin1.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains Latin-1 file header", string_contains(output, "File: __latin1.txt"));
@@ -810,7 +813,7 @@ TEST(test_cli_latin1_file) {
 /* Test handling of a file with Windows-1252 specific characters */
 TEST(test_cli_windows1252_file) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __windows1252.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __windows1252.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains Win-1252 file header", string_contains(output, "File: __windows1252.txt"));
@@ -823,7 +826,7 @@ TEST(test_cli_windows1252_file) {
 /* Test handling of a UTF-16 LE file (Expected: Detected as Binary) */
 TEST(test_cli_utf16le_file) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __utf16le.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __utf16le.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains UTF-16LE file header", string_contains(output, "File: __utf16le.txt"));
@@ -837,7 +840,7 @@ TEST(test_cli_utf16le_file) {
 /* Test handling of a UTF-16 BE file (Expected Failure) */
 TEST(test_cli_utf16be_file) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __utf16be.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __utf16be.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains UTF-16BE file header", string_contains(output, "File: __utf16be.txt"));
@@ -850,7 +853,7 @@ TEST(test_cli_utf16be_file) {
 /* Test handling of a UTF-32 LE file (Expected Failure) */
 TEST(test_cli_utf32le_file) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __utf32le.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __utf32le.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains UTF-32LE file header", string_contains(output, "File: __utf32le.txt"));
@@ -863,7 +866,7 @@ TEST(test_cli_utf32le_file) {
 /* Test handling of a UTF-32 BE file (Expected Failure) */
 TEST(test_cli_utf32be_file) {
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __utf32be.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __utf32be.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains UTF-32BE file header", string_contains(output, "File: __utf32be.txt"));
@@ -888,7 +891,7 @@ TEST(test_cli_config_system_prompt_inline) {
     fclose(conf);
 
     /* Run llm_ctx without -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
@@ -922,7 +925,7 @@ TEST(test_cli_config_system_prompt_at_file) {
     fclose(conf);
 
     /* Run llm_ctx without -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
@@ -947,7 +950,7 @@ TEST(test_cli_config_system_prompt_at_nonexistent) {
     fclose(conf);
 
     /* Run llm_ctx without -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd); // Captures stderr
 
     /* Check for warning message on stderr */
@@ -974,7 +977,7 @@ TEST(test_cli_config_system_prompt_override_cli_default) {
     fclose(conf);
 
     /* Run llm_ctx WITH bare -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -s -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -s -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Check that NO system instructions are present because bare -s prevents config loading.
@@ -1009,7 +1012,7 @@ TEST(test_cli_config_system_prompt_override_cli_at_file) {
     fclose(conf);
 
     /* Run llm_ctx WITH -s@file flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -s@%s -f __regular.txt", TEST_DIR, getenv("PWD"), "__sys_prompt_cli.txt");
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -s@%s -f __regular.txt", TEST_DIR, getenv("PWD"), "__sys_prompt_cli.txt");
     char *output = run_command(cmd);
 
     /* Check that the prompt from the CLI file was used */
@@ -1041,7 +1044,7 @@ TEST(test_cli_config_system_prompt_multiline) {
     fclose(conf);
 
     /* Run llm_ctx without -s flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
@@ -1067,7 +1070,7 @@ TEST(test_cli_c_at_file) {
     fclose(msg_file);
 
     // Run llm_ctx with -c @file
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -c @__msg.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -c @__msg.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Check for user instructions block
@@ -1086,7 +1089,7 @@ TEST(test_cli_c_at_stdin) {
     char cmd[2048];
     // Pipe instructions via echo to llm_ctx running with -c @-
     // Use single quotes around the echo string to handle newlines and special chars
-    snprintf(cmd, sizeof(cmd), "echo 'Instructions from stdin.\nLine 2.' | %s/llm_ctx -c @- -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "echo 'Instructions from stdin.\nLine 2.' | %s/llm_ctx -o -c @- -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     // Check for user instructions block (Note: echo adds a trailing newline)
@@ -1102,7 +1105,7 @@ TEST(test_cli_c_at_stdin) {
 /* Test -c=inline: Use inline instructions with equals sign */
 TEST(test_cli_c_equals_inline) {
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c=\"Inline instructions with equals\" -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -c=\"Inline instructions with equals\" -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     ASSERT("Output contains user_instructions tag", string_contains(output, "<user_instructions>"));
@@ -1123,7 +1126,7 @@ TEST(test_cli_command_at_file) {
     fprintf(msg_file, "Long option file instructions.");
     fclose(msg_file);
 
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx --command=@__msg_long.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o --command=@__msg_long.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains user_instructions tag", string_contains(output, "<user_instructions>"));
@@ -1137,7 +1140,7 @@ TEST(test_cli_command_at_file) {
 /* Test --command=@-: Long option for reading from stdin */
 TEST(test_cli_command_at_stdin) {
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "echo 'Long option stdin.' | %s/llm_ctx --command=@- -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "echo 'Long option stdin.' | %s/llm_ctx -o --command=@- -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     // Check for user instructions block (echo adds trailing newline)
@@ -1151,7 +1154,7 @@ TEST(test_cli_command_at_stdin) {
 /* Test --command=inline: Long option for inline instructions */
 TEST(test_cli_command_equals_inline) {
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx --command=\"Long option inline instructions\" -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o --command=\"Long option inline instructions\" -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     ASSERT("Output contains user_instructions tag", string_contains(output, "<user_instructions>"));
@@ -1164,7 +1167,7 @@ TEST(test_cli_command_equals_inline) {
 /* Test error: -c @nonexistent_file */
 TEST(test_cli_error_c_at_nonexistent) {
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c @/tmp/this_file_should_not_exist_ever -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -c @/tmp/this_file_should_not_exist_ever -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     // Check for the die() error message (captured via stderr redirection)
@@ -1176,7 +1179,7 @@ TEST(test_cli_error_c_at_nonexistent) {
 TEST(test_cli_error_c_no_arg) {
     char cmd[2048];
     // Need to run within the test dir context if files are expected, but here we expect error before file processing.
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -c", getenv("PWD"));
     char *output = run_command(cmd);
 
     // getopt_long prints its own error message. Check for the standard phrase.
@@ -1187,7 +1190,7 @@ TEST(test_cli_error_c_no_arg) {
 /* Test error: -c= with empty argument */
 TEST(test_cli_error_c_equals_empty) {
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c=", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -c=", getenv("PWD"));
     char *output = run_command(cmd);
 
     // Expect the exact fatal error message string from handle_command_arg.
@@ -1197,7 +1200,7 @@ TEST(test_cli_error_c_equals_empty) {
 /* Test error: --command= with empty argument */
 TEST(test_cli_error_command_equals_empty) {
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx --command=", getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o --command=", getenv("PWD"));
     char *output = run_command(cmd);
 
     // Expect the fatal error message from handle_command_arg
@@ -1208,7 +1211,7 @@ TEST(test_cli_error_command_equals_empty) {
 TEST(test_cli_C_flag_stdin) {
     char cmd[2048];
     // Pipe instructions via echo to llm_ctx running with -C
-    snprintf(cmd, sizeof(cmd), "echo 'Instructions via -C.' | %s/llm_ctx -C -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "echo 'Instructions via -C.' | %s/llm_ctx -o -C -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     // Check for user instructions block (Note: echo adds a trailing newline)
@@ -1227,7 +1230,7 @@ TEST(test_cli_e_flag_response_guide) {
     const char *instructions = "Test instructions for response guide.";
 
     // Test without -e flag
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
     char *output_no_e = run_command(cmd);
 
     // Updated expected strings for Markdown format
@@ -1247,7 +1250,7 @@ TEST(test_cli_e_flag_response_guide) {
     ASSERT("Output (no -e) does NOT contain 'PR-style' reply format", !string_contains(output_no_e, expected_reply_with_review_start));
 
     // Test with -e flag
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -e -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -e -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
     char *output_with_e = run_command(cmd);
 
     ASSERT("Output (with -e) contains <response_guide>", string_contains(output_with_e, "<response_guide>"));
@@ -1260,13 +1263,13 @@ TEST(test_cli_e_flag_response_guide) {
 
 
     // Test with --editor-comments flag (long form)
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx --editor-comments -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o --editor-comments -c=\"%s\" -f %s/__regular.txt", getenv("PWD"), instructions, TEST_DIR);
     char *output_with_long_e = run_command(cmd);
     ASSERT("Output (with --editor-comments) contains correct 'PR-style' reply format", string_contains(output_with_long_e, expected_reply_with_review_start));
     ASSERT("Output (with --editor-comments) does NOT contain 'No code-review' reply format", !string_contains(output_with_long_e, expected_reply_no_review));
 
     // Test case where -c is not provided (no response guide expected)
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
     char *output_no_c = run_command(cmd);
     ASSERT("Output (no -c) does NOT contain <response_guide>", !string_contains(output_no_c, "<response_guide>"));
     ASSERT("Output (no -c) does NOT contain Problem Statement header", !string_contains(output_no_c, expected_problem_statement_header));
@@ -1280,7 +1283,7 @@ TEST(test_cli_e_flag_without_c) {
     const char *problem_statement_header = "## Problem Statement";
 
     // Run with -e but no -c
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -e -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -e -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     ASSERT("Output (only -e) contains <response_guide>", string_contains(output, "<response_guide>"));
@@ -1288,6 +1291,40 @@ TEST(test_cli_e_flag_without_c) {
     ASSERT("Output (only -e) does NOT contain Problem Statement header", !string_contains(output, problem_statement_header));
     // Ensure file content is still present
     ASSERT("Output (only -e) contains regular file content", string_contains(output, "Regular file content"));
+}
+
+/* Test -e with custom response guide */
+TEST(test_cli_e_flag_custom_guide) {
+    char cmd[2048];
+    char guide_file[1024];
+    
+    /* Create custom guide file */
+    snprintf(guide_file, sizeof(guide_file), "%s/__custom_guide.txt", TEST_DIR);
+    FILE *f = fopen(guide_file, "w");
+    if (f) {
+        fprintf(f, "Custom Guide: Please perform a security analysis\n");
+        fprintf(f, "Focus on potential vulnerabilities\n");
+        fclose(f);
+    }
+    
+    /* Test -e with inline custom guide */
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -e\"Inline custom guide\" -f %s/__regular.txt 2>&1", getenv("PWD"), TEST_DIR);
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains response guide", string_contains(output, "<response_guide>"));
+    ASSERT("Output contains inline custom guide", string_contains(output, "Inline custom guide"));
+    ASSERT("Output does NOT contain default PR-style text", !string_contains(output, "PR-style code review"));
+    
+    /* Test -e with file-based custom guide */
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -e@%s -f %s/__regular.txt 2>&1", getenv("PWD"), guide_file, TEST_DIR);
+    output = run_command(cmd);
+    
+    ASSERT("Output contains response guide from file", string_contains(output, "<response_guide>"));
+    ASSERT("Output contains custom guide content", string_contains(output, "Custom Guide: Please perform a security analysis"));
+    ASSERT("Output contains vulnerability text", string_contains(output, "Focus on potential vulnerabilities"));
+    
+    /* Cleanup */
+    unlink(guide_file);
 }
 
 
@@ -1307,7 +1344,7 @@ TEST(test_cli_config_editor_comments_true) {
     fclose(conf);
 
     /* Run llm_ctx without -e flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
     char *output = run_command(cmd);
 
     ASSERT("Output contains <response_guide>", string_contains(output, "<response_guide>"));
@@ -1332,7 +1369,7 @@ TEST(test_cli_config_editor_comments_false) {
     fclose(conf);
 
     /* Run llm_ctx without -e flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
     char *output = run_command(cmd);
 
     ASSERT("Output contains <response_guide>", string_contains(output, "<response_guide>"));
@@ -1357,7 +1394,7 @@ TEST(test_cli_config_editor_comments_override) {
     fclose(conf);
 
     /* Run llm_ctx WITH -e flag */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -e -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -e -c=\"%s\" -f __regular.txt", TEST_DIR, getenv("PWD"), instructions);
     char *output = run_command(cmd);
 
     ASSERT("Output contains <response_guide>", string_contains(output, "<response_guide>"));
@@ -1372,7 +1409,7 @@ TEST(test_cli_prompt_only_c) {
     const char *instructions = "Explain this refactor";
 
     // Run with only -c flag, no files, no stdin pipe
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -c=\"%s\"", getenv("PWD"), instructions);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -c=\"%s\"", getenv("PWD"), instructions);
     char *output = run_command(cmd); // Captures stderr
 
     ASSERT("Output contains <user_instructions>", string_contains(output, "<user_instructions>"));
@@ -1387,7 +1424,7 @@ TEST(test_cli_C_flag_prompt_only) {
     const char *instructions = "Explain this refactor via C";
 
     // Run with only -C flag, piping instructions, no file args
-    snprintf(cmd, sizeof(cmd), "echo \"%s\" | %s/llm_ctx -C", instructions, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "echo \"%s\" | %s/llm_ctx -o -C", instructions, getenv("PWD"));
     char *output = run_command(cmd); // Captures stderr
 
     ASSERT("Output contains <user_instructions>", string_contains(output, "<user_instructions>"));
@@ -1405,7 +1442,7 @@ TEST(test_cli_s_default) {
     char cmd[2048];
 
     // Run llm_ctx with bare -s flag. This should NOT output any system prompt.
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -s -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -s -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     // Check that NO system instructions are present because bare -s prevents config loading
@@ -1432,7 +1469,7 @@ TEST(test_cli_s_at_file) {
     fclose(sys_msg_file);
 
     // Run llm_ctx with -s@file (attached form)
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -s@__sys_msg.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -s@__sys_msg.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
@@ -1449,7 +1486,7 @@ TEST(test_cli_s_at_stdin) {
     char cmd[2048];
     const char *stdin_sys_prompt = "System prompt from stdin.\nSecond line.";
     // Pipe instructions via echo to llm_ctx running with -s@- (attached form)
-    snprintf(cmd, sizeof(cmd), "echo '%s' | %s/llm_ctx -s@- -f %s/__regular.txt", stdin_sys_prompt, getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "echo '%s' | %s/llm_ctx -o -s@- -f %s/__regular.txt", stdin_sys_prompt, getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     // Check for system instructions block (Note: echo adds a trailing newline)
@@ -1468,7 +1505,7 @@ TEST(test_cli_s_at_stdin) {
 TEST(test_cli_s_inline) {
     char cmd[2048];
     const char *inline_sys_prompt = "System prompt as inline text.";
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -s \"%s\" -f %s/__regular.txt", getenv("PWD"), inline_sys_prompt, TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -s \"%s\" -f %s/__regular.txt", getenv("PWD"), inline_sys_prompt, TEST_DIR);
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
@@ -1481,7 +1518,7 @@ TEST(test_cli_s_inline) {
 TEST(test_cli_s_equals_inline) {
     char cmd[2048];
     const char *inline_sys_prompt = "System prompt with equals.";
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -s=\"%s\" -f %s/__regular.txt", getenv("PWD"), inline_sys_prompt, TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -s=\"%s\" -f %s/__regular.txt", getenv("PWD"), inline_sys_prompt, TEST_DIR);
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
@@ -1491,7 +1528,7 @@ TEST(test_cli_s_equals_inline) {
 /* Test -sglued: Use inline system instructions glued to flag */
 TEST(test_cli_s_glued_inline) {
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -sgluedtext -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -sgluedtext -f %s/__regular.txt", getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
@@ -1516,7 +1553,7 @@ TEST(test_cli_config_copy_clipboard_true) {
     fclose(conf);
 
     /* Run llm_ctx in the test directory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd); /* run_command captures stderr */
 
     /* Check that stdout is empty (content should NOT be printed) */
@@ -1539,7 +1576,7 @@ TEST(test_cli_config_copy_clipboard_false) {
     fclose(conf);
 
     /* Run llm_ctx in the test directory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd); /* run_command captures stderr */
 
     /* Check that the copy mechanism wasn't triggered (no stderr message, stdout present) */
@@ -1571,7 +1608,7 @@ TEST(test_cli_config_discovery_parent) {
     unlink(subdir_conf_path); // Remove if it exists from previous tests
 
     /* Run llm_ctx from the subdirectory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f %s/__regular.txt", subdir_path, getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f %s/__regular.txt", subdir_path, getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     /* Check if the setting from the parent config was applied (copy=true means no stdout) */
@@ -1612,7 +1649,7 @@ TEST(test_cli_config_discovery_cwd_over_parent) {
     fclose(subdir_conf);
 
     /* Run llm_ctx from the subdirectory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f %s/__regular.txt", subdir_path, getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f %s/__regular.txt", subdir_path, getenv("PWD"), TEST_DIR);
     char *output = run_command(cmd);
 
     /* Check that the setting from the subdir config (false) was applied (stdout present) */
@@ -1650,7 +1687,7 @@ TEST(test_cli_config_discovery_env_override) {
     setenv("LLM_CTX_CONFIG", env_conf_path, 1);
 
     /* 4. Run llm_ctx from the test directory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     /* 5. Assert that the env var config (copy=true) was used */
@@ -1692,7 +1729,7 @@ TEST(test_cli_config_discovery_xdg) {
     unlink(strcat(strdup(TEST_DIR), "/.llm_ctx.conf"));
 
     /* 4. Run llm_ctx from the test directory */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -f __regular.txt", TEST_DIR, getenv("PWD"));
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
     /* 5. Assert that the XDG config (copy=true) was used */
@@ -1767,6 +1804,7 @@ int main(void) {
     RUN_TEST(test_cli_C_flag_stdin);
     RUN_TEST(test_cli_e_flag_response_guide);
     RUN_TEST(test_cli_e_flag_without_c);
+    RUN_TEST(test_cli_e_flag_custom_guide);
 
     /* Tests for config file editor_comments (Slice 4) */
     RUN_TEST(test_cli_config_editor_comments_true);
@@ -1806,6 +1844,9 @@ int main(void) {
     
     /* Test for codemap functionality */
     RUN_TEST(test_cli_codemap);
+    
+    /* Test for file output functionality */
+    RUN_TEST(test_cli_output_to_file);
 
     /* Temporarily skipped tests for UTF-16/32 handling, as the current heuristic */
     /* correctly identifies them as binary (due to null bytes), but the ideal */
@@ -1892,7 +1933,7 @@ TEST(test_cli_codemap) {
     }
     
     /* Run with -m flag with absolute paths */
-    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -m -f %s/__test_*.?s", getenv("PWD"), codemap_dir);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -m -o -f %s/__test_*.?s", getenv("PWD"), codemap_dir);
     char *output = run_command(cmd);
     
     /* Check for code_map block */
@@ -1942,4 +1983,55 @@ TEST(test_cli_codemap) {
     /* Clean up */
     unlink(js_file_path);
     unlink(ts_file_path);
+}
+
+TEST(test_cli_output_to_file) {
+    char test_file[PATH_MAX];
+    char output_file[PATH_MAX];
+    char cmd[1024];
+    
+    /* Create test input file */
+    snprintf(test_file, sizeof(test_file), "%s/__test_output.txt", TEST_DIR);
+    FILE *f = fopen(test_file, "w");
+    if (f) {
+        fprintf(f, "This is test content for file output.\n");
+        fprintf(f, "Line 2 of test content.\n");
+        fclose(f);
+    }
+    
+    /* Test output to file with -o */
+    snprintf(output_file, sizeof(output_file), "%s/__output_result.txt", TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o%s -f %s 2>&1", getenv("PWD"), output_file, test_file);
+    char *output = run_command(cmd);
+    
+    /* Check that confirmation message was printed to stderr */
+    ASSERT("Output confirms file was written", string_contains(output, "Content written to"));
+    ASSERT("Output contains filename", string_contains(output, "__output_result.txt"));
+    
+    /* Check that output file exists and contains expected content */
+    FILE *result = fopen(output_file, "r");
+    ASSERT("Output file was created", result != NULL);
+    if (result) {
+        char buffer[4096] = {0};
+        size_t bytes_read = fread(buffer, 1, sizeof(buffer) - 1, result);
+        fclose(result);
+        
+        ASSERT("Output file is not empty", bytes_read > 0);
+        ASSERT("Output contains file tree", string_contains(buffer, "<file_tree>"));
+        ASSERT("Output contains file context", string_contains(buffer, "<file_context>"));
+        ASSERT("Output contains test content", string_contains(buffer, "This is test content for file output"));
+    }
+    
+    /* Test with --output= syntax */
+    snprintf(output_file, sizeof(output_file), "%s/__output_result2.txt", TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx --output=%s -f %s 2>&1", getenv("PWD"), output_file, test_file);
+    output = run_command(cmd);
+    
+    /* Check that this also works */
+    ASSERT("--output= syntax confirms file was written", string_contains(output, "Content written to"));
+    
+    /* Cleanup */
+    snprintf(cmd, sizeof(cmd), "rm -f %s/__test_output.txt %s/__output_result.txt %s/__output_result2.txt", 
+             TEST_DIR, TEST_DIR, TEST_DIR);
+    run_command(cmd);
 }

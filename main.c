@@ -51,10 +51,12 @@ typedef struct {
     bool copy_to_clipboard_set;
 } ConfigSettings;
 
-/* Global flag for effective copy_to_clipboard setting */
-static bool g_effective_copy_to_clipboard = false;
+/* Global flag for effective copy_to_clipboard setting - default is true (clipboard) */
+static bool g_effective_copy_to_clipboard = true;
 /* Store argv[0] for fallback executable path resolution */
 static const char *g_argv0 = NULL;
+/* Output file path when using -o with argument */
+static char *g_output_file = NULL;
 
 /* Global arena allocator */
 /* Reserve 64 MiB for all allocations used by the application */
@@ -304,7 +306,7 @@ void add_user_instructions(const char *instructions);
 void find_recursive(const char *base_dir, const char *pattern);
 char *find_config_file(void);
 bool parse_config_file(const char *config_path, ConfigSettings *settings);
-void copy_to_clipboard(const char *buffer);
+bool copy_to_clipboard(const char *buffer);
 bool process_pattern(const char *pattern);
 void generate_file_tree(void);
 void add_to_file_tree(const char *filepath);
@@ -341,6 +343,7 @@ static int file_mode = 0;         /* 0 = stdin mode, 1 = file mode (-f or @-) */
 char *user_instructions = NULL;   /* Allocated from arena */
 static char *system_instructions = NULL;   /* Allocated from arena */
 static bool want_editor_comments = false;   /* -e flag */
+static char *custom_response_guide = NULL; /* Custom response guide from -e argument */
 static bool raw_mode = false; /* -r flag */
 static bool want_codemap = false; /* -m flag */
 static bool tree_only = false; /* -t flag */
@@ -378,20 +381,27 @@ static void add_response_guide(const char *problem) {
     // This ensures -e always adds the guide, even without -c.
     if (want_editor_comments || (problem && *problem)) {
         fprintf(temp_file, "<response_guide>\n");
-        fprintf(temp_file, "LLM: Please respond using the markdown format below.\n");
+        
+        // If custom response guide provided, use it directly
+        if (custom_response_guide && *custom_response_guide) {
+            fprintf(temp_file, "%s\n", custom_response_guide);
+        } else {
+            // Use default behavior
+            fprintf(temp_file, "LLM: Please respond using the markdown format below.\n");
 
-        // Only include Problem Statement section if user instructions were provided
-        if (problem && *problem) {
-            fprintf(temp_file, "## Problem Statement\n");
-            fprintf(temp_file, "Summarize the user's request or problem based on the overall context provided.\n");
+            // Only include Problem Statement section if user instructions were provided
+            if (problem && *problem) {
+                fprintf(temp_file, "## Problem Statement\n");
+                fprintf(temp_file, "Summarize the user's request or problem based on the overall context provided.\n");
+            }
+
+            fprintf(temp_file, "## Response\n");
+            fprintf(temp_file, "    1. Provide a clear, step-by-step solution or explanation.\n");
+            fprintf(temp_file, "    2. %s\n",
+                    want_editor_comments ?
+                      "Return **PR-style code review comments**: use GitHub inline-diff syntax, group notes per file, justify each change, and suggest concrete refactors."
+                      : "No code-review block is required."); // If !want_editor_comments, this is only reached if 'problem' exists.
         }
-
-        fprintf(temp_file, "## Response\n");
-        fprintf(temp_file, "    1. Provide a clear, step-by-step solution or explanation.\n");
-        fprintf(temp_file, "    2. %s\n",
-                want_editor_comments ?
-                  "Return **PR-style code review comments**: use GitHub inline-diff syntax, group notes per file, justify each change, and suggest concrete refactors."
-                  : "No code-review block is required."); // If !want_editor_comments, this is only reached if 'problem' exists.
 
         fprintf(temp_file, "</response_guide>\n\n");
     }
@@ -900,7 +910,10 @@ void show_help(void) {
     printf("  -s             Use default system prompt (see README for content)\n"); // Keep help concise
     printf("  -s@FILE        Read system prompt from FILE (no space after -s)\n");
     printf("  -s@-           Read system prompt from standard input (no space after -s)\n");
-    printf("  -e             Instruct the LLM to append PR-style review comments\n");
+    printf("  -e             Use default PR-style code review response guide\n");
+    printf("  -eTEXT         Use TEXT as custom response guide (no space after -e)\n");
+    printf("  -e@FILE        Read custom response guide from FILE (no space after -e)\n");
+    printf("  -e@-           Read custom response guide from stdin (no space after -e)\n");
     printf("  -r             Raw mode: omit system instructions and response guide\n");
     printf("  -m[=PATTERN]   Generate code map (optionally limited to PATTERN)\n");
     printf("                 Patterns can be comma-separated (e.g., \"src/**/*.js,lib/**/*.rb\")\n");
@@ -908,6 +921,10 @@ void show_help(void) {
     printf("  -f [FILE...]   Process files instead of stdin content\n");
     printf("  -t             Generate file tree only for specified files\n");
     printf("  -T             Generate complete directory tree (global tree)\n");
+    printf("  -o, --output [FILE]\n");
+    printf("                 Output to stdout or file instead of clipboard\n");
+    printf("                 Without argument: print to stdout\n");
+    printf("                 With argument: write to specified file\n");
     printf("  -d, --debug    Enable debug output (prefixed with [DEBUG])\n");
     printf("  -h             Show this help message\n");
     printf("  --list-packs   List available language packs for code map generation\n");
@@ -1776,7 +1793,7 @@ bool parse_config_file(const char *config_path, ConfigSettings *settings) {
  * Copy the given buffer content to the system clipboard.
  * Uses platform-specific commands.
  */
-void copy_to_clipboard(const char *buffer) {
+bool copy_to_clipboard(const char *buffer) {
     const char *cmd = NULL;
     #ifdef __APPLE__
         cmd = "pbcopy";
@@ -1793,18 +1810,18 @@ void copy_to_clipboard(const char *buffer) {
         cmd = "clip.exe";
     #else
         fprintf(stderr, "Warning: Clipboard copy not supported on this platform.\n");
-        return;
+        return false;
     #endif
 
     if (!cmd) { /* Should only happen on Linux if both checks fail */
          fprintf(stderr, "Warning: Could not determine clipboard command on Linux.\n");
-         return;
+         return false;
     }
 
     FILE *pipe = popen(cmd, "w");
     if (!pipe) {
         perror("popen failed for clipboard command");
-        return;
+        return false;
     }
 
     /* Write buffer to the command's stdin */
@@ -1813,8 +1830,10 @@ void copy_to_clipboard(const char *buffer) {
     /* Close the pipe and check status */
     if (pclose(pipe) == -1) {
         perror("pclose failed for clipboard command");
+        return false;
     }
     /* Ignore command exit status for now, focus on pipe errors */
+    return true;
 }
 
 /**
@@ -1861,11 +1880,13 @@ static const struct option long_options[] = {
     {"command",         required_argument, 0, 'c'}, /* Takes an argument */
     {"system",          optional_argument, 0, 's'}, /* Argument is optional (@file/@-/default) */
     {"files",           no_argument,       0, 'f'}, /* Indicates file args follow */
-    {"editor-comments", no_argument,       0, 'e'},
+    {"editor-comments", optional_argument, 0, 'e'},
     {"raw",             no_argument,       0, 'r'},
     {"codemap",         optional_argument, 0, 'm'}, /* Generate code map with optional pattern */
     {"tree",            no_argument,       0, 't'}, /* Generate file tree only */
     {"global-tree",     no_argument,       0, 'T'}, /* Generate complete directory tree */
+    {"output",          optional_argument, 0, 'o'}, /* Output to stdout or file instead of clipboard */
+    {"stdout",          optional_argument, 0, 'o'}, /* Alias for --output */
     {"debug",           no_argument,       0, 'd'}, /* Enable debug output */
     {"list-packs",      no_argument,       0,  2 }, /* List available language packs */
     {"pack-info",       required_argument, 0,  3 }, /* Get info about a specific language pack */
@@ -1963,6 +1984,44 @@ static void handle_system_arg(const char *arg) {
     }
 }
 
+/* Helper to handle argument for -e/--editor-comments */
+static void handle_editor_arg(const char *arg) {
+    /* Case 1: -e without argument -> Use default PR-style review behavior */
+    if (arg == NULL) {
+        want_editor_comments = true;
+        e_flag_used = true;
+        custom_response_guide = NULL; /* Use default behavior */
+        return;
+    }
+
+    /* Case 2: -e with argument starting with '@' */
+    if (arg[0] == '@') {
+        if (strcmp(arg, "@-") == 0) { /* Read from stdin */
+            if (isatty(STDIN_FILENO)) {
+                fprintf(stderr, "Reading custom response guide from terminal. Enter text and press Ctrl+D when done.\n");
+            }
+            custom_response_guide = slurp_stream(stdin);
+            g_stdin_consumed_for_option = true; /* Mark stdin as used */
+            if (!custom_response_guide) fatal("Error reading response guide from stdin: %s", ferror(stdin) ? strerror(errno) : "Out of memory");
+            want_editor_comments = true;
+            e_flag_used = true;
+            file_mode = 1; /* Set file mode globally */
+        } else { /* Read from file */
+            custom_response_guide = slurp_file(arg + 1); /* skip '@' */
+            if (!custom_response_guide)
+                fatal("Cannot open or read response guide file '%s': %s", arg + 1, strerror(errno));
+            want_editor_comments = true;
+            e_flag_used = true;
+        }
+    } else {
+        /* Case 3: -e with inline text -> Use as custom response guide */
+        custom_response_guide = arena_strdup_safe(&g_arena, arg);
+        if (!custom_response_guide) fatal("Out of memory duplicating -e argument");
+        want_editor_comments = true;
+        e_flag_used = true;
+    }
+}
+
 
 /**
  * Main function - program entry point
@@ -1997,7 +2056,7 @@ int main(int argc, char *argv[]) {
     /* and adhering to the "minimize execution paths" principle. */
     int opt;
     /* Add 'C' to the short options string. It takes no argument. */
-    while ((opt = getopt_long(argc, argv, "hc:s::frem::CtdT", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s::fre::m::CtdTo::", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
 
@@ -2026,10 +2085,15 @@ int main(int argc, char *argv[]) {
             case 'f': /* -f or --files */
                 file_mode = 1;
                 break;
-            case 'e': /* -e or --editor-comments */
-                want_editor_comments = true;
-                e_flag_used = true; /* Track that CLI flag was used */
-                /* allow_empty_context = true; // Set later based on final state */
+            case 'e': /* -e or --editor-comments with optional argument */
+                /* Handle similar to -s: check if there's a non-option argument following */
+                if (optarg == NULL              /* no glued arg */
+                    && optind < argc            /* something left */
+                    && argv[optind][0] != '-') {/* not next flag  */
+                    handle_editor_arg(argv[optind++]); /* treat as arg, consume */
+                } else {
+                    handle_editor_arg(optarg);  /* glued/NULL */
+                }
                 break;
             case 'r': /* -r or --raw */
                 raw_mode = true;
@@ -2112,6 +2176,17 @@ int main(int argc, char *argv[]) {
             case 'T': /* -T or --global-tree */
                 global_tree_only = true;
                 file_mode = 1; /* Enable file mode to process files */
+                break;
+            case 'o': /* -o or --output with optional file argument */
+                g_effective_copy_to_clipboard = false;
+                if (optarg) {
+                    /* User provided a filename */
+                    g_output_file = arena_strdup_safe(&g_arena, optarg);
+                    if (!g_output_file) {
+                        fatal("Failed to allocate memory for output filename");
+                    }
+                }
+                /* If no optarg, output goes to stdout (g_output_file remains NULL) */
                 break;
             case 'C': /* -C (equivalent to -c @-) */
                 /* Reuse the existing handler by simulating the @- argument */
@@ -2462,15 +2537,41 @@ int main(int argc, char *argv[]) {
         /* Read temp file content */
         char *final_content = slurp_file(temp_file_path);
         if (final_content) {
-            copy_to_clipboard(final_content);
-            /* Print confirmation message to stderr */
-            fprintf(stderr, "Content copied to clipboard.\n");
+            if (!copy_to_clipboard(final_content)) {
+                /* Clipboard copy failed, fall back to stdout */
+                fprintf(stderr, "Clipboard copy failed; falling back to stdout.\n");
+                printf("%s", final_content);
+            } else {
+                /* Print confirmation message to stderr */
+                fprintf(stderr, "Content copied to clipboard.\n");
+            }
         } else {
             perror("Failed to read temporary file for clipboard");
             /* atexit handler will still attempt cleanup */
             return 1; /* Indicate failure */
         }
-        /* Do NOT print to stdout when copying */
+        /* Do NOT print to stdout when copying succeeded */
+    } else if (g_output_file) {
+        /* Output to specified file */
+        char *final_content = slurp_file(temp_file_path);
+        if (final_content) {
+            FILE *output_file = fopen(g_output_file, "w");
+            if (output_file) {
+                if (fwrite(final_content, 1, strlen(final_content), output_file) != strlen(final_content)) {
+                    perror("Failed to write to output file");
+                    fclose(output_file);
+                    return 1;
+                }
+                fclose(output_file);
+                fprintf(stderr, "Content written to %s\n", g_output_file);
+            } else {
+                perror("Failed to open output file");
+                return 1;
+            }
+        } else {
+            perror("Failed to read temporary file for output file");
+            return 1;
+        }
     } else {
         /* Default: Display the output directly to stdout */
         char *final_content = slurp_file(temp_file_path);
