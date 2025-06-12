@@ -219,9 +219,9 @@ test-pack-management: $(TARGET) $(TEST_TARGETS)
 # Tokenizer target
 tokenizer:
 	@echo "Building tokenizer from tiktoken-c..."
-	@if [ ! -d "$(TOKENIZER_DIR)/tiktoken-c" ]; then \
-		echo "Error: tiktoken-c submodule not found. Run 'git submodule update --init' first."; \
-		exit 1; \
+	@if [ ! -d "$(TOKENIZER_DIR)/tiktoken-c" ] || [ ! -f "$(TOKENIZER_DIR)/tiktoken-c/Cargo.toml" ]; then \
+		echo "Initializing tiktoken-c submodule..."; \
+		git submodule update --init --recursive || { echo "Failed to initialize submodule"; exit 1; }; \
 	fi
 	@echo "Building tiktoken-c (universal binary for macOS)..."
 	@cd $(TOKENIZER_DIR)/tiktoken-c && \
