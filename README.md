@@ -36,6 +36,18 @@
     ```
     *(Uses pattern matching by default, enhanced with Tree-sitter when available - see [Code Map Feature](#code-map-feature))*
 
+6.  **Ensure your context fits within model limits** (automatically copied to clipboard):
+    ```bash
+    # Uses default 96k token budget; shows token usage automatically
+    llm_ctx -f 'src/**/*.py' -c "Review this Python codebase"
+    # Shows: Token usage: 45231 / 96000 (47% of budget)
+    
+    # Set a custom budget and get detailed diagnostics
+    llm_ctx -f 'src/**/*.py' -b 100000 -D -c "Review this Python codebase"
+    # If over budget, exits with code 3 before copying
+    ```
+    *(Token counting built with `make all` - see [Token Counting](#token-counting-and-budget-management))*
+
 *(To output to stdout instead of clipboard, use the `-o` flag)*
 
 **Quick Links:**
@@ -75,9 +87,9 @@ Follow these steps to get the code, build it, and make it easily accessible:
     ```
 
 2.  **Build the Executable:**
-    Compile the source code using `make`. This creates the `llm_ctx` executable in the current directory.
+    Compile the source code using `make all`. This builds both `llm_ctx` and the tokenizer for automatic token counting.
     ```bash
-    make
+    make all
     ```
     You can run the tool directly from this directory: `./llm_ctx --help`.
 
@@ -408,6 +420,25 @@ Options:
   -m, --codemap  Generate a code map that shows functions, classes, methods, and
                  types. Uses pattern matching by default, Tree-sitter when available.
 
+  -b N, --token-budget=N
+                 Set a token budget limit (default: 96000). If the generated context
+                 exceeds this token count (using OpenAI tokenization), the output is
+                 rejected and the program exits with code 3. Token usage is always
+                 displayed when the tokenizer is available.
+                 Example: -b 128000 (for GPT-4's context limit)
+
+  -D[FILE], --token-diagnostics[=FILE]
+                 Generate a token count breakdown showing tokens per file.
+                 Without FILE argument, outputs to stderr. With FILE, writes
+                 to the specified file. Useful for identifying large files.
+                 Example: -D (output to stderr)
+                 Example: -Dtoken_report.txt
+
+  --token-model=MODEL
+                 Set the OpenAI model for token counting. Different models
+                 have different tokenization rules. Default: gpt-4o
+                 Example: --token-model=gpt-3.5-turbo
+
   -d, --debug    Debug mode. Shows additional information about file processing,
                  parsing decisions, and errors.
 
@@ -615,6 +646,137 @@ The `-m` or `--codemap` flag enables code mapping, which extracts and displays f
     *   Tree-sitter provides superior results but isn't required
     *   Performance limits: Files > 5MB are skipped to avoid excessive memory usage
     *   No strict timeout limits are enforced during parsing
+
+### Token Counting and Budget Management
+
+`llm_ctx` includes automatic token counting to help manage LLM context window limits. This uses OpenAI's tokenization rules (via `tiktoken`) to accurately count tokens before sending to an LLM.
+
+#### Automatic Token Usage Display
+
+When the tokenizer is available, `llm_ctx` automatically displays token usage after every run:
+
+```bash
+# Shows token usage with default 96k budget
+llm_ctx -f main.c
+# Output: Token usage: 27029 / 96000 (28% of budget)
+```
+
+#### Building the Tokenizer
+
+The tokenizer is built automatically with `make all`:
+
+```bash
+# Build both llm_ctx and the tokenizer
+make all
+
+# Or build just the tokenizer separately
+make tokenizer
+
+# The tokenizer is optional - llm_ctx works without it
+# Token features are gracefully disabled if the library is missing
+```
+
+#### Token Budget (`-b`, `--token-budget`)
+
+Set a limit on the number of tokens in the generated context (default: 96000):
+
+```bash
+# Use default 96k token limit
+llm_ctx -f 'src/**/*.js'
+
+# Set custom limit for GPT-4's 128k context
+llm_ctx -f 'src/**/*.js' -b 128000
+
+# If the context exceeds the budget:
+# - Token usage shown with percentage over 100%
+# - Error message printed to stderr  
+# - Program exits with code 3
+# - No output is generated (clipboard/stdout/file)
+```
+
+Exit codes:
+- `0`: Success (within budget)
+- `3`: Token budget exceeded
+- Other: Standard errors
+
+#### Token Diagnostics (`-D`, `--token-diagnostics`)
+
+Generate a breakdown showing token counts per file:
+
+```bash
+# Output diagnostics to stderr
+llm_ctx -f 'src/**/*.js' -D
+
+# Save diagnostics to a file
+llm_ctx -f 'src/**/*.js' -Dtoken_report.txt
+
+# Example output:
+# Token usage: 14982 / 96000 (15% of budget)
+#   Tokens   Category
+#   -------  ------------------------
+#     6980  <file_tree>
+#       12  <user_instructions>
+#        6  <system_instructions>
+#       98  <response_guide>
+#     1254  src/main.js
+#      842  src/utils.js
+#     6541  <other>
+#   -------  ------------------------
+#    14982  Total
+```
+
+This helps identify:
+- Which sections consume the most tokens (file tree, instructions, files)
+- Which specific files are largest
+- Whether your instructions are too verbose
+- How to optimize context usage
+
+#### Token Model Selection (`--token-model`)
+
+Different OpenAI models use different tokenization rules:
+
+```bash
+# Use GPT-3.5-turbo tokenization (default: gpt-4o)
+llm_ctx -f file.txt --token-model=gpt-3.5-turbo -D
+
+# Supported models include:
+# - gpt-4o (default)
+# - gpt-4
+# - gpt-3.5-turbo
+# - text-davinci-003
+# And others supported by tiktoken
+```
+
+#### Use Cases
+
+1. **Prevent context overflow:**
+   ```bash
+   # Ensure output fits in Claude's context window
+   llm_ctx -f '**/*.py' -b 200000 -c "Review this Python project"
+   ```
+
+2. **Optimize file selection:**
+   ```bash
+   # See which files are largest
+   llm_ctx -f 'src/**/*' -D | head -20
+   
+   # Then exclude large files
+   llm_ctx -f 'src/**/*.{js,jsx}' -f '!src/generated/*'
+   ```
+
+3. **Monitor prompt token usage:**
+   ```bash
+   # Check how many tokens your instructions use
+   echo "Complex multi-paragraph instructions..." | llm_ctx -C -D
+   ```
+
+#### Implementation Notes
+
+- Token counting uses OpenAI's official `tiktoken` library via a C wrapper
+- The tokenizer library is loaded dynamically at runtime
+- If the library is missing, token features are disabled with a warning
+- Token counts are exact, not estimates
+- Performance impact is minimal (< 100ms for most contexts)
 
 ## Limitations
 

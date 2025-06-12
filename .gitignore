@@ -45,3 +45,9 @@ CLAUDE.md
 docs/
 cami.md
 spec.md
+
+# Tokenizer build artifacts
+tokenizer/*.dylib
+tokenizer/*.so
+tokenizer/*.dll
+tokenizer/tiktoken-c/target/

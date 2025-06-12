@@ -1,0 +1,3 @@
+[submodule "tokenizer/tiktoken-c"]
+	path = tokenizer/tiktoken-c
+	url = https://github.com/kojix2/tiktoken-c
