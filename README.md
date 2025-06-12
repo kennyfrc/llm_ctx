@@ -38,11 +38,15 @@
 
 6.  **Ensure your context fits within model limits** (automatically copied to clipboard):
     ```bash
-    # Set a 100k token budget and get diagnostics
+    # Uses default 96k token budget; shows token usage automatically
+    llm_ctx -f 'src/**/*.py' -c "Review this Python codebase"
+    # Shows: Token usage: 45231 / 96000 (47% of budget)
+    
+    # Set a custom budget and get detailed diagnostics
     llm_ctx -f 'src/**/*.py' -b 100000 -D -c "Review this Python codebase"
     # If over budget, exits with code 3 before copying
     ```
-    *(Requires building the tokenizer with `make tokenizer` - see [Token Counting](#token-counting-and-budget-management))*
+    *(Token counting built with `make all` - see [Token Counting](#token-counting-and-budget-management))*
 
 *(To output to stdout instead of clipboard, use the `-o` flag)*
 
@@ -83,9 +87,9 @@ Follow these steps to get the code, build it, and make it easily accessible:
     ```
 
 2.  **Build the Executable:**
-    Compile the source code using `make`. This creates the `llm_ctx` executable in the current directory.
+    Compile the source code using `make all`. This builds both `llm_ctx` and the tokenizer for automatic token counting.
     ```bash
-    make
+    make all
     ```
     You can run the tool directly from this directory: `./llm_ctx --help`.
 
@@ -417,9 +421,10 @@ Options:
                  types. Uses pattern matching by default, Tree-sitter when available.
 
   -b N, --token-budget=N
-                 Set a hard token budget limit. If the generated context exceeds
-                 this token count (using OpenAI tokenization), the output is
-                 rejected and the program exits with code 3.
+                 Set a token budget limit (default: 96000). If the generated context
+                 exceeds this token count (using OpenAI tokenization), the output is
+                 rejected and the program exits with code 3. Token usage is always
+                 displayed when the tokenizer is available.
                  Example: -b 128000 (for GPT-4's context limit)
 
   -D[FILE], --token-diagnostics[=FILE]
@@ -644,14 +649,27 @@ The `-m` or `--codemap` flag enables code mapping, which extracts and displays f
 
 ### Token Counting and Budget Management
 
-`llm_ctx` includes optional token counting features to help manage LLM context window limits. This uses OpenAI's tokenization rules (via `tiktoken`) to accurately count tokens before sending to an LLM.
+`llm_ctx` includes automatic token counting to help manage LLM context window limits. This uses OpenAI's tokenization rules (via `tiktoken`) to accurately count tokens before sending to an LLM.
+
+#### Automatic Token Usage Display
+
+When the tokenizer is available, `llm_ctx` automatically displays token usage after every run:
+
+```bash
+# Shows token usage with default 96k budget
+llm_ctx -f main.c
+# Output: Token usage: 27029 / 96000 (28% of budget)
+```
 
 #### Building the Tokenizer
 
-Token counting requires building the tokenizer library:
+The tokenizer is built automatically with `make all`:
 
 ```bash
-# Build the tokenizer (requires Rust and cargo)
+# Build both llm_ctx and the tokenizer
+make all
+
+# Or build just the tokenizer separately
 make tokenizer
 
 # The tokenizer is optional - llm_ctx works without it
@@ -660,20 +678,24 @@ make tokenizer
 
 #### Token Budget (`-b`, `--token-budget`)
 
-Set a hard limit on the number of tokens in the generated context:
+Set a limit on the number of tokens in the generated context (default: 96000):
 
 ```bash
-# Enforce GPT-4's 128k token limit
+# Use default 96k token limit
+llm_ctx -f 'src/**/*.js'
+
+# Set custom limit for GPT-4's 128k context
 llm_ctx -f 'src/**/*.js' -b 128000
 
-# If the context exceeds 128k tokens:
-# - Error message printed to stderr
+# If the context exceeds the budget:
+# - Token usage shown with percentage over 100%
+# - Error message printed to stderr  
 # - Program exits with code 3
 # - No output is generated (clipboard/stdout/file)
 ```
 
 Exit codes:
-- `0`: Success (within budget or no budget set)
+- `0`: Success (within budget)
 - `3`: Token budget exceeded
 - Other: Standard errors
 
@@ -689,17 +711,23 @@ llm_ctx -f 'src/**/*.js' -D
 llm_ctx -f 'src/**/*.js' -Dtoken_report.txt
 
 # Example output:
-#   Tokens   File
+# Token usage: 14982 / 96000 (15% of budget)
+#   Tokens   Category
 #   -------  ------------------------
-#      842   src/main.js
-#      256   src/utils.js
-#    1,234   <user_instructions>
+#     6980  <file_tree>
+#       12  <user_instructions>
+#        6  <system_instructions>
+#       98  <response_guide>
+#     1254  src/main.js
+#      842  src/utils.js
+#     6541  <other>
 #   -------  ------------------------
-#    2,332   Total
+#    14982  Total
 ```
 
 This helps identify:
-- Which files consume the most tokens
+- Which sections consume the most tokens (file tree, instructions, files)
+- Which specific files are largest
 - Whether your instructions are too verbose
 - How to optimize context usage
 

@@ -30,7 +30,7 @@ else
 endif
 TOKENIZER_LIB = $(TOKENIZER_DIR)/$(TOKENIZER_LIB_NAME).$(DYNLIB_EXT)
 
-all: $(TARGET)
+all: $(TARGET) tokenizer
 
 OBJS = main.o gitignore.o codemap.o arena.o packs.o tokenizer.o tokenizer_diagnostics.o
 

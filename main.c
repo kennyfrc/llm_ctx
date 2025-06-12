@@ -39,7 +39,7 @@
 static Arena g_arena;
 
 /* Token counting globals */
-static size_t g_token_budget = 0;
+static size_t g_token_budget = 96000; /* Default budget: 96k tokens */
 static const char *g_token_model = "gpt-4o"; /* Default model */
 static char *g_token_diagnostics_file = NULL;
 static bool g_token_diagnostics_requested = false; /* Track if -D was used */
@@ -847,9 +847,9 @@ void show_help(void) {
     printf("  -o@FILE        Write output to FILE (no space after -o)\n");
     printf("  -d, --debug    Enable debug output (prefixed with [DEBUG])\n");
     printf("  -h             Show this help message\n");
-    printf("  -b N           Set token budget limit (exits with code 3 if exceeded)\n");
+    printf("  -b N           Set token budget limit (default: 96000, exits with code 3 if exceeded)\n");
     printf("  -D[FILE]       Generate token count diagnostics (to stderr or FILE)\n");
-    printf("  --token-budget=N      Set token budget limit\n");
+    printf("  --token-budget=N      Set token budget limit (default: 96000)\n");
     printf("  --token-model=MODEL   Set model for token counting (default: gpt-4o)\n");
     printf("  --token-diagnostics[=FILE]  Generate token diagnostics\n");
     printf("  --list-packs   List available language packs for code map generation\n");
@@ -2131,33 +2131,25 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    /* If token budget or diagnostics requested, count tokens */
-    if (g_token_budget > 0 || g_token_diagnostics_requested) {
-        size_t total_tokens = llm_count_tokens(final_content, g_token_model);
+    /* Always try to count tokens if tokenizer is available */
+    size_t total_tokens = llm_count_tokens(final_content, g_token_model);
+    
+    if (total_tokens != SIZE_MAX) {
+        /* Token counting succeeded - always display usage */
+        fprintf(stderr, "Token usage: %zu / %zu (%zu%% of budget)\n", 
+                total_tokens, g_token_budget, (total_tokens * 100) / g_token_budget);
         
-        if (total_tokens == SIZE_MAX) {
-            /* Tokenizer not available, skip token checks but warn if budget was set */
-            if (g_token_budget > 0) {
-                fprintf(stderr, "warning: token counting unavailable, budget check skipped\n");
-            }
-        } else {
-            /* Token counting succeeded */
-            if (g_token_budget > 0) {
-                if (total_tokens > g_token_budget) {
-                    /* Budget exceeded */
-                    fprintf(stderr, "error: context uses %zu tokens > budget %zu – output rejected\n", 
-                            total_tokens, g_token_budget);
-                    unlink(temp_file_path);
-                    return 3; /* Exit with status 3 for budget exceeded */
-                } else {
-                    /* Within budget */
-                    fprintf(stderr, "warning: token budget (%zu) within limit (%zu)\n", 
-                            total_tokens, g_token_budget);
-                }
-            }
-            
-            /* Generate diagnostics if requested */
-            if (g_token_diagnostics_requested) {
+        /* Check budget */
+        if (total_tokens > g_token_budget) {
+            /* Budget exceeded */
+            fprintf(stderr, "error: context uses %zu tokens > budget %zu – output rejected\n", 
+                    total_tokens, g_token_budget);
+            unlink(temp_file_path);
+            return 3; /* Exit with status 3 for budget exceeded */
+        }
+        
+        /* Generate diagnostics if requested */
+        if (g_token_diagnostics_requested) {
                 FILE *diag_out = stderr;
                 if (g_token_diagnostics_file) {
                     diag_out = fopen(g_token_diagnostics_file, "w");
@@ -2173,7 +2165,6 @@ int main(int argc, char *argv[]) {
                 if (diag_out != stderr) {
                     fclose(diag_out);
                 }
-            }
         }
     }
 
