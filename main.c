@@ -34,8 +34,15 @@
 #include "packs.h"
 #include "codemap.h"
 #include "debug.h"
+#include "tokenizer.h"
 
 static Arena g_arena;
+
+/* Token counting globals */
+static size_t g_token_budget = 0;
+static const char *g_token_model = "gpt-4o"; /* Default model */
+static char *g_token_diagnostics_file = NULL;
+static bool g_token_diagnostics_requested = false; /* Track if -D was used */
 
 void cleanup(void);
 
@@ -840,6 +847,11 @@ void show_help(void) {
     printf("  -o@FILE        Write output to FILE (no space after -o)\n");
     printf("  -d, --debug    Enable debug output (prefixed with [DEBUG])\n");
     printf("  -h             Show this help message\n");
+    printf("  -b N           Set token budget limit (exits with code 3 if exceeded)\n");
+    printf("  -D[FILE]       Generate token count diagnostics (to stderr or FILE)\n");
+    printf("  --token-budget=N      Set token budget limit\n");
+    printf("  --token-model=MODEL   Set model for token counting (default: gpt-4o)\n");
+    printf("  --token-diagnostics[=FILE]  Generate token diagnostics\n");
     printf("  --list-packs   List available language packs for code map generation\n");
     printf("  --no-gitignore Ignore .gitignore files when collecting files\n\n");
     printf("By default, llm_ctx reads content from stdin.\n");
@@ -1470,6 +1482,9 @@ static const struct option long_options[] = {
     {"list-packs",      no_argument,       0,  2 }, /* List available language packs */
     {"pack-info",       required_argument, 0,  3 }, /* Get info about a specific language pack */
     {"no-gitignore",    no_argument,       0,  1 }, /* Use a value > 255 for long-only */
+    {"token-budget",    required_argument, 0, 400}, /* Token budget limit */
+    {"token-model",     required_argument, 0, 401}, /* Model for token counting */
+    {"token-diagnostics", optional_argument, 0, 402}, /* Token count diagnostics */
     {0, 0, 0, 0} /* Terminator */
 };
 static bool s_flag_used = false; /* Track if -s was used */
@@ -1655,7 +1670,8 @@ int main(int argc, char *argv[]) {
     /* and adhering to the "minimize execution paths" principle. */
     int opt;
     /* Add 'C' to the short options string. It takes no argument. */
-    while ((opt = getopt_long(argc, argv, "hc:s::fre::m::CtdTo::", long_options, NULL)) != -1) {
+    /* Add 'b:' for short form of --token-budget and 'D::' for token diagnostics */
+    while ((opt = getopt_long(argc, argv, "hc:s::fre::m::CtdTo::b:D::", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
                 show_help(); /* Exits */
@@ -1846,6 +1862,56 @@ int main(int argc, char *argv[]) {
                     
                     cleanup(); /* Clean up and exit */
                     exit(0);
+                }
+                break;
+            case 'b': /* -b or --token-budget */
+                if (!optarg) {
+                    fprintf(stderr, "Error: -b/--token-budget requires a numeric argument\n");
+                    return 1;
+                }
+                g_token_budget = (size_t)strtoull(optarg, NULL, 10);
+                if (g_token_budget == 0) {
+                    fprintf(stderr, "Error: Invalid token budget: %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 'D': /* -D or --token-diagnostics with optional file argument */
+                g_token_diagnostics_requested = true;
+                /* Handle similar to -s and -e: check if there's a non-option argument following */
+                if (optarg == NULL              /* no glued arg */
+                    && optind < argc            /* something left */
+                    && argv[optind][0] != '-') {/* not next flag  */
+                    g_token_diagnostics_file = arena_strdup_safe(&g_arena, argv[optind++]);
+                } else if (optarg) {
+                    g_token_diagnostics_file = arena_strdup_safe(&g_arena, optarg);
+                } else {
+                    g_token_diagnostics_file = NULL; /* Write to stderr */
+                }
+                break;
+            case 400: /* --token-budget */
+                if (!optarg) {
+                    fprintf(stderr, "Error: --token-budget requires a numeric argument\n");
+                    return 1;
+                }
+                g_token_budget = (size_t)strtoull(optarg, NULL, 10);
+                if (g_token_budget == 0) {
+                    fprintf(stderr, "Error: Invalid token budget: %s\n", optarg);
+                    return 1;
+                }
+                break;
+            case 401: /* --token-model */
+                if (!optarg) {
+                    fprintf(stderr, "Error: --token-model requires a model name\n");
+                    return 1;
+                }
+                g_token_model = arena_strdup_safe(&g_arena, optarg);
+                break;
+            case 402: /* --token-diagnostics */
+                g_token_diagnostics_requested = true;
+                if (optarg) {
+                    g_token_diagnostics_file = arena_strdup_safe(&g_arena, optarg);
+                } else {
+                    g_token_diagnostics_file = NULL; /* Write to stderr */
                 }
                 break;
             case '?': /* Unknown option OR missing required argument */
@@ -2057,11 +2123,63 @@ int main(int argc, char *argv[]) {
     /* Flush and close the temp file */
     fclose(temp_file);
     
+    /* --- Token Counting and Budget Check --- */
+    /* Read the content first to count tokens if needed */
+    char *final_content = slurp_file(temp_file_path);
+    if (!final_content) {
+        perror("Failed to read temporary file");
+        return 1;
+    }
+    
+    /* If token budget or diagnostics requested, count tokens */
+    if (g_token_budget > 0 || g_token_diagnostics_requested) {
+        size_t total_tokens = llm_count_tokens(final_content, g_token_model);
+        
+        if (total_tokens == SIZE_MAX) {
+            /* Tokenizer not available, skip token checks but warn if budget was set */
+            if (g_token_budget > 0) {
+                fprintf(stderr, "warning: token counting unavailable, budget check skipped\n");
+            }
+        } else {
+            /* Token counting succeeded */
+            if (g_token_budget > 0) {
+                if (total_tokens > g_token_budget) {
+                    /* Budget exceeded */
+                    fprintf(stderr, "error: context uses %zu tokens > budget %zu – output rejected\n", 
+                            total_tokens, g_token_budget);
+                    unlink(temp_file_path);
+                    return 3; /* Exit with status 3 for budget exceeded */
+                } else {
+                    /* Within budget */
+                    fprintf(stderr, "warning: token budget (%zu) within limit (%zu)\n", 
+                            total_tokens, g_token_budget);
+                }
+            }
+            
+            /* Generate diagnostics if requested */
+            if (g_token_diagnostics_requested) {
+                FILE *diag_out = stderr;
+                if (g_token_diagnostics_file) {
+                    diag_out = fopen(g_token_diagnostics_file, "w");
+                    if (!diag_out) {
+                        perror("Failed to open diagnostics file");
+                        diag_out = stderr;
+                    }
+                }
+                
+                /* Use the detailed diagnostics function */
+                generate_token_diagnostics(final_content, g_token_model, diag_out, &g_arena);
+                
+                if (diag_out != stderr) {
+                    fclose(diag_out);
+                }
+            }
+        }
+    }
 
     /* --- Output Handling --- */
     if (g_effective_copy_to_clipboard) {
-        /* Read temp file content */
-        char *final_content = slurp_file(temp_file_path);
+        /* final_content already read above */
         if (final_content) {
             if (!copy_to_clipboard(final_content)) {
                 /* Clipboard copy failed, fall back to stdout */
@@ -2071,15 +2189,11 @@ int main(int argc, char *argv[]) {
                 /* Print confirmation message to stderr */
                 fprintf(stderr, "Content copied to clipboard.\n");
             }
-        } else {
-            perror("Failed to read temporary file for clipboard");
-            /* atexit handler will still attempt cleanup */
-            return 1; /* Indicate failure */
         }
         /* Do NOT print to stdout when copying succeeded */
     } else if (g_output_file) {
         /* Output to specified file */
-        char *final_content = slurp_file(temp_file_path);
+        /* final_content already read above */
         if (final_content) {
             FILE *output_file = fopen(g_output_file, "w");
             if (output_file) {
@@ -2094,18 +2208,12 @@ int main(int argc, char *argv[]) {
                 perror("Failed to open output file");
                 return 1;
             }
-        } else {
-            perror("Failed to read temporary file for output file");
-            return 1;
         }
     } else {
         /* Default: Display the output directly to stdout */
-        char *final_content = slurp_file(temp_file_path);
+        /* final_content already read above */
         if (final_content) {
             printf("%s", final_content); /* Print directly to stdout */
-        } else {
-            perror("Failed to read temporary file for stdout");
-            return 1; /* Indicate failure */
         }
     }
 
