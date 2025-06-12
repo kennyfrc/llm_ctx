@@ -7,7 +7,7 @@
 #include "../debug.h"
 
 /**
- * Ruby language pack for LLM_CTX using tree-sitter queries
+ * JavaScript language pack for LLM_CTX using tree-sitter queries
  */
 
 /* Debug mode flag - define locally for shared library, extern for tests */
@@ -52,12 +52,9 @@ typedef struct Arena {
 // Include tree-sitter API
 #include "tree-sitter.h"
 
-// External tree-sitter language declaration
-extern const TSLanguage *tree_sitter_ruby(void);
-
 /* Static extensions array */
-static const char *ruby_extensions[] = {".rb", ".rake", ".ru", ".gemspec", NULL};
-static size_t ruby_extension_count = 4;  // Excluding NULL terminator
+static const char *js_extensions[] = {".js", ".jsx", ".ts", ".tsx", NULL};
+static size_t js_extension_count = 4;  // Excluding NULL terminator
 
 /* Query source - loaded once and cached */
 static char *query_source = NULL;
@@ -73,9 +70,9 @@ static char* load_query_file(const char *pack_dir) {
     
     // Try several paths to find the query file
     const char *paths[] = {
-        "packs/ruby/codemap.scm",
-        "./packs/ruby/codemap.scm",
-        "../ruby/codemap.scm",
+        "packs/javascript/codemap.scm",
+        "./packs/javascript/codemap.scm",
+        "../javascript/codemap.scm",
         "codemap.scm",
         NULL
     };
@@ -95,7 +92,7 @@ static char* load_query_file(const char *pack_dir) {
         // Try to find where we are and construct path
         char cwd[4096];
         if (getcwd(cwd, sizeof(cwd))) {
-            snprintf(query_path, sizeof(query_path), "%s/packs/ruby/codemap.scm", cwd);
+            snprintf(query_path, sizeof(query_path), "%s/packs/javascript/codemap.scm", cwd);
             f = fopen(query_path, "r");
         }
     }
@@ -185,20 +182,22 @@ static char* copy_substring(const char *source, uint32_t start, uint32_t end, Ar
 static void process_match(const TSQueryMatch *match, const char *source, 
                          CodemapFile *file, Arena *arena, TSQuery *query) {
     // Determine the entity type from pattern index
-    // Pattern indices based on order in Ruby codemap.scm:
-    // 0: method definition
-    // 1: class definition
-    // 2: module definition
+    // Pattern indices based on order in codemap.scm:
+    // 0: function declaration
+    // 1-2: function expressions  
+    // 3: class declaration
+    // 4: method definition
+    // 5-6: object methods
+    // 7: export function
+    // 8: default export
     
     CMKind kind = CM_FUNCTION;
     bool is_anonymous = false;
     
-    if (match->pattern_index == 0) {
-        kind = CM_METHOD;  // Ruby methods are functions
-    } else if (match->pattern_index == 1) {
+    if (match->pattern_index == 3) {
         kind = CM_CLASS;
-    } else if (match->pattern_index == 2) {
-        kind = CM_TYPE;  // Modules are types
+    } else if (match->pattern_index == 4 || match->pattern_index == 5 || match->pattern_index == 6) {
+        kind = CM_METHOD;
     }
     
     // Extract captures
@@ -266,16 +265,17 @@ static void process_match(const TSQueryMatch *match, const char *source,
  * Get the appropriate Tree-sitter language for a file
  */
 static const TSLanguage* get_language_for_file(const char *path) {
-    // Only support Ruby for this pack
+    // For now, only support JavaScript
+    // TODO: Add TypeScript support when grammars are linked
     (void)path; // Suppress unused parameter warning
-    return tree_sitter_ruby();
+    return tree_sitter_javascript();
 }
 
 /**
  * Initialize the JavaScript pack
  */
 bool initialize(void) {
-    debug_printf("[DEBUG] Initializing language pack: ruby");
+    debug_printf("[DEBUG] Initializing language pack: javascript");
     
     // Load the query file
     if (!query_source) {
@@ -313,13 +313,13 @@ void cleanup(void) {
  */
 const char **get_extensions(size_t *count) {
     if (count) {
-        *count = ruby_extension_count;
+        *count = js_extension_count;
     }
-    return ruby_extensions;
+    return js_extensions;
 }
 
 /**
- * Parse a Ruby file using tree-sitter queries
+ * Parse a JavaScript/TypeScript file using tree-sitter queries
  */
 bool parse_file(const char *path, const char *source, size_t source_len, CodemapFile *file, Arena *arena) {
     if (!path || !source || !file || !arena) {

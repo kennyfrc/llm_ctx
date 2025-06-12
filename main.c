@@ -77,72 +77,6 @@ static void fatal(const char *fmt, ...) {
     _Exit(EXIT_FAILURE);
 }
 
-/* Read entire FILE* into a NUL-terminated buffer.
- * Caller must free().  Returns NULL on OOM or read error. */
-static char *slurp_stream(FILE *fp) {
-    size_t mark = arena_get_mark(&g_arena);
-    size_t cap = 4096, len = 0;
-    char *buf = arena_push_array_safe(&g_arena, char, cap);
-
-    int c;
-    while ((c = fgetc(fp)) != EOF) {
-        if (len + 1 >= cap) { /* +1 for the potential NUL terminator */
-            /* Check for potential size_t overflow before doubling. */
-            if (cap > SIZE_MAX / 2) {
-                errno = ENOMEM; /* Indicate memory exhaustion due to overflow */
-                return NULL;
-            }
-            size_t new_cap = cap * 2;
-            /* Create a new larger buffer */
-            char *tmp = arena_push_array_safe(&g_arena, char, new_cap);
-            /* Copy existing content */
-            memcpy(tmp, buf, len);
-            /* Use the new buffer */
-            buf = tmp;
-            cap = new_cap;
-        }
-        buf[len++] = (char)c;
-    }
-    /* Ensure buffer is null-terminated *before* checking ferror. */
-    buf[len] = '\0';
-
-    /* Check for read errors *after* attempting to read the whole stream. */
-    if (ferror(fp)) {
-        int saved_errno = errno; /* Preserve errno from the failed I/O operation. */
-        arena_set_mark(&g_arena, mark); /* discard */
-        errno = saved_errno; /* Restore errno. */
-        return NULL;
-    }
-    return buf;
-}
-/* Convenience: slurp a *file*.  Returns NULL (and sets errno) on error. */
-static char *slurp_file(const char *path) {
-    FILE *fp = fopen(path, "r");
-    if (!fp) {
-        /* errno is set by fopen */
-        return NULL;
-    }
-    size_t mark = arena_get_mark(&g_arena);
-    char *txt = slurp_stream(fp);
-    int slurp_errno = errno; /* Capture errno *after* slurp_stream */
-
-    if (fclose(fp) != 0) {
-        /* If fclose fails, prioritize its errno, unless slurp_stream already failed. */
-        if (txt != NULL) {
-            arena_set_mark(&g_arena, mark);
-            /* errno is now set by fclose */
-            return NULL;
-        }
-        /* If slurp failed AND fclose failed, keep the slurp_errno */
-        errno = slurp_errno;
-        /* txt is already NULL, buffer already freed by slurp_stream */
-        return NULL;
-    }
-
-    /* If fclose succeeded, return the result of slurp_stream, restoring its errno */
-    errno = slurp_errno;
-    return txt;
-}
 
 
 /**
@@ -213,8 +147,10 @@ char *get_executable_dir(void)
 #define TEMP_FILE_TEMPLATE "/tmp/llm_ctx_XXXXXX"
 #define MAX_PATTERNS 64   /* Maximum number of patterns to support */
 #define MAX_FILES 4096    /* Maximum number of files to process */
-/* Increased buffer size to 8MB, aligning better with typical LLM context limits (e.g., ~2M tokens) */
-#define STDIN_BUFFER_SIZE (8 * 1024 * 1024) /* 8MB buffer for stdin content */
+/* Increased buffer size to 80MB to support larger contexts (10x increase from 8MB) */
+#define STDIN_BUFFER_SIZE (80 * 1024 * 1024) /* 80MB buffer for stdin content */
+/* Clipboard size limit - most clipboard helpers fail or block beyond 8MB */
+#define CLIPBOARD_SOFT_MAX (8 * 1024 * 1024) /* 8MB known safe bound for clipboard */
 
 /* Structure to hold file information for the tree */
 typedef struct {
@@ -237,6 +173,82 @@ int compare_file_paths(const void *a, const void *b);
 char *find_common_prefix(void);
 void print_tree_node(const char *path, int level, bool is_last, const char *prefix);
 void build_tree_recursive(char **paths, int count, int level, char *prefix, const char *path_prefix);
+
+/* Read entire FILE* into a NUL-terminated buffer.
+ * Uses arena allocation. Returns NULL on OOM or read error. */
+static char *slurp_stream(FILE *fp) {
+    size_t mark = arena_get_mark(&g_arena);
+    size_t cap = 4096, len = 0;
+    char *buf = arena_push_array_safe(&g_arena, char, cap);
+    bool warning_issued = false;
+
+    int c;
+    while ((c = fgetc(fp)) != EOF) {
+        if (len + 1 >= cap) { /* +1 for the potential NUL terminator */
+            /* Check for potential size_t overflow before doubling. */
+            if (cap > SIZE_MAX / 2) {
+                errno = ENOMEM; /* Indicate memory exhaustion due to overflow */
+                return NULL;
+            }
+            size_t new_cap = cap * 2;
+            /* Create a new larger buffer */
+            char *tmp = arena_push_array_safe(&g_arena, char, new_cap);
+            /* Copy existing content */
+            memcpy(tmp, buf, len);
+            /* Use the new buffer */
+            buf = tmp;
+            cap = new_cap;
+        }
+        buf[len++] = (char)c;
+        
+        /* Warn once when input exceeds STDIN_BUFFER_SIZE */
+        if (!warning_issued && len > STDIN_BUFFER_SIZE) {
+            fprintf(stderr, "Warning: Input stream exceeds %d MB. Large inputs may cause clipboard operations to fail.\n", 
+                    STDIN_BUFFER_SIZE / (1024 * 1024));
+            warning_issued = true;
+        }
+    }
+    /* Ensure buffer is null-terminated *before* checking ferror. */
+    buf[len] = '\0';
+
+    /* Check for read errors *after* attempting to read the whole stream. */
+    if (ferror(fp)) {
+        int saved_errno = errno; /* Preserve errno from the failed I/O operation. */
+        arena_set_mark(&g_arena, mark); /* discard */
+        errno = saved_errno; /* Restore errno. */
+        return NULL;
+    }
+    return buf;
+}
+
+/* Convenience: slurp a *file*.  Returns NULL (and sets errno) on error. */
+static char *slurp_file(const char *path) {
+    FILE *fp = fopen(path, "r");
+    if (!fp) {
+        /* errno is set by fopen */
+        return NULL;
+    }
+    size_t mark = arena_get_mark(&g_arena);
+    char *txt = slurp_stream(fp);
+    int slurp_errno = errno; /* Capture errno *after* slurp_stream */
+
+    if (fclose(fp) != 0) {
+        /* If fclose fails, prioritize its errno, unless slurp_stream already failed. */
+        if (txt != NULL) {
+            arena_set_mark(&g_arena, mark);
+            /* errno is now set by fclose */
+            return NULL;
+        }
+        /* If slurp failed AND fclose failed, keep the slurp_errno */
+        errno = slurp_errno;
+        /* txt is already NULL, buffer already freed by slurp_stream */
+        return NULL;
+    }
+
+    /* If fclose succeeded, return the result of slurp_stream, restoring its errno */
+    errno = slurp_errno;
+    return txt;
+}
 bool process_stdin_content(void);
 void output_file_callback(const char *name, const char *type, const char *content);
 bool is_binary(FILE *file);
@@ -2063,7 +2075,13 @@ int main(int argc, char *argv[]) {
         /* Read temp file content */
         char *final_content = slurp_file(temp_file_path);
         if (final_content) {
-            if (!copy_to_clipboard(final_content)) {
+            size_t final_len = strlen(final_content);
+            /* Check if content exceeds clipboard limit */
+            if (final_len > CLIPBOARD_SOFT_MAX) {
+                fprintf(stderr, "Warning: output (%zu bytes) exceeds clipboard limit (%d MB); "
+                    "writing to stdout instead.\n", final_len, CLIPBOARD_SOFT_MAX / (1024 * 1024));
+                printf("%s", final_content);
+            } else if (!copy_to_clipboard(final_content)) {
                 /* Clipboard copy failed, fall back to stdout */
                 fprintf(stderr, "Clipboard copy failed; falling back to stdout.\n");
                 printf("%s", final_content);
