@@ -356,7 +356,7 @@ void generate_token_diagnostics(const char *content, const char *model, FILE *ou
     }
     
     /* Print diagnostics table */
-    fprintf(out, "  Tokens   Category\n");
+    fprintf(out, "  Tokens   File\n");
     fprintf(out, "  -------  ------------------------\n");
     
     /* Print section token counts (excluding file_context since files are shown separately) */
