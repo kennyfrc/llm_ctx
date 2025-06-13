@@ -288,8 +288,9 @@ static bool want_editor_comments = false;   /* -e flag */
 static char *custom_response_guide = NULL; /* Custom response guide from -e argument */
 static bool raw_mode = false; /* -r flag */
 static bool want_codemap = false; /* -m flag */
-static bool tree_only = false; /* -t flag */
-static bool global_tree_only = false; /* -T flag */
+static bool tree_only = false; /* -T flag - filtered tree */
+static bool global_tree_only = false; /* -t flag - global tree */
+static bool tree_only_output = false; /* -O flag - tree only without file content */
 bool debug_mode = false; /* -d flag */
 static Codemap g_codemap = {0}; /* Global codemap structure */
 
@@ -484,7 +485,8 @@ void add_directory_tree(const char *base_dir) {
     while ((entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
             continue;
-        if (strcmp(entry->d_name, ".git") == 0)
+        /* Skip hidden files (those starting with a dot), similar to tree's default behavior */
+        if (entry->d_name[0] == '.')
             continue;
         snprintf(path, sizeof(path), "%s/%s", base_dir, entry->d_name);
         if (lstat(path, &statbuf) == -1)
@@ -853,8 +855,9 @@ void show_help(void) {
     printf("                 Patterns can be comma-separated (e.g., \"src/**/*.js,lib/**/*.rb\")\n");
     printf("                 If no pattern is provided, scans the entire codebase\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
-    printf("  -t             Generate file tree only for specified files\n");
-    printf("  -T             Generate complete directory tree (global tree)\n");
+    printf("  -t             Generate complete directory tree (global tree)\n");
+    printf("  -T             Generate file tree only for specified files\n");
+    printf("  -O             Generate tree only (no file content)\n");
     printf("  -o             Output to stdout instead of clipboard\n");
     printf("  -o@FILE        Write output to FILE (no space after -o)\n");
     printf("  -d, --debug    Enable debug output (prefixed with [DEBUG])\n");
@@ -1486,8 +1489,9 @@ static const struct option long_options[] = {
     {"editor-comments", optional_argument, 0, 'e'},
     {"raw",             no_argument,       0, 'r'},
     {"codemap",         optional_argument, 0, 'm'}, /* Generate code map with optional pattern */
-    {"tree",            no_argument,       0, 't'}, /* Generate file tree only */
-    {"global-tree",     no_argument,       0, 'T'}, /* Generate complete directory tree */
+    {"tree",            no_argument,       0, 't'}, /* Generate complete directory tree */
+    {"filtered-tree",   no_argument,       0, 'T'}, /* Generate file tree for specified files */
+    {"tree-only",       no_argument,       0, 'O'}, /* Generate tree only without file content */
     {"output",          optional_argument, 0, 'o'}, /* Output to stdout or file instead of clipboard */
     {"stdout",          optional_argument, 0, 'o'}, /* Alias for --output */
     {"debug",           no_argument,       0, 'd'}, /* Enable debug output */
@@ -1683,7 +1687,7 @@ int main(int argc, char *argv[]) {
     int opt;
     /* Add 'C' to the short options string. It takes no argument. */
     /* Add 'b:' for short form of --token-budget and 'D::' for token diagnostics */
-    while ((opt = getopt_long(argc, argv, "hc:s::fre::m::CtdTo::b:D::", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s::fre::m::CtdTOo::b:D::", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
                 show_help(); /* Exits */
@@ -1794,12 +1798,17 @@ int main(int argc, char *argv[]) {
                 debug_mode = true;
                 debug_printf("Debug mode enabled");
                 break;
-            case 't': /* -t or --tree */
+            case 't': /* -t or --tree - show full directory tree */
+                global_tree_only = true;
+                file_mode = 1; /* Enable file mode to process files */
+                break;
+            case 'T': /* -T or --global-tree - show filtered tree based on params */
                 tree_only = true;
                 file_mode = 1; /* Enable file mode to process files */
                 break;
-            case 'T': /* -T or --global-tree */
-                global_tree_only = true;
+            case 'O': /* -O or --tree-only */
+                tree_only_output = true;
+                tree_only = true; /* Also enable tree generation */
                 file_mode = 1; /* Enable file mode to process files */
                 break;
             case 'o': /* -o or --output with optional file argument */
@@ -2064,17 +2073,13 @@ int main(int argc, char *argv[]) {
         add_directory_tree(tree_root);
     }
 
-    /* Generate and add file tree */
+    /* Generate and add file tree only if -t or -T flag is passed */
     if (tree_only || global_tree_only) {
-        /* For -t/-T flags, only generate the file tree */
-        generate_file_tree();
-    } else {
-        /* Normal mode: generate tree along with other content */
         generate_file_tree();
     }
     
-    /* Skip codemap and file content if tree_only or global_tree_only is set */
-    if (!tree_only && !global_tree_only) {
+    /* Process codemap and file content unless tree_only_output is set */
+    if (!tree_only_output) {
         /* Generate and output codemap first (before file context) if requested */
         if (want_codemap) {
         debug_printf("Generating codemap...");
@@ -2130,7 +2135,7 @@ int main(int argc, char *argv[]) {
     
     /* Add closing file_context tag */
     if (wrote_file_context) fprintf(temp_file, "</file_context>\n");
-    } /* End of if (!tree_only && !global_tree_only) */
+    }
     
     /* Flush and close the temp file */
     fclose(temp_file);

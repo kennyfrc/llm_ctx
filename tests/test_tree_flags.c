@@ -184,19 +184,20 @@ TEST(test_tree_flags_no_content) {
     cleanup_test_files();
 }
 
-/* Test backward compatibility: ensure normal mode still shows full tree */
-TEST(test_normal_mode_shows_full_tree) {
+/* Test new behavior: normal mode does NOT show tree by default */
+TEST(test_normal_mode_no_tree_by_default) {
     setup_test_files();
     
-    /* Without -t or -T, should show full tree and content */
+    /* Without -t or -T, should NOT show file tree, only content */
     char *output = run_command("./llm_ctx -o -f test_tree_dir/src/main.c");
     
-    /* Should contain the full tree (like -T) */
-    ASSERT("Output should contain main.c", string_contains(output, "main.c"));
-    ASSERT("Output should contain utils.c (not specified but in tree)", string_contains(output, "utils.c"));
+    /* Should NOT contain the file tree */
+    ASSERT("Output should NOT contain <file_tree>", !string_contains(output, "<file_tree>"));
+    ASSERT("Output should NOT contain utils.c (not specified)", !string_contains(output, "utils.c"));
     
-    /* Should also contain file content */
+    /* Should still contain file content */
     ASSERT("Output should contain <file_context>", string_contains(output, "<file_context>"));
+    ASSERT("Output should contain main.c in file context", string_contains(output, "main.c"));
     
     /* Debug output before final assertion */
     if (!string_contains(output, "int main")) {
@@ -217,7 +218,7 @@ int main(void) {
     RUN_TEST(test_t_flag_with_patterns);
     RUN_TEST(test_T_flag_with_patterns);
     RUN_TEST(test_tree_flags_no_content);
-    RUN_TEST(test_normal_mode_shows_full_tree);
+    RUN_TEST(test_normal_mode_no_tree_by_default);
     
     PRINT_TEST_SUMMARY();
 }

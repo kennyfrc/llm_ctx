@@ -48,6 +48,18 @@
     ```
     *(Token counting built with `make all` - see [Token Counting](#token-counting-and-budget-management))*
 
+7.  **View project structure with full directory tree** (automatically copied to clipboard):
+    ```bash
+    llm_ctx -t -f 'src/**/*.py' -c "Explain the architecture of this Python project"
+    # Shows complete directory tree plus content of selected Python files
+    ```
+
+8.  **Get a quick overview of project structure** without file content:
+    ```bash
+    llm_ctx -O -t -o
+    # Shows only the directory tree structure to stdout (not clipboard)
+    ```
+
 *(To output to stdout instead of clipboard, use the `-o` flag)*
 
 **Quick Links:**
@@ -445,6 +457,17 @@ Options:
   -f [FILE...]   Process specified files or glob patterns instead of stdin.
                  Must be followed by one or more file paths or patterns.
                  Example: -f main.c 'src/**/*.js'
+
+  -t, --tree     Generate complete directory tree (global tree) in addition to
+                 file content. Shows all files in the project directory.
+                 
+  -T, --filtered-tree
+                 Generate file tree only for specified files in addition to
+                 file content. Shows tree structure of files passed with -f.
+                 
+  -O, --tree-only
+                 Generate tree output only, without any file content.
+                 Useful for getting a quick overview of project structure.
 
   -h, --help     Show this help message and exit.
 
