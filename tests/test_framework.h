@@ -13,7 +13,7 @@
  */
 
 /* Test directory for creating test files (prefixed) */
-#define TEST_DIR "/tmp/__llm_ctx_test"
+#define TEST_DIR "./tmp/__llm_ctx_test"
 
 /* Test state */
 static int tests_run __attribute__((unused)) = 0;

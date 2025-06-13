@@ -29,6 +29,8 @@
 
 /* Set up the test environment */
 void setup_test_env(void) {
+    /* Create parent tmp directory first */
+    mkdir("./tmp", 0755);
     /* Create test directory */
     mkdir(TEST_DIR, 0755);
 
@@ -103,6 +105,8 @@ void teardown_test_env(void) {
     char cmd[1024];
     snprintf(cmd, sizeof(cmd), "rm -rf %s", TEST_DIR);
     system(cmd);
+    /* Remove tmp directory if empty */
+    rmdir("./tmp");
 }
 
 /* Helper function to check if a string contains a substring */

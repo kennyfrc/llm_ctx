@@ -27,6 +27,8 @@ void test_cli_e_flag_custom_guide(void);
 
 /* Set up the test environment */
 void setup_test_env(void) {
+    /* Create parent tmp directory first */
+    mkdir("./tmp", 0755);
     /* Create test directory */
     mkdir(TEST_DIR, 0755);
     /* NOTE: User config file handling is now done in global_setup/global_teardown */
@@ -221,6 +223,8 @@ void teardown_test_env(void) {
     char cmd[1024];
     snprintf(cmd, sizeof(cmd), "rm -rf %s", TEST_DIR);
     system(cmd);
+    /* Remove tmp directory if empty */
+    rmdir("./tmp");
     /* NOTE: User config file handling is now done in global_setup/global_teardown */
     /* No need to explicitly remove .llm_ctx.conf, rm -rf handles it */
 }
@@ -442,7 +446,7 @@ TEST(test_file_tree_structure) {
     /* Run the command with the root directory */
     char cmd[1024];
     // Run from parent of TEST_DIR to get predictable tree root
-    snprintf(cmd, sizeof(cmd), "cd /tmp && %s/llm_ctx -T -o -f %s", getenv("PWD"), TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "cd ./tmp && %s/llm_ctx -T -o -f __llm_ctx_test", getenv("PWD"));
     char *output = run_command(cmd);
 
     /* Check if the file tree structure is properly shown (prefixed) */
