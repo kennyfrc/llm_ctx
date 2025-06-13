@@ -42,7 +42,7 @@ static Arena g_arena;
 static size_t g_token_budget = 96000; /* Default budget: 96k tokens */
 static const char *g_token_model = "gpt-4o"; /* Default model */
 static char *g_token_diagnostics_file = NULL;
-static bool g_token_diagnostics_requested = false; /* Track if -D was used */
+static bool g_token_diagnostics_requested = true; /* Diagnostics shown by default */
 
 void cleanup(void);
 
@@ -883,10 +883,9 @@ void show_help(void) {
     printf("  -d, --debug    Enable debug output (prefixed with [DEBUG])\n");
     printf("  -h             Show this help message\n");
     printf("  -b N           Set token budget limit (default: 96000, exits with code 3 if exceeded)\n");
-    printf("  -D[FILE]       Generate token count diagnostics (to stderr or FILE)\n");
+    printf("                 Token diagnostics are shown automatically when available\n");
     printf("  --token-budget=N      Set token budget limit (default: 96000)\n");
     printf("  --token-model=MODEL   Set model for token counting (default: gpt-4o)\n");
-    printf("  --token-diagnostics[=FILE]  Generate token diagnostics\n");
     printf("  --list-packs   List available language packs for code map generation\n");
     printf("  --no-gitignore Ignore .gitignore files when collecting files\n\n");
     printf("By default, llm_ctx reads content from stdin.\n");
@@ -1928,17 +1927,12 @@ int main(int argc, char *argv[]) {
                     return 1;
                 }
                 break;
-            case 'D': /* -D or --token-diagnostics with optional file argument */
-                g_token_diagnostics_requested = true;
-                /* Handle similar to -s and -e: check if there's a non-option argument following */
+            case 'D': /* -D deprecated - diagnostics are now shown by default */
+                /* For backward compatibility, just ignore this flag */
                 if (optarg == NULL              /* no glued arg */
                     && optind < argc            /* something left */
                     && argv[optind][0] != '-') {/* not next flag  */
-                    g_token_diagnostics_file = arena_strdup_safe(&g_arena, argv[optind++]);
-                } else if (optarg) {
-                    g_token_diagnostics_file = arena_strdup_safe(&g_arena, optarg);
-                } else {
-                    g_token_diagnostics_file = NULL; /* Write to stderr */
+                    optind++; /* consume the argument */
                 }
                 break;
             case 400: /* --token-budget */
@@ -1959,13 +1953,8 @@ int main(int argc, char *argv[]) {
                 }
                 g_token_model = arena_strdup_safe(&g_arena, optarg);
                 break;
-            case 402: /* --token-diagnostics */
-                g_token_diagnostics_requested = true;
-                if (optarg) {
-                    g_token_diagnostics_file = arena_strdup_safe(&g_arena, optarg);
-                } else {
-                    g_token_diagnostics_file = NULL; /* Write to stderr */
-                }
+            case 402: /* --token-diagnostics - deprecated, diagnostics now shown by default */
+                /* For backward compatibility, just ignore this flag */
                 break;
             case '?': /* Unknown option OR missing required argument */
                 /* optopt contains the failing option character */

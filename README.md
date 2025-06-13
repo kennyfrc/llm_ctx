@@ -42,8 +42,8 @@
     llm_ctx -f 'src/**/*.py' -c "Review this Python codebase"
     # Shows: Token usage: 45231 / 96000 (47% of budget)
     
-    # Set a custom budget and get detailed diagnostics
-    llm_ctx -f 'src/**/*.py' -b 100000 -D -c "Review this Python codebase"
+    # Set a custom budget (diagnostics shown automatically)
+    llm_ctx -f 'src/**/*.py' -b 100000 -c "Review this Python codebase"
     # If over budget, exits with code 3 before copying
     ```
     *(Token counting built with `make all` - see [Token Counting](#token-counting-and-budget-management))*
@@ -441,16 +441,9 @@ Options:
   -b N, --token-budget=N
                  Set a token budget limit (default: 96000). If the generated context
                  exceeds this token count (using OpenAI tokenization), the output is
-                 rejected and the program exits with code 3. Token usage is always
-                 displayed when the tokenizer is available.
+                 rejected and the program exits with code 3. Token usage and detailed
+                 diagnostics are displayed automatically when the tokenizer is available.
                  Example: -b 128000 (for GPT-4's context limit)
-
-  -D[FILE], --token-diagnostics[=FILE]
-                 Generate a token count breakdown showing tokens per file.
-                 Without FILE argument, outputs to stderr. With FILE, writes
-                 to the specified file. Useful for identifying large files.
-                 Example: -D (output to stderr)
-                 Example: -Dtoken_report.txt
 
   --token-model=MODEL
                  Set the OpenAI model for token counting. Different models
@@ -733,16 +726,13 @@ Exit codes:
 - `3`: Token budget exceeded
 - Other: Standard errors
 
-#### Token Diagnostics (`-D`, `--token-diagnostics`)
+#### Token Diagnostics (Automatic)
 
-Generate a breakdown showing token counts per file:
+Token diagnostics are now displayed automatically whenever the tokenizer is available, showing a breakdown of token counts per file:
 
 ```bash
-# Output diagnostics to stderr
-llm_ctx -f 'src/**/*.js' -D
-
-# Save diagnostics to a file
-llm_ctx -f 'src/**/*.js' -Dtoken_report.txt
+# Diagnostics shown automatically to stderr
+llm_ctx -f 'src/**/*.js'
 
 # Example output:
 # Token usage: 14982 / 96000 (15% of budget)
@@ -791,8 +781,8 @@ llm_ctx -f file.txt --token-model=gpt-3.5-turbo -D
 
 2. **Optimize file selection:**
    ```bash
-   # See which files are largest
-   llm_ctx -f 'src/**/*' -D | head -20
+   # See which files are largest (diagnostics shown automatically)
+   llm_ctx -f 'src/**/*' -o | head -20
    
    # Then exclude large files
    llm_ctx -f 'src/**/*.{js,jsx}' -f '!src/generated/*'
