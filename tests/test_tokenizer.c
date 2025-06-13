@@ -2,25 +2,22 @@
 #include <string.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include <unistd.h>
 #include "../tokenizer.h"
 #include "../arena.h"
 #include "test_framework.h"
 
-void test_tokenizer_availability() {
-    TEST_START("test_tokenizer_availability");
+TEST(test_tokenizer_availability) {
     /* Test might pass or fail depending on whether library is built */
     int available = llm_tokenizer_available();
     printf("Tokenizer available: %s\n", available ? "yes" : "no");
-    TEST_PASS();
 }
 
-void test_token_counting() {
-    TEST_START("test_token_counting");
-    
+TEST(test_token_counting) {
     /* Skip test if tokenizer not available */
     if (!llm_tokenizer_available()) {
         printf("Skipping: tokenizer library not available\n");
-        TEST_PASS();
         return;
     }
     
@@ -41,31 +38,27 @@ void test_token_counting() {
     for (int i = 0; test_cases[i].text != NULL; i++) {
         size_t tokens = llm_count_tokens(test_cases[i].text, test_cases[i].model);
         if (tokens == SIZE_MAX) {
-            TEST_FAIL("Token counting failed for: %s", test_cases[i].text);
-            continue;
+            printf("FAIL: Token counting failed for: '%s'\n", test_cases[i].text);
+            ASSERT("Token counting should not fail", 0);
         }
         
         if (tokens < test_cases[i].expected_min || tokens > test_cases[i].expected_max) {
-            TEST_FAIL("Token count %zu outside expected range [%zu, %zu] for: %s",
-                     tokens, test_cases[i].expected_min, test_cases[i].expected_max,
-                     test_cases[i].text);
-        } else {
-            printf("OK: '%s' -> %zu tokens\n", test_cases[i].text, tokens);
+            printf("FAIL: Token count %zu outside range [%zu, %zu] for: '%s'\n",
+                    tokens, test_cases[i].expected_min, test_cases[i].expected_max, test_cases[i].text);
+            ASSERT("Token count out of range", 0);
         }
+        
+        printf("OK: '%s' -> %zu tokens\n", test_cases[i].text, tokens);
     }
-    
-    TEST_PASS();
 }
 
-void test_invalid_inputs() {
-    TEST_START("test_invalid_inputs");
-    
+TEST(test_invalid_inputs) {
     /* Test NULL inputs */
     size_t tokens = llm_count_tokens(NULL, "gpt-4o");
-    TEST_ASSERT(tokens == SIZE_MAX, "NULL text should return SIZE_MAX");
+    ASSERT("NULL text should return SIZE_MAX", tokens == SIZE_MAX);
     
     tokens = llm_count_tokens("hello", NULL);
-    TEST_ASSERT(tokens == SIZE_MAX, "NULL model should return SIZE_MAX");
+    ASSERT("NULL model should return SIZE_MAX", tokens == SIZE_MAX);
     
     /* Test invalid model (if tokenizer available) */
     if (llm_tokenizer_available()) {
@@ -74,17 +67,12 @@ void test_invalid_inputs() {
         printf("Invalid model test: %s\n", 
                tokens == SIZE_MAX ? "rejected as expected" : "accepted (implementation dependent)");
     }
-    
-    TEST_PASS();
 }
 
-void test_token_diagnostics() {
-    TEST_START("test_token_diagnostics");
-    
+TEST(test_token_diagnostics) {
     /* Skip test if tokenizer not available */
     if (!llm_tokenizer_available()) {
         printf("Skipping: tokenizer library not available\n");
-        TEST_PASS();
         return;
     }
     
@@ -114,10 +102,10 @@ void test_token_diagnostics() {
     /* Create temp file for diagnostics output */
     char temp_path[] = "/tmp/test_diag_XXXXXX";
     int fd = mkstemp(temp_path);
-    TEST_ASSERT(fd != -1, "Failed to create temp file");
+    ASSERT("Failed to create temp file", fd != -1);
     
     FILE *diag_file = fdopen(fd, "w+");
-    TEST_ASSERT(diag_file != NULL, "Failed to open temp file");
+    ASSERT("Failed to open temp file", diag_file != NULL);
     
     /* Generate diagnostics */
     generate_token_diagnostics(test_content, "gpt-4o", diag_file, &arena);
@@ -136,25 +124,23 @@ void test_token_diagnostics() {
         printf("  %s", line); /* Show output for debugging */
     }
     
-    TEST_ASSERT(found_header, "Diagnostics should have header");
-    TEST_ASSERT(found_total, "Diagnostics should have total");
-    TEST_ASSERT(line_count >= 5, "Diagnostics should have multiple lines");
+    ASSERT("Diagnostics should have header", found_header);
+    ASSERT("Diagnostics should have total", found_total);
+    ASSERT("Diagnostics should have multiple lines", line_count >= 5);
     
     fclose(diag_file);
     unlink(temp_path);
     arena_destroy(&arena);
-    
-    TEST_PASS();
 }
 
-int main() {
+int main(void) {
     printf("=== Tokenizer Tests ===\n\n");
     
-    test_tokenizer_availability();
-    test_token_counting();
-    test_invalid_inputs();
-    test_token_diagnostics();
+    RUN_TEST(test_tokenizer_availability);
+    RUN_TEST(test_token_counting);
+    RUN_TEST(test_invalid_inputs);
+    RUN_TEST(test_token_diagnostics);
     
-    printf("\nAll tokenizer tests completed.\n");
-    return 0;
+    printf("\n");
+    PRINT_TEST_SUMMARY();
 }

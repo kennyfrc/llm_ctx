@@ -18,12 +18,26 @@ static char *run_command(const char *cmd) {
     static char buffer[327680];  // 320KB 
     buffer[0] = '\0';
     char cmd_redir[2048];
+    char full_cmd[2048];
     
-    snprintf(cmd_redir, sizeof(cmd_redir), "%s 2>&1", cmd);
+    /* Get the correct path to llm_ctx based on PWD */
+    const char *pwd = getenv("PWD");
+    if (!pwd) pwd = ".";
+    
+    /* Replace relative path with absolute path */
+    if (strncmp(cmd, "../llm_ctx", 10) == 0) {
+        snprintf(full_cmd, sizeof(full_cmd), "%s/llm_ctx%s", pwd, cmd + 10);
+    } else if (strncmp(cmd, "./llm_ctx", 9) == 0) {
+        snprintf(full_cmd, sizeof(full_cmd), "%s/llm_ctx%s", pwd, cmd + 9);
+    } else {
+        snprintf(full_cmd, sizeof(full_cmd), "%s", cmd);
+    }
+    
+    snprintf(cmd_redir, sizeof(cmd_redir), "%s 2>&1", full_cmd);
     
     FILE *pipe = popen(cmd_redir, "r");
     if (!pipe) {
-        snprintf(buffer, sizeof(buffer), "Error: popen failed for command: %s", cmd);
+        snprintf(buffer, sizeof(buffer), "Error: popen failed for command: %s", cmd_redir);
         return buffer;
     }
     
@@ -96,9 +110,13 @@ static void cleanup_test_files(void) {
 TEST(test_t_flag_limited_tree) {
     setup_test_files();
     
-    char *output = run_command("./llm_ctx -t -o -f test_tree_dir/src/main.c test_tree_dir/lib/helper.c");
+    char *output = run_command("../llm_ctx -t -o -f test_tree_dir/src/main.c test_tree_dir/lib/helper.c");
     
     /* Should contain the specified files */
+    if (!string_contains(output, "main.c")) {
+        printf("\nDEBUG: Output does not contain 'main.c'. Full output:\n%s\n", output);
+        fflush(stdout);
+    }
     ASSERT("Output should contain main.c", string_contains(output, "main.c"));
     ASSERT("Output should contain helper.c", string_contains(output, "helper.c"));
     
@@ -118,9 +136,13 @@ TEST(test_T_flag_global_tree) {
     setup_test_files();
     
     /* Test with just one file specified */
-    char *output = run_command("./llm_ctx -T -o -f test_tree_dir/src/main.c");
+    char *output = run_command("../llm_ctx -T -o -f test_tree_dir/src/main.c");
     
     /* Should contain ALL files in the directory tree */
+    if (!string_contains(output, "main.c")) {
+        printf("\nDEBUG test_T_flag: Output does not contain 'main.c'. Full output:\n%s\n", output);
+        fflush(stdout);
+    }
     ASSERT("Output should contain main.c", string_contains(output, "main.c"));
     ASSERT("Output should contain utils.c (not specified but in tree)", string_contains(output, "utils.c"));
     
@@ -137,9 +159,13 @@ TEST(test_T_flag_global_tree) {
 TEST(test_t_flag_with_patterns) {
     setup_test_files();
     
-    char *output = run_command("./llm_ctx -t -o -f 'test_tree_dir/src/*.c'");
+    char *output = run_command("../llm_ctx -t -o -f 'test_tree_dir/src/*.c'");
     
     /* Should contain only .c files from src */
+    if (!string_contains(output, "main.c")) {
+        printf("\nDEBUG test_t_flag_with_patterns: Output does not contain 'main.c'. Full output:\n%s\n", output);
+        fflush(stdout);
+    }
     ASSERT("Output should contain main.c", string_contains(output, "main.c"));
     ASSERT("Output should contain utils.c", string_contains(output, "utils.c"));
     
@@ -154,9 +180,13 @@ TEST(test_t_flag_with_patterns) {
 TEST(test_T_flag_with_patterns) {
     setup_test_files();
     
-    char *output = run_command("./llm_ctx -T -o -f 'test_tree_dir/src/*.c'");
+    char *output = run_command("../llm_ctx -T -o -f 'test_tree_dir/src/*.c'");
     
     /* Should contain all .c files from src (matched) */
+    if (!string_contains(output, "main.c")) {
+        printf("\nDEBUG test_T_flag_with_patterns: Output does not contain 'main.c'. Full output:\n%s\n", output);
+        fflush(stdout);
+    }
     ASSERT("Output should contain main.c", string_contains(output, "main.c"));
     ASSERT("Output should contain utils.c", string_contains(output, "utils.c"));
     
@@ -172,12 +202,12 @@ TEST(test_tree_flags_no_content) {
     setup_test_files();
     
     /* Test -t flag */
-    char *output_t = run_command("./llm_ctx -t -o -f test_tree_dir/src/main.c");
+    char *output_t = run_command("../llm_ctx -t -o -f test_tree_dir/src/main.c");
     ASSERT("Output -t should NOT contain <file_context>", !string_contains(output_t, "<file_context>"));
     ASSERT("Output -t should NOT contain file content", !string_contains(output_t, "int main"));
     
     /* Test -T flag */
-    char *output_T = run_command("./llm_ctx -T -o -f test_tree_dir/src/main.c");
+    char *output_T = run_command("../llm_ctx -T -o -f test_tree_dir/src/main.c");
     ASSERT("Output -T should NOT contain <file_context>", !string_contains(output_T, "<file_context>"));
     ASSERT("Output -T should NOT contain file content", !string_contains(output_T, "int main"));
     
@@ -189,7 +219,7 @@ TEST(test_normal_mode_no_tree_by_default) {
     setup_test_files();
     
     /* Without -t or -T, should NOT show file tree, only content */
-    char *output = run_command("./llm_ctx -o -f test_tree_dir/src/main.c");
+    char *output = run_command("../llm_ctx -o -f test_tree_dir/src/main.c");
     
     /* Should NOT contain the file tree */
     ASSERT("Output should NOT contain <file_tree>", !string_contains(output, "<file_tree>"));

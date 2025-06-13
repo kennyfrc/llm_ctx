@@ -6,7 +6,7 @@
 #include <string.h>
 #include <assert.h>
 
-static void test_arena_create_destroy() {
+static void test_arena_create_destroy(void) {
     Arena a = arena_create(MiB(1));
     
     // Check if arena was created successfully
@@ -22,7 +22,7 @@ static void test_arena_create_destroy() {
     printf("create/destroy test passed\n");
 }
 
-static void test_arena_allocations() {
+static void test_arena_allocations(void) {
     Arena a = arena_create(KiB(4));
     assert(a.base != NULL);
     
@@ -65,7 +65,7 @@ static void test_arena_allocations() {
     printf("allocation test passed\n");
 }
 
-static void test_alignment() {
+static void test_alignment(void) {
     Arena a = arena_create(KiB(4));
     
     // Allocate a byte
@@ -95,7 +95,7 @@ static void test_alignment() {
     printf("alignment test passed\n");
 }
 
-static void test_oom() {
+static void test_oom(void) {
     // Create a small arena to test out-of-memory condition
     Arena a = arena_create(16);
     assert(a.base != NULL);

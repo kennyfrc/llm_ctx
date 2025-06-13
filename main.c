@@ -31,8 +31,6 @@
 #endif
 #include "gitignore.h"
 #include "arena.h"
-#include "packs.h"
-#include "codemap.h"
 #include "debug.h"
 #include "tokenizer.h"
 
@@ -95,7 +93,6 @@ static void fatal(const char *fmt, ...) {
  * shipped binary, enabling “copy-anywhere” workflows without polluting
  * $HOME or /etc.  Falls back silently if platform support is missing.
  */
-/* Made non-static so it can be used by packs.c to locate language packs */
 char *get_executable_dir(void)
 {
     static char *cached = NULL;
@@ -288,13 +285,11 @@ static char *system_instructions = NULL;   /* Allocated from arena */
 static bool want_editor_comments = false;   /* -e flag */
 static char *custom_response_guide = NULL; /* Custom response guide from -e argument */
 static bool raw_mode = false; /* -r flag */
-static bool want_codemap = false; /* -m flag */
 static bool tree_only = false; /* -T flag - filtered tree */
 static bool global_tree_only = false; /* -t flag - global tree */
 static bool tree_only_output = false; /* -O flag - tree only without file content */
 static int tree_max_depth = 4; /* -L flag - default depth of 4 for web dev projects */
 bool debug_mode = false; /* -d flag */
-static Codemap g_codemap = {0}; /* Global codemap structure */
 
 /**
  * Open the file context block if it hasn't been opened yet.
@@ -870,12 +865,9 @@ void show_help(void) {
     printf("  -e@FILE        Read custom response guide from FILE (no space after -e)\n");
     printf("  -e@-           Read custom response guide from stdin (no space after -e)\n");
     printf("  -r             Raw mode: omit system instructions and response guide\n");
-    printf("  -m[=PATTERN]   Generate code map (optionally limited to PATTERN)\n");
-    printf("                 Patterns can be comma-separated (e.g., \"src/**/*.js,lib/**/*.rb\")\n");
-    printf("                 If no pattern is provided, scans the entire codebase\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
-    printf("  -t             Generate complete directory tree (global tree)\n");
-    printf("  -T             Generate file tree only for specified files\n");
+    printf("  -t             Generate file tree only for specified files\n");
+    printf("  -T             Generate complete directory tree (global tree)\n");
     printf("  -O             Generate tree only (no file content)\n");
     printf("  -L N           Limit tree depth to N levels (default: 4)\n");
     printf("  -o             Output to stdout instead of clipboard\n");
@@ -886,7 +878,6 @@ void show_help(void) {
     printf("                 Token diagnostics are shown automatically when available\n");
     printf("  --token-budget=N      Set token budget limit (default: 96000)\n");
     printf("  --token-model=MODEL   Set model for token counting (default: gpt-4o)\n");
-    printf("  --list-packs   List available language packs for code map generation\n");
     printf("  --no-gitignore Ignore .gitignore files when collecting files\n\n");
     printf("By default, llm_ctx reads content from stdin.\n");
     printf("Use -f flag to indicate file arguments are provided.\n\n");
@@ -907,12 +898,6 @@ void show_help(void) {
     printf("  llm_ctx -t -f src/main.c src/utils.c\n\n");
     printf("  # Generate complete directory tree\n");
     printf("  llm_ctx -T -f src/main.c\n\n");
-    printf("  # Generate code map from all files (scans entire codebase)\n");
-    printf("  llm_ctx -m\n\n");
-    printf("  # Generate code map for specific file patterns\n");
-    printf("  llm_ctx -m=\"src/**/*.js,lib/**/*.rb\"\n\n");
-    printf("  # Generate code map and include file content\n");
-    printf("  llm_ctx -f \"src/**/*.ts\" -m\n");
     exit(0);
 }
 
@@ -1467,9 +1452,6 @@ bool copy_to_clipboard(const char *buffer) {
  * Cleanup function to free memory before exit
  */
 void cleanup(void) {
-    /* Clean up language packs */
-    cleanup_pack_registry(&g_pack_registry);
-    
     /* Arena cleanup will release system_instructions */
     /* Free dynamically allocated user instructions */
     if (user_instructions) {
@@ -1507,16 +1489,13 @@ static const struct option long_options[] = {
     {"files",           no_argument,       0, 'f'}, /* Indicates file args follow */
     {"editor-comments", optional_argument, 0, 'e'},
     {"raw",             no_argument,       0, 'r'},
-    {"codemap",         optional_argument, 0, 'm'}, /* Generate code map with optional pattern */
-    {"tree",            no_argument,       0, 't'}, /* Generate complete directory tree */
-    {"filtered-tree",   no_argument,       0, 'T'}, /* Generate file tree for specified files */
+    {"tree",            no_argument,       0, 't'}, /* Generate file tree for specified files */
+    {"filtered-tree",   no_argument,       0, 'T'}, /* Generate complete directory tree */
     {"tree-only",       no_argument,       0, 'O'}, /* Generate tree only without file content */
     {"level",           required_argument, 0, 'L'}, /* Max depth for tree display */
     {"output",          optional_argument, 0, 'o'}, /* Output to stdout or file instead of clipboard */
     {"stdout",          optional_argument, 0, 'o'}, /* Alias for --output */
     {"debug",           no_argument,       0, 'd'}, /* Enable debug output */
-    {"list-packs",      no_argument,       0,  2 }, /* List available language packs */
-    {"pack-info",       required_argument, 0,  3 }, /* Get info about a specific language pack */
     {"no-gitignore",    no_argument,       0,  1 }, /* Use a value > 255 for long-only */
     {"token-budget",    required_argument, 0, 400}, /* Token budget limit */
     {"token-model",     required_argument, 0, 401}, /* Model for token counting */
@@ -1707,7 +1686,7 @@ int main(int argc, char *argv[]) {
     int opt;
     /* Add 'C' to the short options string. It takes no argument. */
     /* Add 'b:' for short form of --token-budget and 'D::' for token diagnostics */
-    while ((opt = getopt_long(argc, argv, "hc:s::fre::m::CtdTOL:o::b:D::", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s::fre::CtdTOL:o::b:D::", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
                 show_help(); /* Exits */
@@ -1748,82 +1727,18 @@ int main(int argc, char *argv[]) {
                 raw_mode = true;
                 r_flag_used = true;
                 break;
-            case 'm': /* -m or --codemap */
-                want_codemap = true;
-                
-                // Initialize codemap if not already done
-                if (!g_codemap.files) {
-                    g_codemap = codemap_init(&g_arena);
-                }
-                
-                // Handle both -m and -m=pattern forms
-                // The -m form has optarg == NULL
-                // The -m=pattern form has optarg starting with '='
-                // The -m pattern form has optarg set to the pattern
-                
-                if (optarg) {
-                    // Skip leading '=' for -m="pattern" form
-                    if (*optarg == '=') {
-                        optarg++;
-                    }
-                    
-                    if (*optarg) { // Make sure there's still something after skipping '='
-                        // Split the pattern string by commas
-                        char *pattern_copy = arena_strdup_safe(&g_arena, optarg);
-                        if (!pattern_copy) {
-                            fprintf(stderr, "Error: Failed to allocate memory for pattern\n");
-                        } else {
-                            // Check if the pattern contains brace expansion
-                            if (strchr(pattern_copy, '{') && strchr(pattern_copy, '}')) {
-                                // If it contains braces, don't split at commas
-                                char *trimmed = pattern_copy;
-                                while (*trimmed && isspace(*trimmed)) trimmed++;
-                                char *end = trimmed + strlen(trimmed) - 1;
-                                while (end > trimmed && isspace(*end)) *end-- = '\0';
-                                
-                                if (*trimmed) {
-                                    // Add the whole pattern
-                                    codemap_add_pattern(&g_codemap, trimmed, &g_arena);
-                                }
-                            } else {
-                                // If it doesn't contain braces, split at commas
-                                char *token = strtok(pattern_copy, ",");
-                                while (token) {
-                                    // Trim whitespace
-                                    char *trimmed = token;
-                                    while (*trimmed && isspace(*trimmed)) trimmed++;
-                                    char *end = trimmed + strlen(trimmed) - 1;
-                                    while (end > trimmed && isspace(*end)) *end-- = '\0';
-                                    
-                                    if (*trimmed) {
-                                        // Add the pattern to the codemap
-                                        codemap_add_pattern(&g_codemap, trimmed, &g_arena);
-                                    }
-                                    token = strtok(NULL, ",");
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // For brace patterns, provide a more specific message
-                if (g_codemap.pattern_count > 0 && strstr(g_codemap.patterns[0], "{")) {
-                    debug_printf("Codemap option enabled - will use brace pattern: %s", g_codemap.patterns[0]);
-                } else {
-                    debug_printf("Codemap option enabled - will %s", 
-                           (g_codemap.pattern_count > 0) ? "use specified patterns" : "scan entire codebase");
-                }
-                break;
             case 'd': /* -d or --debug */
                 debug_mode = true;
                 debug_printf("Debug mode enabled");
                 break;
-            case 't': /* -t or --tree - show full directory tree */
-                global_tree_only = true;
+            case 't': /* -t or --tree - show filtered tree based on params */
+                tree_only = true;
+                tree_only_output = true; /* Don't output file content */
                 file_mode = 1; /* Enable file mode to process files */
                 break;
-            case 'T': /* -T or --global-tree - show filtered tree based on params */
-                tree_only = true;
+            case 'T': /* -T or --global-tree - show full directory tree */
+                global_tree_only = true;
+                tree_only_output = true; /* Don't output file content */
                 file_mode = 1; /* Enable file mode to process files */
                 break;
             case 'O': /* -O or --tree-only */
@@ -1858,63 +1773,6 @@ int main(int argc, char *argv[]) {
                 break;
             case 1: /* --no-gitignore (long option without short equiv) */
                 respect_gitignore = false;
-                break;
-            case 2: /* --list-packs */
-                {
-                    if (initialize_pack_registry(&g_pack_registry, &g_arena)) {
-                        size_t loaded = load_language_packs(&g_pack_registry);
-                        printf("Loaded %zu language pack(s).\n\n", loaded);
-                        print_pack_list(&g_pack_registry);
-                    } else {
-                        printf("No language packs found.\n");
-                    }
-                    cleanup(); /* Clean up and exit */
-                    exit(0);
-                }
-                break;
-            case 3: /* --pack-info */
-                {
-                    if (!optarg) {
-                        fprintf(stderr, "Error: --pack-info requires a language pack name\n");
-                        return 1;
-                    }
-                    
-                    if (initialize_pack_registry(&g_pack_registry, &g_arena)) {
-                        load_language_packs(&g_pack_registry);
-                        
-                        bool found = false;
-                        for (size_t i = 0; i < g_pack_registry.pack_count; i++) {
-                            LanguagePack *pack = &g_pack_registry.packs[i];
-                            if (strcmp(pack->name, optarg) == 0) {
-                                found = true;
-                                
-                                printf("Language Pack: %s\n", pack->name);
-                                printf("Status: %s\n", pack->available ? "Available" : "Unavailable");
-                                printf("Path: %s\n", pack->path);
-                                
-                                if (pack->extensions && pack->extension_count > 0) {
-                                    printf("Supported Extensions:\n");
-                                    for (size_t j = 0; j < pack->extension_count; j++) {
-                                        printf("  %s\n", pack->extensions[j]);
-                                    }
-                                } else {
-                                    printf("No extensions defined\n");
-                                }
-                                
-                                break;
-                            }
-                        }
-                        
-                        if (!found) {
-                            printf("Language pack '%s' not found.\n", optarg);
-                        }
-                    } else {
-                        printf("No language packs found.\n");
-                    }
-                    
-                    cleanup(); /* Clean up and exit */
-                    exit(0);
-                }
                 break;
             case 'b': /* -b or --token-budget */
                 if (!optarg) {
@@ -2061,11 +1919,11 @@ int main(int argc, char *argv[]) {
         /* Stdin mode (no -f, no @- used) */
         if (isatty(STDIN_FILENO)) {
             /* If stdin is a terminal and we are not in file mode (which would be set by -f, -c @-, -s @-, -C),
-             * and prompt-only output isn't allowed (no -c/-s/-e flags used) and codemap isn't requested,
+             * and prompt-only output isn't allowed (no -c/-s/-e flags used),
              * it means the user likely forgot to pipe input or provide file arguments. Show help. */
-            if (!allow_empty_context && !want_codemap) {
+            if (!allow_empty_context) {
                 show_help(); /* Exits */
-            } /* Otherwise, allow proceeding to generate prompt-only output or codemap */
+            } /* Otherwise, allow proceeding to generate prompt-only output */
 
         } else {
             /* Stdin is not a terminal (piped data), process it */
@@ -2075,8 +1933,8 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    /* Check if any files were found or if codemap/prompt-only output is allowed */
-    if (files_found == 0 && !allow_empty_context && !want_codemap) {
+    /* Check if any files were found or if prompt-only output is allowed */
+    if (files_found == 0 && !allow_empty_context) {
         fprintf(stderr, "No files to process\n");
         fclose(temp_file);
         unlink(temp_file_path);
@@ -2089,7 +1947,7 @@ int main(int argc, char *argv[]) {
     }
     
     /* Expand file tree to show full directory contents */
-    if (file_tree_count > 0 && (global_tree_only || !tree_only)) {
+    if (file_tree_count > 0 && global_tree_only) {
         char *tree_root = find_common_prefix();
         add_directory_tree(tree_root);
     }
@@ -2101,53 +1959,6 @@ int main(int argc, char *argv[]) {
     
     /* Process codemap and file content unless tree_only_output is set */
     if (!tree_only_output) {
-        /* Generate and output codemap first (before file context) if requested */
-        if (want_codemap) {
-        debug_printf("Generating codemap...");
-        
-        /* We don't need to initialize the codemap here since it was already done when processing 
-         * the -m flag. Preserving the existing patterns is important */
-        
-        /* If in file mode and no patterns specified, add processed files as patterns */
-        if (file_mode && g_codemap.pattern_count == 0 && num_processed_files > 0) {
-            debug_printf("Adding %d processed files as codemap patterns", num_processed_files);
-            for (int i = 0; i < num_processed_files; i++) {
-                if (processed_files[i]) {
-                    codemap_add_pattern(&g_codemap, processed_files[i], &g_arena);
-                }
-            }
-        }
-        
-        
-        /* If no patterns are defined at this point, add a default pattern to scan the entire codebase */
-        if (g_codemap.pattern_count == 0) {
-            debug_printf("No patterns specified, scanning entire codebase");
-            codemap_add_pattern(&g_codemap, ".", &g_arena);
-        }
-        
-        /* Use the pattern-based approach to generate the codemap */
-        if (generate_codemap_from_patterns(&g_codemap, &g_arena, respect_gitignore)) {
-            /* Generate codemap and write to temp_file */
-            char *buffer = arena_push_array_safe(&g_arena, char, 1024 * 1024); /* 1MB buffer */
-            if (buffer) {
-                size_t pos = 0;
-                codemap_generate(&g_codemap, buffer, &pos, 1024 * 1024);
-                
-                /* Write the buffer to the output file */
-                if (pos > 0) {
-                    fprintf(temp_file, "%.*s\n", (int)pos, buffer);
-                    debug_printf("Codemap generated successfully");
-                } else {
-                    fprintf(stderr, "Warning: Empty codemap generated\n");
-                }
-            } else {
-                fprintf(stderr, "Warning: Failed to allocate memory for codemap output\n");
-            }
-        } else {
-            fprintf(stderr, "Warning: Failed to generate codemap\n");
-            /* Do not fallback to JavaScript/TypeScript-only codemap as requested */
-        }
-    }
     
     /* Output content of each processed file */
     for (int i = 0; i < num_processed_files; i++) {

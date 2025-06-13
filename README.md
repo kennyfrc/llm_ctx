@@ -30,13 +30,7 @@
     ```
     *(Warning: This can generate a lot of context!)*
     
-5.  **Generate a code map with function/class/type information** for your project (automatically copied to clipboard):
-    ```bash
-    llm_ctx -m -f 'src/**/*.{js,c,h}' -c "Explain how the key components in this project interact."
-    ```
-    *(Uses pattern matching by default, enhanced with Tree-sitter when available - see [Code Map Feature](#code-map-feature))*
-
-6.  **Ensure your context fits within model limits** (automatically copied to clipboard):
+5.  **Ensure your context fits within model limits** (automatically copied to clipboard):
     ```bash
     # Uses default 96k token budget; shows token usage automatically
     llm_ctx -f 'src/**/*.py' -c "Review this Python codebase"
@@ -54,13 +48,13 @@
     # Shows complete directory tree plus content of selected Python files
     ```
 
-8.  **Get a quick overview of project structure** without file content:
+6.  **Get a quick overview of project structure** without file content:
     ```bash
     llm_ctx -O -t -o
     # Shows only the directory tree structure to stdout (not clipboard)
     ```
 
-9.  **Control tree depth** for large projects:
+7.  **Control tree depth** for large projects:
     ```bash
     llm_ctx -t -L 2 -f 'src/**/*.js' -c "Review this JavaScript project"
     # Shows only 2 levels deep in the tree, preventing overwhelming output
@@ -435,9 +429,6 @@ Options:
   -o@FILE        Write output directly to FILE instead of clipboard.
                  Example: -o@output.txt
 
-  -m, --codemap  Generate a code map that shows functions, classes, methods, and
-                 types. Uses pattern matching by default, Tree-sitter when available.
-
   -b N, --token-budget=N
                  Set a token budget limit (default: 96000). If the generated context
                  exceeds this token count (using OpenAI tokenization), the output is
@@ -602,77 +593,6 @@ When using the `-f` flag, `llm_ctx` supports standard glob patterns:
     *   Negation patterns (`!`) always override ignore patterns for a matching file.
 *   **Disabling:** Use the `--no-gitignore` flag to completely skip loading and checking `.gitignore` files.
 
-### Code Map Feature
-
-The `-m` or `--codemap` flag enables code mapping, which extracts and displays functions, classes, methods, and types from source files in a structured format. This provides a high-level overview of the codebase's structure for the LLM.
-
-*   **What it shows:** The code map displays:
-    *   **Functions** with their parameter signatures and return types
-    *   **Classes** with their methods
-    *   **Types/Interfaces**
-
-*   **Implementation Methods:**
-    *   **Pattern-based:** By default, `llm_ctx` uses simple regex patterns to extract code structure, which works across various languages.
-    *   **Tree-sitter enhanced:** When Tree-sitter language packs are available, `llm_ctx` uses precise AST parsing for superior results.
-
-*   **Example:**
-    ```bash
-    llm_ctx -m -f 'src/**/*.{js,ts,c,h,rb}'
-    ```
-
-*   **Output Format:**
-    The output includes a `<code_map>` block between the `<file_tree>` and `<file_context>` sections:
-
-    ```
-    <code_map>
-    [path/to/file.js]
-    Classes:
-      ClassName:
-        methods:
-        - constructor(params)
-        - methodName(params) -> returnType
-    
-    Functions:
-      functionName           (params) -> returnType
-      anotherFunction        (params)
-    
-    Types:
-      TypeName
-    </code_map>
-    ```
-
-*   **Debug Mode:**
-    Use `-d` or `--debug` with `-m` to see detailed information about the code mapping process:
-    ```bash
-    llm_ctx -m -d -f 'src/**/*.js'
-    ```
-    Debug mode shows:
-    * Which parser was used (pattern-based or Tree-sitter)
-    * Issues with file processing
-    * Parsing decisions and errors
-
-*   **Tree-sitter Requirements (Optional but Recommended):**
-    To fully utilize the Tree-sitter enhanced parsing:
-    1.  The Tree-sitter library (`brew install tree-sitter` on macOS)
-    2.  Language packs for the languages you want to analyze
-
-*   **Installing Language Packs:**
-    ```bash
-    # Install JavaScript language pack
-    make pack LANG=javascript
-    
-    # Install Ruby language pack
-    make pack LANG=ruby
-    
-    # Install all supported language packs
-    make packs
-    ```
-
-*   **Notes:**
-    *   Without Tree-sitter language packs, code mapping still works using pattern-based extraction
-    *   Tree-sitter provides superior results but isn't required
-    *   Performance limits: Files > 5MB are skipped to avoid excessive memory usage
-    *   No strict timeout limits are enforced during parsing
 
 ### Token Counting and Budget Management
 
@@ -839,17 +759,15 @@ We designed `llm_ctx` following the Unix philosophy: do one thing well. Its sole
 
 ### Debug Mode and Transparency
 
-The `-d` or `--debug` flag enhances transparency by providing insights into how `llm_ctx` processes files and generates code maps:
+The `-d` or `--debug` flag enhances transparency by providing insights into how `llm_ctx` processes files:
 
 * **File Processing:** See which files are included/excluded and why
-* **Parser Selection:** Learn whether pattern-based parsing or Tree-sitter AST parsing is being used for each file
-* **Error Reporting:** Get detailed information about parsing failures or timeouts
-* **Performance Metrics:** View parsing time for large files
+* **Error Reporting:** Get detailed information about processing failures
+* **Performance Metrics:** View processing time for large files
 
 This is especially useful when:
 * Troubleshooting unexpected file inclusion/exclusion
-* Developing new language packs
-* Understanding why certain code elements appear (or don't appear) in the code map
+* Understanding why certain files are processed differently
 
 ### File Selection and Filtering
 
@@ -860,14 +778,14 @@ Unlike some tools with explicit `--include` and `--exclude` flags (like `code2pr
 
 ### Understanding the Output Structure
 
-The XML-like tags (`<file_tree>`, `<file_context>`, `<code_map>`, etc.) and Markdown fences are chosen for:
+The XML-like tags (`<file_tree>`, `<file_context>`, etc.) and Markdown fences are chosen for:
 
-*   **LLM Clarity:** Provides clear delimiters for different types of information (instructions, file structure, code map, file content).
-*   **Context Preservation:** The file tree and code map help the LLM understand the relationships and structure of files and code entities.
+*   **LLM Clarity:** Provides clear delimiters for different types of information (instructions, file structure, file content).
+*   **Context Preservation:** The file tree helps the LLM understand the relationships and structure of files.
 *   **Robustness:** Less likely to be confused with code content compared to using only Markdown.
 *   **Easy Parsing:** While designed for LLMs, the structure is simple enough for basic parsing if needed.
 *   **Binary File Handling:** If a file is detected as binary (see Limitations), its content is replaced with a placeholder `[Binary file content skipped]` instead of being included within code fences.
-*   **Debug Information:** When `-d` is used, additional diagnostic information is included to help identify issues with file processing and code mapping.
+*   **Debug Information:** When `-d` is used, additional diagnostic information is included to help identify issues with file processing.
 
 ### Tips for Effective LLM Context
 
