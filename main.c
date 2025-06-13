@@ -1314,6 +1314,15 @@ void find_recursive(const char *base_dir, const char *pattern) {
 bool process_pattern(const char *pattern) {
     int initial_files_found = files_found;
     
+    /* First check if the pattern is a directory */
+    struct stat statbuf;
+    if (lstat(pattern, &statbuf) == 0 && S_ISDIR(statbuf.st_mode)) {
+        /* It's a directory - add it to tree and recursively find all files */
+        add_to_file_tree(pattern);
+        find_recursive(pattern, "*");
+        return (files_found > initial_files_found);
+    }
+    
     /* Check if this is a recursive pattern */
     if (strstr(pattern, "**/") != NULL || strstr(pattern, "**") != NULL) {
         char base_dir[MAX_PATH] = ".";
