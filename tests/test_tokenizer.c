@@ -134,7 +134,8 @@ TEST(test_token_diagnostics) {
 }
 
 int main(void) {
-    printf("=== Tokenizer Tests ===\n\n");
+    printf("Running tokenizer unit tests\n");
+    printf("============================\n");
     
     RUN_TEST(test_tokenizer_availability);
     RUN_TEST(test_token_counting);

@@ -106,11 +106,11 @@ static void cleanup_test_files(void) {
     rmdir("test_tree_dir");
 }
 
-/* Test that -t shows only specified files */
-TEST(test_t_flag_limited_tree) {
+/* Test that -t shows complete directory tree (full tree) */
+TEST(test_t_flag_full_tree) {
     setup_test_files();
     
-    char *output = run_command("../llm_ctx -t -o -f test_tree_dir/src/main.c test_tree_dir/lib/helper.c");
+    char *output = run_command("../llm_ctx -t -o --no-gitignore -f test_tree_dir/src/main.c test_tree_dir/lib/helper.c");
     
     /* Should contain the specified files */
     if (!string_contains(output, "main.c")) {
@@ -120,9 +120,9 @@ TEST(test_t_flag_limited_tree) {
     ASSERT("Output should contain main.c", string_contains(output, "main.c"));
     ASSERT("Output should contain helper.c", string_contains(output, "helper.c"));
     
-    /* Should NOT contain files that weren't specified */
-    ASSERT("Output should NOT contain utils.c", !string_contains(output, "utils.c"));
-    ASSERT("Output should NOT contain README.md", !string_contains(output, "README.md"));
+    /* Should ALSO contain files that weren't specified (full tree) */
+    ASSERT("Output should contain utils.c", string_contains(output, "utils.c"));
+    ASSERT("Output should contain README.md", string_contains(output, "README.md"));
     
     /* Should have the correct tree structure */
     ASSERT("Output should contain <file_tree>", string_contains(output, "<file_tree>"));
@@ -131,20 +131,20 @@ TEST(test_t_flag_limited_tree) {
     cleanup_test_files();
 }
 
-/* Test that -T shows complete directory tree */
-TEST(test_T_flag_global_tree) {
+/* Test that -T shows filtered tree (only specified files) */
+TEST(test_T_flag_filtered_tree) {
     setup_test_files();
     
     /* Test with just one file specified */
     char *output = run_command("../llm_ctx -T -o -f test_tree_dir/src/main.c");
     
-    /* Should contain ALL files in the directory tree */
+    /* Should contain specified file */
     if (!string_contains(output, "main.c")) {
         printf("\nDEBUG test_T_flag: Output does not contain 'main.c'. Full output:\n%s\n", output);
         fflush(stdout);
     }
     ASSERT("Output should contain main.c", string_contains(output, "main.c"));
-    ASSERT("Output should contain utils.c (not specified but in tree)", string_contains(output, "utils.c"));
+    ASSERT("Output should NOT contain utils.c (not specified)", !string_contains(output, "utils.c"));
     
     /* Should have the correct tree structure */
     ASSERT("Output should contain <file_tree>", string_contains(output, "<file_tree>"));
@@ -155,13 +155,13 @@ TEST(test_T_flag_global_tree) {
     cleanup_test_files();
 }
 
-/* Test that -t with patterns shows only matched files */
+/* Test that -t with patterns shows full tree regardless of pattern */
 TEST(test_t_flag_with_patterns) {
     setup_test_files();
     
-    char *output = run_command("../llm_ctx -t -o -f 'test_tree_dir/src/*.c'");
+    char *output = run_command("../llm_ctx -t -o --no-gitignore -f 'test_tree_dir/src/*.c'");
     
-    /* Should contain only .c files from src */
+    /* Should contain .c files from src (matched) */
     if (!string_contains(output, "main.c")) {
         printf("\nDEBUG test_t_flag_with_patterns: Output does not contain 'main.c'. Full output:\n%s\n", output);
         fflush(stdout);
@@ -169,20 +169,20 @@ TEST(test_t_flag_with_patterns) {
     ASSERT("Output should contain main.c", string_contains(output, "main.c"));
     ASSERT("Output should contain utils.c", string_contains(output, "utils.c"));
     
-    /* Should NOT contain files from other directories */
-    ASSERT("Output should NOT contain helper.c", !string_contains(output, "helper.c"));
-    ASSERT("Output should NOT contain README.md", !string_contains(output, "README.md"));
+    /* Should ALSO contain files from other directories (full tree) */
+    ASSERT("Output should contain helper.c", string_contains(output, "helper.c"));
+    ASSERT("Output should contain README.md", string_contains(output, "README.md"));
     
     cleanup_test_files();
 }
 
-/* Test that -T with patterns shows complete tree */
+/* Test that -T with patterns shows filtered tree (only matched files) */
 TEST(test_T_flag_with_patterns) {
     setup_test_files();
     
     char *output = run_command("../llm_ctx -T -o -f 'test_tree_dir/src/*.c'");
     
-    /* Should contain all .c files from src (matched) */
+    /* Should contain .c files from src (matched) */
     if (!string_contains(output, "main.c")) {
         printf("\nDEBUG test_T_flag_with_patterns: Output does not contain 'main.c'. Full output:\n%s\n", output);
         fflush(stdout);
@@ -190,9 +190,9 @@ TEST(test_T_flag_with_patterns) {
     ASSERT("Output should contain main.c", string_contains(output, "main.c"));
     ASSERT("Output should contain utils.c", string_contains(output, "utils.c"));
     
-    /* Should contain tree structure */
-    ASSERT("Output should contain test_tree_dir", string_contains(output, "test_tree_dir"));
-    ASSERT("Output should contain src", string_contains(output, "src"));
+    /* Should NOT contain files that don't match pattern */
+    ASSERT("Output should NOT contain helper.c", !string_contains(output, "helper.c"));
+    ASSERT("Output should NOT contain README.md", !string_contains(output, "README.md"));
     
     cleanup_test_files();
 }
@@ -241,14 +241,16 @@ TEST(test_normal_mode_no_tree_by_default) {
 }
 
 int main(void) {
-    printf("\n=== Tree Flags Tests ===\n");
+    printf("Running tree flags tests\n");
+    printf("========================\n");
     
-    RUN_TEST(test_t_flag_limited_tree);
-    RUN_TEST(test_T_flag_global_tree);
+    RUN_TEST(test_t_flag_full_tree);
+    RUN_TEST(test_T_flag_filtered_tree);
     RUN_TEST(test_t_flag_with_patterns);
     RUN_TEST(test_T_flag_with_patterns);
     RUN_TEST(test_tree_flags_no_content);
     RUN_TEST(test_normal_mode_no_tree_by_default);
     
+    printf("\n");
     PRINT_TEST_SUMMARY();
 }

@@ -488,6 +488,7 @@ void add_directory_tree_with_depth(const char *base_dir, int current_depth) {
         return;
     }
 
+
     if (!(dir = opendir(base_dir)))
         return;
 
@@ -866,8 +867,8 @@ void show_help(void) {
     printf("  -e@-           Read custom response guide from stdin (no space after -e)\n");
     printf("  -r             Raw mode: omit system instructions and response guide\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
-    printf("  -t             Generate file tree only for specified files\n");
-    printf("  -T             Generate complete directory tree (global tree)\n");
+    printf("  -t             Generate complete directory tree (full tree)\n");
+    printf("  -T             Generate file tree only for specified files (filtered tree)\n");
     printf("  -O             Generate tree only (no file content)\n");
     printf("  -L N           Limit tree depth to N levels (default: 4)\n");
     printf("  -o             Output to stdout instead of clipboard\n");
@@ -894,10 +895,10 @@ void show_help(void) {
     printf("  llm_ctx -c \"Please explain this code\" -f src/*.c\n\n");
     printf("  # Pipe to clipboard\n");
     printf("  git diff | llm_ctx -c \"Review these changes\" | pbcopy\n\n");
-    printf("  # Generate file tree of specified files only\n");
-    printf("  llm_ctx -t -f src/main.c src/utils.c\n\n");
     printf("  # Generate complete directory tree\n");
-    printf("  llm_ctx -T -f src/main.c\n\n");
+    printf("  llm_ctx -t -f src/main.c\n\n");
+    printf("  # Generate file tree of specified files only\n");
+    printf("  llm_ctx -T -f src/main.c src/utils.c\n\n");
     exit(0);
 }
 
@@ -1489,8 +1490,8 @@ static const struct option long_options[] = {
     {"files",           no_argument,       0, 'f'}, /* Indicates file args follow */
     {"editor-comments", optional_argument, 0, 'e'},
     {"raw",             no_argument,       0, 'r'},
-    {"tree",            no_argument,       0, 't'}, /* Generate file tree for specified files */
-    {"filtered-tree",   no_argument,       0, 'T'}, /* Generate complete directory tree */
+    {"tree",            no_argument,       0, 't'}, /* Generate complete directory tree */
+    {"filtered-tree",   no_argument,       0, 'T'}, /* Generate file tree for specified files */
     {"tree-only",       no_argument,       0, 'O'}, /* Generate tree only without file content */
     {"level",           required_argument, 0, 'L'}, /* Max depth for tree display */
     {"output",          optional_argument, 0, 'o'}, /* Output to stdout or file instead of clipboard */
@@ -1731,13 +1732,13 @@ int main(int argc, char *argv[]) {
                 debug_mode = true;
                 debug_printf("Debug mode enabled");
                 break;
-            case 't': /* -t or --tree - show filtered tree based on params */
-                tree_only = true;
+            case 't': /* -t or --tree - show full directory tree */
+                global_tree_only = true;
                 tree_only_output = true; /* Don't output file content */
                 file_mode = 1; /* Enable file mode to process files */
                 break;
-            case 'T': /* -T or --global-tree - show full directory tree */
-                global_tree_only = true;
+            case 'T': /* -T or --filtered-tree - show filtered tree based on params */
+                tree_only = true;
                 tree_only_output = true; /* Don't output file content */
                 file_mode = 1; /* Enable file mode to process files */
                 break;
@@ -1949,7 +1950,25 @@ int main(int argc, char *argv[]) {
     /* Expand file tree to show full directory contents */
     if (file_tree_count > 0 && global_tree_only) {
         char *tree_root = find_common_prefix();
-        add_directory_tree(tree_root);
+        
+        /* For full tree, add the entire directory tree from the common root */
+        if (strcmp(tree_root, ".") == 0) {
+            /* If root is current dir, use the first file's top-level directory */
+            if (file_tree_count > 0) {
+                char first_dir[MAX_PATH];
+                strcpy(first_dir, file_tree[0].path);
+                char *first_slash = strchr(first_dir, '/');
+                if (first_slash) {
+                    *first_slash = '\0';
+                    add_directory_tree(first_dir);
+                } else {
+                    add_directory_tree(".");
+                }
+            }
+        } else {
+            /* Add everything under the common root */
+            add_directory_tree(tree_root);
+        }
     }
 
     /* Generate and add file tree only if -t or -T flag is passed */

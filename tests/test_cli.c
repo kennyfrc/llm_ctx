@@ -591,8 +591,8 @@ TEST(test_cli_glob_brackets_range) {
     // Should include __test_1.log and __test_2.log (matching '[1-2]')
     ASSERT("Output contains __test_1.log", string_contains(output, "__test_1.log"));
     ASSERT("Output contains __test_2.log", string_contains(output, "__test_2.log"));
-    // With full directory tree, all files are now shown, but we check that the pattern was properly matched
-    ASSERT("Pattern correctly matched only [1-2] files", string_contains(output, "__app.log"));
+    // With filtered tree (-T), only matched files should be shown
+    ASSERT("Pattern correctly matched only [1-2] files", !string_contains(output, "__app.log"));
 }
 
 /* Test glob pattern '[]' (negation) with --no-gitignore (prefixed) */
@@ -604,9 +604,9 @@ TEST(test_cli_glob_brackets_negation) {
 
     // Should include __test_2.log (matching '[!1]') but not __test_1.log
     ASSERT("Output contains __test_2.log", string_contains(output, "__test_2.log"));
-    // With full directory tree, the assertion changes since all files are now shown
-    ASSERT("Output now contains __test_1.log with full tree", string_contains(output, "__test_1.log"));
-    ASSERT("Output now contains __app.log with full tree", string_contains(output, "__app.log"));
+    // With filtered tree (-T), only matched files should be shown
+    ASSERT("Output should NOT contain __test_1.log", !string_contains(output, "__test_1.log"));
+    ASSERT("Output should NOT contain __app.log", !string_contains(output, "__app.log"));
 }
 
 /* Test glob pattern '{}' (brace expansion) (prefixed) */
@@ -620,8 +620,8 @@ TEST(test_cli_glob_brace_expansion) {
     // Should include .c and .h files matching the brace expansion
     ASSERT("Output contains __brace_test.c", string_contains(output, "__brace_test.c"));
     ASSERT("Output contains __brace_test.h", string_contains(output, "__brace_test.h"));
-    // With full directory tree, all files are now shown
-    ASSERT("Output contains __brace_test.js with full tree", string_contains(output, "__brace_test.js"));
+    // With filtered tree (-T), only matched files should be shown
+    ASSERT("Output should NOT contain __brace_test.js", !string_contains(output, "__brace_test.js"));
 }
 
 /* Test native recursive glob '** / *' respecting .gitignore (prefixed) */
@@ -665,10 +665,10 @@ TEST(test_cli_native_recursive_glob_specific) {
     ASSERT("Output contains __main.c", string_contains(output, "__main.c"));
     ASSERT("Output contains __engine.c", string_contains(output, "__engine.c"));
 
-    // With full directory tree, all files are now shown, but we need to be careful with our assertions
-    ASSERT("Output contains __regular.txt with full tree", string_contains(output, "__regular.txt"));
-    // Some files might not exist in the test directory, so don't test for them directly
-    ASSERT("Output contains __src directory files", string_contains(output, "__src"));
+    // With filtered tree (-T), only matched files in __src should be shown
+    ASSERT("Output should NOT contain __regular.txt", !string_contains(output, "__regular.txt"));
+    // Should still show the __src directory structure
+    ASSERT("Output contains __src directory", string_contains(output, "__src"));
 }
 
 /* Test native recursive glob '** / *' with --no-gitignore (prefixed) */

@@ -89,19 +89,19 @@ tests/test_tokenizer_cli: tests/test_tokenizer_cli.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 test: $(TARGET) $(TEST_TARGETS)
-	@echo "\nRunning unit tests..."
+	@echo ""
 	@./tests/test_gitignore || true
-	@echo "\nRunning arena tests..."
+	@echo ""
 	@./tests/test_arena || true
-	@echo "\nRunning integration tests..."
+	@echo ""
 	@./tests/test_cli || true
-	@echo "\nRunning stdin pipe tests..."
+	@echo ""
 	@./tests/test_stdin || true
-	@echo "\nRunning tree flags tests..."
+	@echo ""
 	@./tests/test_tree_flags || true
-	@echo "\nRunning tokenizer unit tests..."
+	@echo ""
 	@./tests/test_tokenizer || true
-	@echo "\nRunning tokenizer CLI integration tests..."
+	@echo ""
 	@./tests/test_tokenizer_cli || true
 	@echo "Test run complete."
 	@# Exit with non-zero status if any test failed (requires more complex tracking or a test runner)

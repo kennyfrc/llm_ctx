@@ -127,8 +127,11 @@ size_t llm_count_tokens(const char *text, const char *model) {
     Rank *tokens = g_encode_ordinary(bpe, text, &num_tokens);
     
     /* Clean up */
-    if (tokens) {
-        free(tokens);
+    if (tokens && tokens != (Rank *)0x4) {
+        /* Only free if it's a valid heap pointer */
+        if ((uintptr_t)tokens > 0x1000) {
+            free(tokens);
+        }
     }
     g_destroy_corebpe(bpe);
     

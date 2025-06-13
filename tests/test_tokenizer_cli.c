@@ -182,7 +182,8 @@ TEST(test_missing_tokenizer_library) {
 }
 
 int main(void) {
-    printf("=== Tokenizer CLI Integration Tests ===\n\n");
+    printf("Running tokenizer CLI integration tests\n");
+    printf("=======================================\n");
     
     /* Check if llm_ctx executable exists */
     char llm_ctx_path[1024];
