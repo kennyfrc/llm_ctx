@@ -42,19 +42,19 @@
     ```
     *(Token counting built with `make all` - see [Token Counting](#token-counting-and-budget-management))*
 
-7.  **View project structure with full directory tree** (automatically copied to clipboard):
+6.  **View project structure with full directory tree** (automatically copied to clipboard):
     ```bash
     llm_ctx -t -f 'src/**/*.py' -c "Explain the architecture of this Python project"
     # Shows complete directory tree plus content of selected Python files
     ```
 
-6.  **Get a quick overview of project structure** without file content:
+7.  **Get a quick overview of project structure** without file content:
     ```bash
     llm_ctx -O -t -o
     # Shows only the directory tree structure to stdout (not clipboard)
     ```
 
-7.  **Control tree depth** for large projects:
+8.  **Control tree depth** for large projects:
     ```bash
     llm_ctx -t -L 2 -f 'src/**/*.js' -c "Review this JavaScript project"
     # Shows only 2 levels deep in the tree, preventing overwhelming output
@@ -681,7 +681,7 @@ Different OpenAI models use different tokenization rules:
 
 ```bash
 # Use GPT-3.5-turbo tokenization (default: gpt-4o)
-llm_ctx -f file.txt --token-model=gpt-3.5-turbo -D
+llm_ctx -f file.txt --token-model=gpt-3.5-turbo
 
 # Supported models include:
 # - gpt-4o (default)
@@ -711,7 +711,7 @@ llm_ctx -f file.txt --token-model=gpt-3.5-turbo -D
 3. **Monitor prompt token usage:**
    ```bash
    # Check how many tokens your instructions use
-   echo "Complex multi-paragraph instructions..." | llm_ctx -C -D
+   echo "Complex multi-paragraph instructions..." | llm_ctx -C
    ```
 
 #### Implementation Notes
