@@ -1743,17 +1743,20 @@ int main(int argc, char *argv[]) {
                 break;
             case 't': /* -t or --tree - show full directory tree */
                 global_tree_only = true;
-                tree_only_output = true; /* Don't output file content */
+                /* tree_only_output is NOT set here - file content should still be shown */
                 file_mode = 1; /* Enable file mode to process files */
                 break;
             case 'T': /* -T or --filtered-tree - show filtered tree based on params */
                 tree_only = true;
-                tree_only_output = true; /* Don't output file content */
+                /* tree_only_output is NOT set here - file content should still be shown */
                 file_mode = 1; /* Enable file mode to process files */
                 break;
             case 'O': /* -O or --tree-only */
                 tree_only_output = true;
-                tree_only = true; /* Also enable tree generation */
+                /* If neither -t nor -T was specified, default to filtered tree behavior */
+                if (!global_tree_only && !tree_only) {
+                    tree_only = true;
+                }
                 file_mode = 1; /* Enable file mode to process files */
                 break;
             case 'L': /* -L or --level */
@@ -1980,8 +1983,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* Generate and add file tree only if -t or -T flag is passed */
-    if (tree_only || global_tree_only) {
+    /* Generate and add file tree if -t, -T, or -O flag is passed */
+    if (tree_only || global_tree_only || tree_only_output) {
         generate_file_tree();
     }
     
