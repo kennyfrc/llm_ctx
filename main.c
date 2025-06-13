@@ -261,6 +261,7 @@ void output_file_callback(const char *name, const char *type, const char *conten
 bool is_binary(FILE *file);
 bool file_already_in_tree(const char *filepath);
 void add_directory_tree(const char *base_dir);
+void add_directory_tree_with_depth(const char *base_dir, int current_depth);
 
 /* Special file structure for stdin content */
 typedef struct {
@@ -291,6 +292,7 @@ static bool want_codemap = false; /* -m flag */
 static bool tree_only = false; /* -T flag - filtered tree */
 static bool global_tree_only = false; /* -t flag - global tree */
 static bool tree_only_output = false; /* -O flag - tree only without file content */
+static int tree_max_depth = 4; /* -L flag - default depth of 4 for web dev projects */
 bool debug_mode = false; /* -d flag */
 static Codemap g_codemap = {0}; /* Global codemap structure */
 
@@ -471,13 +473,25 @@ bool file_already_in_tree(const char *filepath) {
 }
 
 /**
- * Recursively add an entire directory tree to file_tree
+ * Recursively add an entire directory tree to file_tree (wrapper)
  */
 void add_directory_tree(const char *base_dir) {
+    add_directory_tree_with_depth(base_dir, 0);
+}
+
+/**
+ * Recursively add an entire directory tree to file_tree with depth tracking
+ */
+void add_directory_tree_with_depth(const char *base_dir, int current_depth) {
     DIR *dir;
     struct dirent *entry;
     struct stat statbuf;
     char path[MAX_PATH];
+
+    /* Check if we've reached max depth */
+    if (current_depth >= tree_max_depth) {
+        return;
+    }
 
     if (!(dir = opendir(base_dir)))
         return;
@@ -496,7 +510,7 @@ void add_directory_tree(const char *base_dir) {
         if (!file_already_in_tree(path))
             add_to_file_tree(path);
         if (S_ISDIR(statbuf.st_mode))
-            add_directory_tree(path);
+            add_directory_tree_with_depth(path, current_depth + 1);
     }
 
     closedir(dir);
@@ -591,6 +605,11 @@ void print_tree_node(const char *path, int level, bool is_last, const char *pref
  */
 void build_tree_recursive(char **paths, int count, int level, char *prefix, const char *path_prefix __attribute__((unused))) {
     if (count <= 0) return;
+    
+    /* Check if we've reached max depth for display */
+    if (level >= tree_max_depth) {
+        return;
+    }
     
     char current_dir[MAX_PATH] = "";
     
@@ -858,6 +877,7 @@ void show_help(void) {
     printf("  -t             Generate complete directory tree (global tree)\n");
     printf("  -T             Generate file tree only for specified files\n");
     printf("  -O             Generate tree only (no file content)\n");
+    printf("  -L N           Limit tree depth to N levels (default: 4)\n");
     printf("  -o             Output to stdout instead of clipboard\n");
     printf("  -o@FILE        Write output to FILE (no space after -o)\n");
     printf("  -d, --debug    Enable debug output (prefixed with [DEBUG])\n");
@@ -1492,6 +1512,7 @@ static const struct option long_options[] = {
     {"tree",            no_argument,       0, 't'}, /* Generate complete directory tree */
     {"filtered-tree",   no_argument,       0, 'T'}, /* Generate file tree for specified files */
     {"tree-only",       no_argument,       0, 'O'}, /* Generate tree only without file content */
+    {"level",           required_argument, 0, 'L'}, /* Max depth for tree display */
     {"output",          optional_argument, 0, 'o'}, /* Output to stdout or file instead of clipboard */
     {"stdout",          optional_argument, 0, 'o'}, /* Alias for --output */
     {"debug",           no_argument,       0, 'd'}, /* Enable debug output */
@@ -1687,7 +1708,7 @@ int main(int argc, char *argv[]) {
     int opt;
     /* Add 'C' to the short options string. It takes no argument. */
     /* Add 'b:' for short form of --token-budget and 'D::' for token diagnostics */
-    while ((opt = getopt_long(argc, argv, "hc:s::fre::m::CtdTOo::b:D::", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s::fre::m::CtdTOL:o::b:D::", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
                 show_help(); /* Exits */
@@ -1810,6 +1831,17 @@ int main(int argc, char *argv[]) {
                 tree_only_output = true;
                 tree_only = true; /* Also enable tree generation */
                 file_mode = 1; /* Enable file mode to process files */
+                break;
+            case 'L': /* -L or --level */
+                if (!optarg) {
+                    fprintf(stderr, "Error: -L/--level requires a numeric argument\n");
+                    return 1;
+                }
+                tree_max_depth = (int)strtol(optarg, NULL, 10);
+                if (tree_max_depth <= 0) {
+                    fprintf(stderr, "Error: Invalid tree depth: %s\n", optarg);
+                    return 1;
+                }
                 break;
             case 'o': /* -o or --output with optional file argument */
                 /* Handle similar to -s and -e: check if there's a non-option argument following */
@@ -2201,6 +2233,9 @@ int main(int argc, char *argv[]) {
                 printf("%s", final_content);
             } else {
                 /* Print confirmation message to stderr */
+                if (tree_only || global_tree_only) {
+                    fprintf(stderr, "File tree printed using depth %d.\n", tree_max_depth);
+                }
                 fprintf(stderr, "Content copied to clipboard.\n");
             }
         }

@@ -60,6 +60,12 @@
     # Shows only the directory tree structure to stdout (not clipboard)
     ```
 
+9.  **Control tree depth** for large projects:
+    ```bash
+    llm_ctx -t -L 2 -f 'src/**/*.js' -c "Review this JavaScript project"
+    # Shows only 2 levels deep in the tree, preventing overwhelming output
+    ```
+
 *(To output to stdout instead of clipboard, use the `-o` flag)*
 
 **Quick Links:**
@@ -468,6 +474,11 @@ Options:
   -O, --tree-only
                  Generate tree output only, without any file content.
                  Useful for getting a quick overview of project structure.
+                 
+  -L N, --level=N
+                 Limit the depth of the tree display to N levels (default: 4).
+                 This helps manage output size for deep directory structures.
+                 Example: -L 2 shows only 2 levels deep
 
   -h, --help     Show this help message and exit.
 
