@@ -1,1 +1,53 @@
+# Ignore build artifacts
+llm_ctx
+llm_ctx.dSYM/
+*.o
+*.out
+*.so
+test_*
+!test_*.c
+!test_*.h
+tests/test_cli
+tests/test_gitignore
+tests/test_stdin
+
+# OS-specific artifacts
+.DS_Store
+Thumbs.db
+
+# Editor directories
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*~
+
+# Aider specific files (if used)
 .aider*
+*.plan # Often used by aider or similar tools
+plan.md
+debrief*.md
+
+# Test backup files
+__USER_llm_ctx.conf.backup__
+
+# Configuration file
+# Ignore the actual config file, but not the example
+.llm_ctx.conf
+!.llm_ctx.conf.example
+
+tree-sitter-*
+# packs/
+CLAUDE.md
+
+# Internal documentation and notes that shouldn't be in version control
+docs/
+cami.md
+spec.md
+
+# Tokenizer build artifacts
+tokenizer/*.dylib
+tokenizer/*.so
+tokenizer/*.dll
+tokenizer/tiktoken-c/target/
