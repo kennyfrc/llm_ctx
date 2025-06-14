@@ -84,7 +84,7 @@
 ### Compatibility
 
 - macOS (M1/Apple Silicon) - Fully tested
-- Linux - Should work, not fully tested
+- Linux (Ubuntu) - Fully tested
 - Windows (WSL) - Should work under WSL, not fully tested
 
 ### Getting Started (Build & Use)
@@ -99,7 +99,9 @@ Follow these steps to get the code, build it, and make it easily accessible:
     ```
 
 2.  **Build the Executable:**
-    Compile the source code using `make all`. This builds both `llm_ctx` and the tokenizer for automatic token counting.
+    Compile the source code using `make all`. On Linux the tokenizer is optional; if the
+    `tokenizer/tiktoken-c` submodule is missing, the build skips it automatically and
+    token counting features are disabled.
     ```bash
     make all
     ```
@@ -610,7 +612,7 @@ llm_ctx -f main.c
 
 #### Building the Tokenizer
 
-The tokenizer is built automatically with `make all`:
+The tokenizer is built automatically with `make all` when the submodule is present. If the submodule is absent, `make all` skips this step:
 
 ```bash
 # Build both llm_ctx and the tokenizer
