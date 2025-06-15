@@ -253,6 +253,48 @@ static char *slurp_file(const char *path) {
     errno = slurp_errno;
     return txt;
 }
+
+/* Helper function to expand tilde (~) in file paths */
+static char *expand_tilde_path(const char *path) {
+    if (!path || path[0] != '~') {
+        /* No tilde to expand, return a copy of the original path */
+        return arena_strdup_safe(&g_arena, path);
+    }
+
+    glob_t glob_result;
+    int glob_flags = GLOB_TILDE;
+    
+    /* Use glob to expand the tilde */
+    int glob_status = glob(path, glob_flags, NULL, &glob_result);
+    if (glob_status != 0) {
+        /* glob failed - return NULL and preserve errno */
+        if (glob_status == GLOB_NOMATCH) {
+            errno = ENOENT; /* File not found */
+        } else {
+            errno = EINVAL; /* Invalid path */
+        }
+        return NULL;
+    }
+    
+    /* Check that we got exactly one match */
+    if (glob_result.gl_pathc != 1) {
+        globfree(&glob_result);
+        errno = EINVAL; /* Ambiguous path */
+        return NULL;
+    }
+    
+    /* Copy the expanded path */
+    char *expanded_path = arena_strdup_safe(&g_arena, glob_result.gl_pathv[0]);
+    globfree(&glob_result);
+    
+    if (!expanded_path) {
+        errno = ENOMEM;
+        return NULL;
+    }
+    
+    return expanded_path;
+}
+
 bool process_stdin_content(void);
 void output_file_callback(const char *name, const char *type, const char *content);
 bool is_binary(FILE *file);
@@ -1588,9 +1630,14 @@ static void handle_system_arg(const char *arg) {
             s_flag_used = true; /* Track that CLI flag was used */
             file_mode = 1; /* Set file mode globally */
         } else { /* Read from file */
-            system_instructions = slurp_file(arg + 1); /* skip '@' */
+            const char *filename = arg + 1; /* skip '@' */
+            char *expanded_path = expand_tilde_path(filename);
+            if (!expanded_path) {
+                fatal("Cannot expand path '%s': %s", filename, strerror(errno));
+            }
+            system_instructions = slurp_file(expanded_path);
             if (!system_instructions)
-                fatal("Cannot open or read system prompt file '%s': %s", arg + 1, strerror(errno));
+                fatal("Cannot open or read system prompt file '%s': %s", expanded_path, strerror(errno));
             s_flag_used = true; /* Track that CLI flag was used */
         }
     } else {

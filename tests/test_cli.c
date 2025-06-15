@@ -1296,6 +1296,50 @@ TEST(test_cli_s_glued_inline) {
     ASSERT("Output contains glued inline system prompt", string_contains(output, "gluedtext"));
 }
 
+/* Test -s @~/file: Read system instructions from tilde-expanded path */
+TEST(test_cli_s_at_file_tilde_expansion) {
+    char cmd[2048];
+    char sys_msg_file_path[1024];
+    const char *custom_sys_prompt = "System prompt from tilde-expanded path.";
+    
+    /* Get home directory */
+    const char *home = getenv("HOME");
+    ASSERT("HOME environment variable is set", home != NULL);
+    if (!home) return;
+    
+    /* Create file in home directory */
+    snprintf(sys_msg_file_path, sizeof(sys_msg_file_path), "%s/__test_sys_msg_tilde.txt", home);
+    FILE *sys_msg_file = fopen(sys_msg_file_path, "w");
+    ASSERT("System message file created in home", sys_msg_file != NULL);
+    if (!sys_msg_file) return;
+    fprintf(sys_msg_file, "%s", custom_sys_prompt);
+    fclose(sys_msg_file);
+    
+    /* Test with tilde expansion */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -s@~/__test_sys_msg_tilde.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt from tilde-expanded file", string_contains(output, custom_sys_prompt));
+    ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+    
+    /* Clean up */
+    unlink(sys_msg_file_path);
+}
+
+/* Test -s @~/nonexistent: Tilde expansion error handling */
+TEST(test_cli_s_at_file_tilde_expansion_error) {
+    char cmd[2048];
+    
+    /* Test with non-existent tilde path */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -s@~/__test_nonexistent_sys_msg.txt -f __regular.txt 2>&1", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains error message about path expansion", string_contains(output, "Cannot expand path"));
+    ASSERT("Output mentions the tilde path", string_contains(output, "~/__test_nonexistent_sys_msg.txt"));
+}
+
 
 
 
@@ -1377,6 +1421,8 @@ int main(void) {
     RUN_TEST(test_cli_s_inline);
     RUN_TEST(test_cli_s_equals_inline);
     RUN_TEST(test_cli_s_glued_inline);
+    RUN_TEST(test_cli_s_at_file_tilde_expansion);
+    RUN_TEST(test_cli_s_at_file_tilde_expansion_error);
 
     /* Tests for config file system_prompt (Slice 5) */
 
