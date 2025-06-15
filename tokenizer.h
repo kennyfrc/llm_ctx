@@ -28,6 +28,12 @@ size_t llm_count_tokens(const char *text, const char *model);
 */
 int llm_tokenizer_available(void);
 
+/* Set the directory where the executable is located.
+   This helps the tokenizer find the library when the binary is symlinked.
+   Should be called early in program initialization.
+*/
+void llm_set_executable_dir(const char *dir);
+
 /* Generate token count diagnostics showing per-file breakdown.
    Parses the content to find file sections and counts tokens for each.
    Outputs a formatted table to the provided FILE stream.

@@ -24,6 +24,7 @@ static destroy_corebpe_fn g_destroy_corebpe = NULL;
 static version_fn g_version_fn = NULL;
 static int g_load_attempted = 0;
 static int g_load_failed = 0;
+static char *g_executable_dir = NULL;
 
 /* Platform-specific library name */
 #ifdef __APPLE__
@@ -53,12 +54,24 @@ static void load_tokenizer_lib(void) {
             fprintf(stderr, "debug: dlopen(%s) failed: %s\n", TOKENIZER_LIB_NAME, err);
         }
         
-        /* Try with absolute path */
-        char abs_path[1024];
-        if (getcwd(abs_path, sizeof(abs_path))) {
-            strcat(abs_path, "/");
-            strcat(abs_path, TOKENIZER_LIB_NAME);
-            g_tokenizer_lib = dlopen(abs_path, RTLD_LAZY);
+        /* Try with executable directory if set */
+        if (!g_tokenizer_lib && g_executable_dir) {
+            char exe_path[1024];
+            snprintf(exe_path, sizeof(exe_path), "%s/%s", g_executable_dir, TOKENIZER_LIB_NAME);
+            g_tokenizer_lib = dlopen(exe_path, RTLD_LAZY);
+            if (!g_tokenizer_lib && getenv("LLMCTX_DEBUG")) {
+                fprintf(stderr, "debug: dlopen(%s) failed: %s\n", exe_path, dlerror());
+            }
+        }
+        
+        /* Try with absolute path from current directory */
+        if (!g_tokenizer_lib) {
+            char abs_path[1024];
+            if (getcwd(abs_path, sizeof(abs_path))) {
+                strcat(abs_path, "/");
+                strcat(abs_path, TOKENIZER_LIB_NAME);
+                g_tokenizer_lib = dlopen(abs_path, RTLD_LAZY);
+            }
         }
         
         if (!g_tokenizer_lib) {
@@ -141,4 +154,13 @@ size_t llm_count_tokens(const char *text, const char *model) {
 int llm_tokenizer_available(void) {
     load_tokenizer_lib();
     return g_tokenizer_lib != NULL && g_get_bpe_from_model != NULL;
+}
+
+void llm_set_executable_dir(const char *dir) {
+    if (dir && *dir) {
+        if (g_executable_dir) {
+            free(g_executable_dir);
+        }
+        g_executable_dir = strdup(dir);
+    }
 }

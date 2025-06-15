@@ -1674,6 +1674,12 @@ int main(int argc, char *argv[]) {
 
     g_arena = arena_create(MiB(256));
     if (!g_arena.base) fatal("Failed to allocate arena");
+    
+    /* Set executable directory for tokenizer library loading */
+    char *exe_dir = get_executable_dir();
+    if (exe_dir) {
+        llm_set_executable_dir(exe_dir);
+    }
 
     /* Create temporary file for output assembly */
     strcpy(temp_file_path, TEMP_FILE_TEMPLATE);
