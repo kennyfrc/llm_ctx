@@ -1671,9 +1671,14 @@ static void handle_editor_arg(const char *arg) {
             e_flag_used = true;
             file_mode = 1; /* Set file mode globally */
         } else { /* Read from file */
-            custom_response_guide = slurp_file(arg + 1); /* skip '@' */
+            const char *filename = arg + 1; /* skip '@' */
+            char *expanded_path = expand_tilde_path(filename);
+            if (!expanded_path) {
+                fatal("Cannot expand path '%s': %s", filename, strerror(errno));
+            }
+            custom_response_guide = slurp_file(expanded_path);
             if (!custom_response_guide)
-                fatal("Cannot open or read response guide file '%s': %s", arg + 1, strerror(errno));
+                fatal("Cannot open or read response guide file '%s': %s", expanded_path, strerror(errno));
             want_editor_comments = true;
             e_flag_used = true;
         }

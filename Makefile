@@ -17,6 +17,7 @@ BINDIR = $(PREFIX)/bin
 
 # Determine OS for symlink command
 UNAME := $(shell uname)
+ARCH := $(shell uname -m)
 
 # Tokenizer configuration
 TOKENIZER_DIR = tokenizer
@@ -137,9 +138,9 @@ tokenizer:
 		echo "Initializing tiktoken-c submodule..."; \
 		git submodule update --init --recursive || { echo "Failed to initialize submodule"; exit 1; }; \
 	fi
-	@echo "Building tiktoken-c (universal binary for macOS)..."
+	@echo "Building tiktoken-c for $(ARCH) architecture..."
 	@cd $(TOKENIZER_DIR)/tiktoken-c && \
-		cargo build --release || { echo "Failed to build tiktoken-c"; exit 1; }
+		PATH="$$HOME/.cargo/bin:$$PATH" cargo build --release || { echo "Failed to build tiktoken-c"; exit 1; }
 	@echo "Copying library files..."
 	@cp $(TOKENIZER_DIR)/tiktoken-c/target/release/$(TOKENIZER_LIB_NAME).$(DYNLIB_EXT) $(TOKENIZER_LIB) || { echo "Failed to copy library"; exit 1; }
 	@if [ -f "$(TOKENIZER_DIR)/tiktoken-c/tiktoken.h" ]; then \

@@ -1340,6 +1340,50 @@ TEST(test_cli_s_at_file_tilde_expansion_error) {
     ASSERT("Output mentions the tilde path", string_contains(output, "~/__test_nonexistent_sys_msg.txt"));
 }
 
+/* Test -e @~/file: Read response guide from tilde-expanded path */
+TEST(test_cli_e_at_file_tilde_expansion) {
+    char cmd[2048];
+    char guide_file_path[1024];
+    const char *custom_guide = "Custom response guide from tilde-expanded path.";
+    
+    /* Get home directory */
+    const char *home = getenv("HOME");
+    ASSERT("HOME environment variable is set", home != NULL);
+    if (!home) return;
+    
+    /* Create file in home directory */
+    snprintf(guide_file_path, sizeof(guide_file_path), "%s/__test_guide_tilde.txt", home);
+    FILE *guide_file = fopen(guide_file_path, "w");
+    ASSERT("Response guide file created in home", guide_file != NULL);
+    if (!guide_file) return;
+    fprintf(guide_file, "%s", custom_guide);
+    fclose(guide_file);
+    
+    /* Test with tilde expansion */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -e@~/__test_guide_tilde.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains <response_guide>", string_contains(output, "<response_guide>"));
+    ASSERT("Output contains custom response guide from tilde-expanded file", string_contains(output, custom_guide));
+    ASSERT("Output contains closing </response_guide>", string_contains(output, "</response_guide>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+    
+    /* Clean up */
+    unlink(guide_file_path);
+}
+
+/* Test -e @~/nonexistent: Tilde expansion error handling */
+TEST(test_cli_e_at_file_tilde_expansion_error) {
+    char cmd[2048];
+    
+    /* Test with non-existent tilde path */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -e@~/__test_nonexistent_guide.txt -f __regular.txt 2>&1", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains error message about path expansion", string_contains(output, "Cannot expand path"));
+    ASSERT("Output mentions the tilde path", string_contains(output, "~/__test_nonexistent_guide.txt"));
+}
+
 
 
 
@@ -1423,6 +1467,8 @@ int main(void) {
     RUN_TEST(test_cli_s_glued_inline);
     RUN_TEST(test_cli_s_at_file_tilde_expansion);
     RUN_TEST(test_cli_s_at_file_tilde_expansion_error);
+    RUN_TEST(test_cli_e_at_file_tilde_expansion);
+    RUN_TEST(test_cli_e_at_file_tilde_expansion_error);
 
     /* Tests for config file system_prompt (Slice 5) */
 
