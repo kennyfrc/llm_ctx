@@ -51,3 +51,6 @@ tokenizer/*.dylib
 tokenizer/*.so
 tokenizer/*.dll
 tokenizer/tiktoken-c/target/
+
+# Dynamic library files
+*.dylib
