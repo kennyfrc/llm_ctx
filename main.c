@@ -904,7 +904,7 @@ void show_help(void) {
     printf("  -s             Enable system prompt from config file\n"); // Keep help concise
     printf("  -s@FILE        Read system prompt from FILE (no space after -s)\n");
     printf("  -s@-           Read system prompt from standard input (no space after -s)\n");
-    printf("  -e             Use default PR-style code review response guide\n");
+    printf("  -e             Enable response guide from config file or default PR-style\n");
     printf("  -eTEXT         Use TEXT as custom response guide (no space after -e)\n");
     printf("  -e@FILE        Read custom response guide from FILE (no space after -e)\n");
     printf("  -e@-           Read custom response guide from stdin (no space after -e)\n");
@@ -1654,11 +1654,11 @@ static void handle_system_arg(const char *arg) {
 
 /* Helper to handle argument for -e/--editor-comments */
 static void handle_editor_arg(const char *arg) {
-    /* Case 1: -e without argument -> Use default PR-style review behavior */
+    /* Case 1: -e without argument -> Mark flag used, guide loaded from config later */
     if (arg == NULL) {
         want_editor_comments = true;
         e_flag_used = true;
-        custom_response_guide = NULL; /* Use default behavior */
+        /* Don't set custom_response_guide here - let config loading handle it */
         return;
     }
 
@@ -1948,8 +1948,8 @@ int main(int argc, char *argv[]) {
             }
         }
         
-        /* response_guide_file - only if -e was not used */
-        if (!e_flag_used && loaded_settings.response_guide_file) {
+        /* response_guide_file - only if -e flag was used (same logic as -s) */
+        if (e_flag_used && loaded_settings.response_guide_file) {
             char *expanded_path = config_expand_path(loaded_settings.response_guide_file, &g_arena);
             if (expanded_path) {
                 custom_response_guide = slurp_file(expanded_path);
