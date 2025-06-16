@@ -26,6 +26,7 @@
 #include <stdarg.h>   /* For va_list, va_start, va_end */
 #include <limits.h>   /* For PATH_MAX */
 #include <getopt.h>   /* For getopt_long */
+#include <math.h>     /* For log() in TF-IDF calculation */
 #ifdef __APPLE__
 #  include <mach-o/dyld.h> /* _NSGetExecutablePath */
 #endif
@@ -164,6 +165,14 @@ typedef struct {
     bool is_dir;
 } FileInfo;
 
+/* FileRank structure for relevance scoring */
+typedef struct {
+    const char *path;   /* shares memory with processed_files[i] */
+    double      score;  /* relevance score */
+    size_t      bytes;  /* cached to avoid stat() twice */
+    size_t      tokens; /* set later by tokenizer */
+} FileRank;
+
 /* Function declarations with proper prototypes */
 void show_help(void);
 bool collect_file(const char *filepath);
@@ -178,6 +187,7 @@ int compare_file_paths(const void *a, const void *b);
 char *find_common_prefix(void);
 void print_tree_node(const char *path, int level, bool is_last, const char *prefix);
 void build_tree_recursive(char **paths, int count, int level, char *prefix, const char *path_prefix);
+void rank_files(const char *query, FileRank *ranks, int num_files);
 
 /* Read entire FILE* into a NUL-terminated buffer.
  * Uses arena allocation. Returns NULL on OOM or read error. */
@@ -328,6 +338,7 @@ static char *system_instructions = NULL;   /* Allocated from arena */
 static bool want_editor_comments = false;   /* -e flag */
 static char *custom_response_guide = NULL; /* Custom response guide from -e argument */
 static bool raw_mode = false; /* -r flag */
+static bool g_filerank_debug = false; /* --filerank-debug flag */
 static bool tree_only = false; /* -T flag - filtered tree */
 static bool global_tree_only = false; /* -t flag - global tree */
 static bool tree_only_output = false; /* -O flag - tree only without file content */
@@ -815,8 +826,8 @@ void generate_file_tree(void) {
     
     fprintf(temp_file, "</file_tree>\n\n");
     
-    /* Remove temporary tree file */
-    unlink(tree_file_path);
+    /* Don't remove tree file yet - FileRank might need it later */
+    /* Tree file will be cleaned up in cleanup() function */
     
     /* Clear relative path pointers */
     for (int i = 0; i < file_tree_count; i++) {
@@ -1562,6 +1573,7 @@ static const struct option long_options[] = {
     {"token-budget",    required_argument, 0, 400}, /* Token budget limit */
     {"token-model",     required_argument, 0, 401}, /* Model for token counting */
     {"token-diagnostics", optional_argument, 0, 402}, /* Token count diagnostics */
+    {"filerank-debug",  no_argument,       0, 403}, /* FileRank debug output */
     {0, 0, 0, 0} /* Terminator */
 };
 static bool s_flag_used = false; /* Track if -s was used */
@@ -1741,6 +1753,310 @@ static void handle_output_arg(const char *arg) {
         fatal("Error: -o requires @ prefix for files (e.g., -o@output.txt). Use -o alone for stdout.");
     }
 }
+
+/**
+ * Check if character is a word boundary
+ */
+static bool is_word_boundary(char c) {
+    return !isalnum(c) && c != '_';
+}
+
+/**
+ * Case-insensitive word boundary search
+ * Returns number of times needle appears as a whole word in haystack
+ */
+static int count_word_hits(const char *haystack, const char *needle) {
+    int count = 0;
+    size_t needle_len = strlen(needle);
+    const char *pos = haystack;
+    
+    while ((pos = strcasestr(pos, needle)) != NULL) {
+        /* Check word boundaries */
+        bool start_ok = (pos == haystack || is_word_boundary(*(pos - 1)));
+        bool end_ok = is_word_boundary(*(pos + needle_len));
+        
+        if (start_ok && end_ok) {
+            count++;
+        }
+        pos++;
+    }
+    
+    return count;
+}
+
+/**
+ * Tokenize query into lowercase words
+ * Returns array of tokens allocated from arena
+ */
+static char **tokenize_query(const char *query, int *num_tokens) {
+    if (!query || !num_tokens) {
+        *num_tokens = 0;
+        return NULL;
+    }
+    
+    /* Create a working copy */
+    size_t query_len = strlen(query);
+    char *work = arena_push_array_safe(&g_arena, char, query_len + 1);
+    if (!work) {
+        *num_tokens = 0;
+        return NULL;
+    }
+    strcpy(work, query);
+    
+    /* Convert to lowercase */
+    for (size_t i = 0; i < query_len; i++) {
+        work[i] = tolower((unsigned char)work[i]);
+    }
+    
+    /* Count tokens first */
+    int count = 0;
+    char *temp = arena_push_array_safe(&g_arena, char, query_len + 1);
+    if (!temp) {
+        *num_tokens = 0;
+        return NULL;
+    }
+    strcpy(temp, work);
+    
+    char *token = strtok(temp, " \t\n\r.,;:!?()[]{}\"'`~@#$%^&*+=|\\/<>");
+    while (token) {
+        count++;
+        token = strtok(NULL, " \t\n\r.,;:!?()[]{}\"'`~@#$%^&*+=|\\/<>");
+    }
+    
+    if (count == 0) {
+        *num_tokens = 0;
+        return NULL;
+    }
+    
+    /* Allocate token array */
+    char **tokens = arena_push_array_safe(&g_arena, char*, count);
+    if (!tokens) {
+        *num_tokens = 0;
+        return NULL;
+    }
+    
+    /* Tokenize again to fill array */
+    int idx = 0;
+    token = strtok(work, " \t\n\r.,;:!?()[]{}\"'`~@#$%^&*+=|\\/<>");
+    while (token && idx < count) {
+        tokens[idx++] = token;
+        token = strtok(NULL, " \t\n\r.,;:!?()[]{}\"'`~@#$%^&*+=|\\/<>");
+    }
+    
+    *num_tokens = idx;
+    return tokens;
+}
+
+/**
+ * Compare FileRank entries by score (descending)
+ */
+static int compare_filerank(const void *a, const void *b) {
+    const FileRank *ra = (const FileRank *)a;
+    const FileRank *rb = (const FileRank *)b;
+    
+    /* Sort by score descending */
+    if (ra->score > rb->score) return -1;
+    if (ra->score < rb->score) return 1;
+    
+    /* If scores are equal, maintain original order (stable sort) */
+    return 0;
+}
+
+/**
+ * Implementation of rank_files for Slice 3
+ * Uses TF-IDF scoring with path/content hits and size penalty
+ * TF-IDF helps prioritize files with unique/rare terms
+ */
+void rank_files(const char *query, FileRank *ranks, int num_files) {
+    /* Parse query into tokens */
+    int num_tokens;
+    char **tokens = tokenize_query(query, &num_tokens);
+    
+    if (!tokens || num_tokens == 0) {
+        /* No query tokens - all scores remain 0 */
+        for (int i = 0; i < num_files; i++) {
+            ranks[i].score = 0.0;
+        }
+        return;
+    }
+    
+    /* Slice 3: First pass - calculate document frequency for each term */
+    int *doc_freq = calloc(num_tokens, sizeof(int));
+    if (!doc_freq) {
+        /* Fallback to basic scoring if allocation fails */
+        goto basic_scoring;
+    }
+    
+    for (int i = 0; i < num_files; i++) {
+        /* Track which terms appear in this document */
+        int *term_found = calloc(num_tokens, sizeof(int));
+        if (!term_found) {
+            free(doc_freq);
+            goto basic_scoring;
+        }
+        
+        /* Check path for terms */
+        for (int j = 0; j < num_tokens; j++) {
+            if (count_word_hits(ranks[i].path, tokens[j]) > 0) {
+                term_found[j] = 1;
+            }
+        }
+        
+        /* Check content for terms */
+        FILE *f = fopen(ranks[i].path, "r");
+        if (f && !is_binary(f)) {
+            char buffer[4096];
+            rewind(f);
+            while (fgets(buffer, sizeof(buffer), f)) {
+                for (int j = 0; j < num_tokens; j++) {
+                    if (!term_found[j] && count_word_hits(buffer, tokens[j]) > 0) {
+                        term_found[j] = 1;
+                    }
+                }
+            }
+            fclose(f);
+        } else if (f) {
+            fclose(f);
+        }
+        
+        /* Update document frequency counts */
+        for (int j = 0; j < num_tokens; j++) {
+            if (term_found[j]) {
+                doc_freq[j]++;
+            }
+        }
+        
+        free(term_found);
+    }
+    
+    /* Second pass - calculate TF-IDF scores */
+    for (int i = 0; i < num_files; i++) {
+        double path_hits = 0;
+        double content_hits = 0;
+        double tfidf_score = 0;
+        
+        /* Count hits in path */
+        for (int j = 0; j < num_tokens; j++) {
+            path_hits += count_word_hits(ranks[i].path, tokens[j]);
+        }
+        
+        /* Get file size for penalty calculation */
+        struct stat st;
+        if (stat(ranks[i].path, &st) == 0) {
+            ranks[i].bytes = st.st_size;
+        } else {
+            ranks[i].bytes = 0;
+        }
+        
+        /* Read file content to count hits and calculate TF-IDF */
+        FILE *f = fopen(ranks[i].path, "r");
+        if (f) {
+            /* Check if binary */
+            if (!is_binary(f)) {
+                /* Count total words for TF calculation */
+                int total_words = 0;
+                int *term_freq = calloc(num_tokens, sizeof(int));
+                
+                if (term_freq) {
+                    /* Read content and count term frequencies */
+                    char buffer[4096];
+                    char buffer_copy[4096];
+                    rewind(f);
+                    while (fgets(buffer, sizeof(buffer), f)) {
+                        /* Make a copy for word counting since strtok modifies the buffer */
+                        strcpy(buffer_copy, buffer);
+                        
+                        /* Simple word count - count space-separated tokens */
+                        char *word = strtok(buffer_copy, " \t\n\r");
+                        while (word) {
+                            total_words++;
+                            word = strtok(NULL, " \t\n\r");
+                        }
+                        
+                        /* Count term hits on original buffer */
+                        for (int j = 0; j < num_tokens; j++) {
+                            int hits = count_word_hits(buffer, tokens[j]);
+                            term_freq[j] += hits;
+                            content_hits += hits;
+                        }
+                    }
+                    
+                    /* Calculate TF-IDF score */
+                    if (total_words > 0) {
+                        for (int j = 0; j < num_tokens; j++) {
+                            if (term_freq[j] > 0 && doc_freq[j] > 0) {
+                                double tf = (double)term_freq[j] / total_words;
+                                double idf = log((double)num_files / doc_freq[j]);
+                                tfidf_score += tf * idf;
+                            }
+                        }
+                    }
+                    
+                    free(term_freq);
+                } else {
+                    /* Fallback to simple counting */
+                    char buffer[4096];
+                    rewind(f);
+                    while (fgets(buffer, sizeof(buffer), f)) {
+                        for (int j = 0; j < num_tokens; j++) {
+                            content_hits += count_word_hits(buffer, tokens[j]);
+                        }
+                    }
+                }
+            }
+            fclose(f);
+        }
+        
+        /* Calculate score: TF-IDF weight + content_hits + 2*path_hits - λ*(bytes/1MiB) */
+        double size_penalty = 0.05 * (ranks[i].bytes / (1024.0 * 1024.0));
+        ranks[i].score = tfidf_score * 10.0 + content_hits + 2.0 * path_hits - size_penalty;
+    }
+    
+    free(doc_freq);
+    return;
+    
+basic_scoring:
+    /* Fallback: basic scoring without TF-IDF */
+    for (int i = 0; i < num_files; i++) {
+        double path_hits = 0;
+        double content_hits = 0;
+        
+        /* Count hits in path */
+        for (int j = 0; j < num_tokens; j++) {
+            path_hits += count_word_hits(ranks[i].path, tokens[j]);
+        }
+        
+        /* Get file size for penalty calculation */
+        struct stat st;
+        if (stat(ranks[i].path, &st) == 0) {
+            ranks[i].bytes = st.st_size;
+        } else {
+            ranks[i].bytes = 0;
+        }
+        
+        /* Read file content to count hits */
+        FILE *f = fopen(ranks[i].path, "r");
+        if (f) {
+            /* Check if binary */
+            if (!is_binary(f)) {
+                /* Read content and count hits */
+                char buffer[4096];
+                rewind(f);
+                while (fgets(buffer, sizeof(buffer), f)) {
+                    for (int j = 0; j < num_tokens; j++) {
+                        content_hits += count_word_hits(buffer, tokens[j]);
+                    }
+                }
+            }
+            fclose(f);
+        }
+        
+        /* Calculate score: content_hits + 2*path_hits - λ*(bytes/1MiB) */
+        double size_penalty = 0.05 * (ranks[i].bytes / (1024.0 * 1024.0));
+        ranks[i].score = content_hits + 2.0 * path_hits - size_penalty;
+    }
+}
+
 /**
  * Main function - program entry point
  */
@@ -1914,6 +2230,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 402: /* --token-diagnostics - deprecated, diagnostics now shown by default */
                 /* For backward compatibility, just ignore this flag */
+                break;
+            case 403: /* --filerank-debug */
+                g_filerank_debug = true;
                 break;
             case '?': /* Unknown option OR missing required argument */
                 /* optopt contains the failing option character */
@@ -2159,10 +2478,49 @@ int main(int argc, char *argv[]) {
         generate_file_tree();
     }
     
+    /* FileRank array - declared at broader scope for budget handling */
+    FileRank *ranks = NULL;
+    
     /* Process codemap and file content unless tree_only_output is set */
     if (!tree_only_output) {
     
-    /* Output content of each processed file */
+    /* Apply FileRank if we have files and a query */
+    if (num_processed_files > 0 && user_instructions) {
+        /* Allocate FileRank array */
+        ranks = arena_push_array_safe(&g_arena, FileRank, num_processed_files);
+        if (!ranks) {
+            fatal("Out of memory allocating FileRank array");
+        }
+        
+        /* Initialize FileRank structures */
+        for (int i = 0; i < num_processed_files; i++) {
+            ranks[i].path = processed_files[i];
+            ranks[i].score = 0.0;
+            ranks[i].bytes = 0;
+            ranks[i].tokens = 0;
+        }
+        
+        /* Call ranking function */
+        rank_files(user_instructions, ranks, num_processed_files);
+        
+        /* Sort files by score (for budget-based selection) */
+        qsort(ranks, num_processed_files, sizeof(FileRank), compare_filerank);
+        
+        /* Debug output if requested - show sorted order */
+        if (g_filerank_debug) {
+            fprintf(stderr, "FileRank (query: \"%s\")\n", user_instructions);
+            for (int i = 0; i < num_processed_files; i++) {
+                fprintf(stderr, "  %.2f  %s\n", ranks[i].score, ranks[i].path);
+            }
+        }
+        
+        /* Update processed_files array to match sorted order */
+        for (int i = 0; i < num_processed_files; i++) {
+            processed_files[i] = (char *)ranks[i].path;
+        }
+    }
+    
+    /* First pass: try outputting all files */
     for (int i = 0; i < num_processed_files; i++) {
         output_file_content(processed_files[i], temp_file);
     }
@@ -2192,11 +2550,120 @@ int main(int argc, char *argv[]) {
         
         /* Check budget */
         if (total_tokens > g_token_budget) {
-            /* Budget exceeded */
-            fprintf(stderr, "error: context uses %zu tokens > budget %zu – output rejected\n", 
-                    total_tokens, g_token_budget);
-            unlink(temp_file_path);
-            return 3; /* Exit with status 3 for budget exceeded */
+            /* Budget exceeded - try FileRank-based selection if we have ranked files */
+            if (ranks && user_instructions) {
+                fprintf(stderr, "\nBudget exceeded (%zu > %zu) - using FileRank to select most relevant files\n", 
+                        total_tokens, g_token_budget);
+                fprintf(stderr, "Query: \"%s\"\n", user_instructions);
+                
+                /* Recreate temp file with only files that fit in budget */
+                fclose(fopen(temp_file_path, "w")); /* Truncate file */
+                temp_file = fopen(temp_file_path, "w");
+                if (!temp_file) {
+                    fatal("Failed to reopen temp file for FileRank selection");
+                }
+                
+                /* Write headers and user instructions again */
+                if (user_instructions) {
+                    fprintf(temp_file, "<user_instructions>\n%s\n</user_instructions>\n\n", user_instructions);
+                }
+                if (system_instructions) {
+                    fprintf(temp_file, "%s\n\n", system_instructions);
+                }
+                if (custom_response_guide) {
+                    fprintf(temp_file, "<response_guide>\n%s\n</response_guide>\n\n", custom_response_guide);
+                }
+                
+                /* Include file tree if it was generated */
+                if ((tree_only || global_tree_only) && strlen(tree_file_path) > 0) {
+                    FILE *tree_f = fopen(tree_file_path, "r");
+                    if (tree_f) {
+                        fprintf(temp_file, "<file_tree>\n");
+                        char buffer[4096];
+                        size_t bytes_read;
+                        while ((bytes_read = fread(buffer, 1, sizeof(buffer), tree_f)) > 0) {
+                            fwrite(buffer, 1, bytes_read, temp_file);
+                        }
+                        fprintf(temp_file, "</file_tree>\n\n");
+                        fclose(tree_f);
+                    }
+                }
+                
+                /* Accumulate files until we would exceed budget */
+                size_t running_tokens = 0;
+                size_t base_tokens = 0;
+                int files_included = 0;
+                
+                /* Count tokens for the base content (instructions, tree, etc) */
+                fflush(temp_file);
+                char *base_content = slurp_file(temp_file_path);
+                if (base_content) {
+                    base_tokens = llm_count_tokens(base_content, g_token_model);
+                    if (base_tokens == SIZE_MAX) base_tokens = 0;
+                    running_tokens = base_tokens;
+                }
+                
+                /* Open file context */
+                fprintf(temp_file, "<file_context>\n\n");
+                
+                /* Add files in ranked order until budget is exceeded */
+                for (int i = 0; i < num_processed_files; i++) {
+                    /* Create a temporary buffer to count tokens for this file */
+                    size_t mark = arena_get_mark(&g_arena);
+                    char *file_content = arena_push_array_safe(&g_arena, char, 1024*1024); /* 1MB buffer */
+                    if (!file_content) continue;
+                    
+                    /* Format file content to buffer */
+                    FILE *mem_file = fmemopen(file_content, 1024*1024, "w");
+                    if (mem_file) {
+                        output_file_content(processed_files[i], mem_file);
+                        fclose(mem_file);
+                        
+                        /* Count tokens for this file */
+                        size_t file_tokens = llm_count_tokens(file_content, g_token_model);
+                        if (file_tokens != SIZE_MAX) {
+                            /* Check if adding this file would exceed budget */
+                            if (running_tokens + file_tokens + 50 <= g_token_budget) { /* 50 token buffer for closing tags */
+                                /* File fits - add it */
+                                fprintf(temp_file, "%s", file_content);
+                                running_tokens += file_tokens;
+                                files_included++;
+                                ranks[i].tokens = file_tokens; /* Store for diagnostics */
+                            } else {
+                                /* Would exceed budget - stop here */
+                                fprintf(stderr, "Skipping remaining %d files - adding '%s' would exceed budget\n", 
+                                        num_processed_files - i, processed_files[i]);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    arena_set_mark(&g_arena, mark); /* Reset arena */
+                }
+                
+                /* Close file context */
+                fprintf(temp_file, "</file_context>\n");
+                fclose(temp_file);
+                
+                /* Re-read and count final content */
+                final_content = slurp_file(temp_file_path);
+                if (final_content) {
+                    total_tokens = llm_count_tokens(final_content, g_token_model);
+                    fprintf(stderr, "\nFileRank selection complete:\n");
+                    fprintf(stderr, "  - Selected %d most relevant files out of %d total\n", 
+                            files_included, num_processed_files);
+                    fprintf(stderr, "  - Token usage: %zu / %zu (%zu%% of budget)\n", 
+                            total_tokens, g_token_budget, (total_tokens * 100) / g_token_budget);
+                }
+            } else {
+                /* No FileRank available - provide helpful error message */
+                fprintf(stderr, "error: context uses %zu tokens > budget %zu – output rejected\n", 
+                        total_tokens, g_token_budget);
+                fprintf(stderr, "\nHint: Use -c \"query terms\" to enable FileRank, which will select the most relevant files\n");
+                fprintf(stderr, "      that fit within your token budget based on your search query.\n");
+                unlink(temp_file_path);
+                return 3; /* Exit with status 3 for budget exceeded */
+            }
         }
         
         /* Generate diagnostics if requested */

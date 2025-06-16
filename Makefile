@@ -11,7 +11,7 @@ TARGET = llm_ctx
 TEST_JS_PARSER = test_js_parser
 SRC = main.c gitignore.c arena.c tokenizer.c tokenizer_diagnostics.c config.c toml.c debug.c
 TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c
-TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin tests/test_tree_flags tests/test_tokenizer tests/test_tokenizer_cli tests/test_arena tests/test_config
+TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin tests/test_tree_flags tests/test_tokenizer tests/test_tokenizer_cli tests/test_arena tests/test_config tests/test_filerank
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 
@@ -36,7 +36,7 @@ all: $(TARGET) tokenizer
 OBJS = main.o gitignore.o arena.o tokenizer.o tokenizer_diagnostics.o config.o toml.o debug.o
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ -ldl
+	$(CC) $(CFLAGS) -o $@ $^ -ldl -lm
 
 main.o: main.c arena.h gitignore.h
 	$(CC) $(CFLAGS) -c $<
@@ -65,7 +65,7 @@ debug.o: debug.c debug.h
 # New target for release build
 release: $(OBJS)
 	@echo "Building release version ($(TARGET))..."
-	$(CC) $(RELEASE_CFLAGS) -o $(TARGET) $^ -ldl
+	$(CC) $(RELEASE_CFLAGS) -o $(TARGET) $^ -ldl -lm
 	@echo "Stripping debug symbols from $(TARGET)..."
 	strip $(TARGET)
 	@echo "Release build complete: $(TARGET)"
@@ -102,6 +102,10 @@ tests/test_tokenizer_cli: tests/test_tokenizer_cli.c
 tests/test_config: tests/test_config.c config.o arena.o toml.o debug.o
 	$(CC) $(CFLAGS) -o $@ $^
 
+# Build test_filerank
+tests/test_filerank: tests/test_filerank.c
+	$(CC) $(CFLAGS) -o $@ $^
+
 test: $(TARGET) $(TEST_TARGETS)
 	@echo ""
 	@LLM_CTX_NO_CONFIG=1 ./tests/test_gitignore || true
@@ -119,6 +123,8 @@ test: $(TARGET) $(TEST_TARGETS)
 	@LLM_CTX_NO_CONFIG=1 ./tests/test_tokenizer_cli || true
 	@echo ""
 	@LLM_CTX_NO_CONFIG=1 ./tests/test_config || true
+	@echo ""
+	@LLM_CTX_NO_CONFIG=1 ./tests/test_filerank || true
 	@echo "Test run complete."
 	@# Exit with non-zero status if any test failed (requires more complex tracking or a test runner)
 
