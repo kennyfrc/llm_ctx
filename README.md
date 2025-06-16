@@ -60,6 +60,15 @@
     # Shows only 2 levels deep in the tree, preventing overwhelming output
     ```
 
+9.  **Use named templates** for consistent prompting (requires config setup):
+    ```bash
+    # Use concise template for quick reviews
+    llm_ctx -s:concise -e:detailed -f main.py
+    
+    # Use architect template for design discussions
+    llm_ctx -s:architect -c "How would you refactor this?" -f src/*.js
+    ```
+
 *(To output to stdout instead of clipboard, use the `-o` flag)*
 
 **Quick Links:**
@@ -403,7 +412,10 @@ Options:
   -C             Shortcut for `-c @-`. Reads user instruction text from
                  standard input until EOF (Ctrl+D).
 
-  -s             (Bare flag) No system prompt is added by default.
+  -s             Enable system prompt from config file.
+
+  -s:TEMPLATE    Use named template for system prompt (no space after -s).
+                 Example: -s:concise
 
   -s TEXT        Add system prompt text wrapped in <system_instructions> tags.
                  Appears before user instructions.
@@ -417,9 +429,19 @@ Options:
   -s@-           Read system prompt text from stdin until EOF (no space after -s).
                  Example: echo "Be concise" | llm_ctx -s@- -f file.c
 
-  -e, --editor-comments
-                 Instruct the LLM to append PR-style review comments to its
-                 response. Adds specific instructions to the <response_guide>.
+  -e             Enable response guide from config file or default PR-style.
+
+  -e:TEMPLATE    Use named template for response guide (no space after -e).
+                 Example: -e:detailed
+
+  -e TEXT        Use TEXT as custom response guide (no space after -e).
+                 Example: -e"Provide a detailed analysis"
+
+  -e@FILE        Read custom response guide from FILE (no space after -e).
+                 Example: -e@/path/to/guide.txt
+
+  -e@-           Read custom response guide from stdin (no space after -e).
+                 Example: echo "Be thorough" | llm_ctx -e@- -f file.c
 
   -r             Raw mode. Omits system instructions and the response guide.
 
@@ -506,7 +528,39 @@ copy_to_clipboard = true
 
 # Default token budget
 token_budget = 64000
+
+# Named templates
+[templates.concise]
+system_prompt_file = "~/prompts/concise_system.md"
+response_guide_file = "~/prompts/concise_guide.md"
+
+[templates.detailed]
+system_prompt_file = "~/prompts/detailed_system.md"  
+response_guide_file = "~/prompts/detailed_guide.md"
+
+[templates.architect]
+system_prompt_file = "~/prompts/architect_system.md"
+response_guide_file = "~/prompts/architect_guide.md"
 ```
+
+#### Named Templates
+
+You can define named templates in your configuration file to quickly switch between different system prompts and response guides:
+
+```bash
+# Use the concise template
+llm_ctx -s:concise -f main.c
+
+# Use detailed response guide with architect system prompt
+llm_ctx -s:architect -e:detailed -f src/*.py
+
+# Mix templates with custom instructions
+llm_ctx -s:concise -c "Review for security issues" -f src/*.js
+```
+
+Templates are defined under `[templates.name]` sections in the config file. Each template can specify:
+- `system_prompt_file`: Path to the system prompt file
+- `response_guide_file`: Path to the response guide file
 
 #### How Configuration Works
 
