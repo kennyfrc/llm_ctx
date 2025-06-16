@@ -1198,17 +1198,17 @@ TEST(test_cli_C_flag_prompt_only) {
 // Tests for -s (system instructions)
 // ============================================================================
 
-/* Test bare -s flag (default system prompt) */
+/* Test bare -s flag (enables config system prompt) */
 TEST(test_cli_s_default) {
     char cmd[2048];
 
-    // Run llm_ctx with bare -s flag. This should NOT output any system prompt.
+    // Run llm_ctx with bare -s flag. This should enable loading system prompt from config if available.
+    // Since we're in an isolated test environment without config files, no system prompt should appear.
     snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -s -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
-    // Check that NO system instructions are present because bare -s prevents config loading
-    // and there's no hardcoded default anymore.
-    ASSERT("Output does NOT contain <system_instructions> (bare -s)", !string_contains(output, "<system_instructions>"));
+    // In test environment with no config file, -s should not produce system instructions
+    ASSERT("Output does NOT contain <system_instructions> (no config file in test env)", !string_contains(output, "<system_instructions>"));
     // Ensure user instructions are not present unless -c is also used
     ASSERT("Output does NOT contain <user_instructions>", !string_contains(output, "<user_instructions>"));
     // Ensure file content is still present

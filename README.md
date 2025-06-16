@@ -472,6 +472,92 @@ Options:
 
   --no-gitignore Ignore .gitignore files. Process all files matched by
                  arguments or patterns, even if they are listed in .gitignore.
+
+  --ignore-config
+                 Skip loading the configuration file. Use this to ensure
+                 llm_ctx behaves exactly as if no config file exists.
+```
+
+### Configuration File
+
+`llm_ctx` supports an optional configuration file that allows you to set default values for various options without typing them on every run. This is particularly useful for persistent settings like system prompts, response guides, and token budgets.
+
+#### Configuration File Location
+
+The configuration file is loaded from the first location found in this order:
+
+1. `$LLM_CTX_CONFIG` (if set) - explicit path to config file
+2. `$XDG_CONFIG_HOME/llm_ctx/config.toml` (follows XDG Base Directory specification)
+3. `~/.config/llm_ctx/config.toml` (default location)
+
+#### Configuration File Format
+
+The configuration uses TOML format. All settings are optional:
+
+```toml
+# ~/.config/llm_ctx/config.toml
+
+# File paths for prompts (~ expansion supported)
+system_prompt_file = "~/prompts/sys_default.md"
+response_guide_file = "~/prompts/review_guide.md"
+
+# Copy to clipboard by default (true/false)
+copy_to_clipboard = true
+
+# Default token budget
+token_budget = 64000
+```
+
+#### How Configuration Works
+
+1. **CLI flags always override config values**: Command-line options take precedence over configuration file settings.
+
+2. **File path expansion**: Paths starting with `~` are automatically expanded to the home directory.
+
+3. **Error handling**: If a configured file doesn't exist, a warning is printed to stderr but execution continues:
+   ```
+   warning: config refers to ~/prompts/sys_default.md (not found)
+   ```
+
+4. **Disabling config**: Use `--ignore-config` flag or set `LLM_CTX_NO_CONFIG=1` environment variable to skip configuration loading entirely.
+
+#### Configuration Examples
+
+**Example 1: Default system prompt for all commands**
+```toml
+# ~/.config/llm_ctx/config.toml
+system_prompt_file = "~/prompts/concise_coder.md"
+```
+
+Now all commands will use this system prompt unless overridden:
+```bash
+# Uses configured system prompt
+llm_ctx -f main.c -c "Review this code"
+
+# Override with CLI flag
+llm_ctx -f main.c -c "Review this code" -s "You are a security expert"
+```
+
+**Example 2: Different configs for different projects**
+```bash
+# Project A uses one config
+LLM_CTX_CONFIG=~/projectA/.llm_ctx.toml llm_ctx -f src/*.py
+
+# Project B uses another
+LLM_CTX_CONFIG=~/projectB/.llm_ctx.toml llm_ctx -f src/*.js
+```
+
+**Example 3: Disable clipboard by default**
+```toml
+# ~/.config/llm_ctx/config.toml
+copy_to_clipboard = false  # Always output to stdout unless -o is used
+```
+
+#### Testing with Configuration
+
+The test suite runs with `LLM_CTX_NO_CONFIG=1` to ensure consistent behavior:
+```bash
+make test  # Automatically sets LLM_CTX_NO_CONFIG=1
 ```
 
 ### Clipboard Behavior

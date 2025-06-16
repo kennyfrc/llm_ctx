@@ -33,6 +33,7 @@
 #include "arena.h"
 #include "debug.h"
 #include "tokenizer.h"
+#include "config.h"
 
 static Arena g_arena;
 
@@ -331,7 +332,7 @@ static bool tree_only = false; /* -T flag - filtered tree */
 static bool global_tree_only = false; /* -t flag - global tree */
 static bool tree_only_output = false; /* -O flag - tree only without file content */
 static int tree_max_depth = 4; /* -L flag - default depth of 4 for web dev projects */
-bool debug_mode = false; /* -d flag */
+/* debug_mode defined in debug.c */
 
 /**
  * Open the file context block if it hasn't been opened yet.
@@ -900,10 +901,10 @@ void show_help(void) {
     printf("  -c @-          Read instruction text from standard input until EOF\n");
     printf("  -C             Shortcut for -c @-. Reads user instructions from stdin\n");
     printf("  -c=\"TEXT\"     Equals form also accepted\n");
-    printf("  -s             Use default system prompt (see README for content)\n"); // Keep help concise
+    printf("  -s             Enable system prompt from config file\n"); // Keep help concise
     printf("  -s@FILE        Read system prompt from FILE (no space after -s)\n");
     printf("  -s@-           Read system prompt from standard input (no space after -s)\n");
-    printf("  -e             Use default PR-style code review response guide\n");
+    printf("  -e             Enable response guide from config file or default PR-style\n");
     printf("  -eTEXT         Use TEXT as custom response guide (no space after -e)\n");
     printf("  -e@FILE        Read custom response guide from FILE (no space after -e)\n");
     printf("  -e@-           Read custom response guide from stdin (no space after -e)\n");
@@ -921,7 +922,8 @@ void show_help(void) {
     printf("                 Token diagnostics are shown automatically when available\n");
     printf("  --token-budget=N      Set token budget limit (default: 96000)\n");
     printf("  --token-model=MODEL   Set model for token counting (default: gpt-4o)\n");
-    printf("  --no-gitignore Ignore .gitignore files when collecting files\n\n");
+    printf("  --no-gitignore Ignore .gitignore files when collecting files\n");
+    printf("  --ignore-config       Skip loading configuration file\n\n");
     printf("By default, llm_ctx reads content from stdin.\n");
     printf("Use -f flag to indicate file arguments are provided.\n\n");
     printf("Examples:\n");
@@ -1549,6 +1551,7 @@ static const struct option long_options[] = {
     {"stdout",          optional_argument, 0, 'o'}, /* Alias for --output */
     {"debug",           no_argument,       0, 'd'}, /* Enable debug output */
     {"no-gitignore",    no_argument,       0,  1 }, /* Use a value > 255 for long-only */
+    {"ignore-config",   no_argument,       0,  2 }, /* Ignore config file */
     {"token-budget",    required_argument, 0, 400}, /* Token budget limit */
     {"token-model",     required_argument, 0, 401}, /* Model for token counting */
     {"token-diagnostics", optional_argument, 0, 402}, /* Token count diagnostics */
@@ -1559,6 +1562,7 @@ static bool c_flag_used = false; /* Track if -c/-C/--command was used */
 static bool e_flag_used = false; /* Track if -e was used */
 static bool r_flag_used = false; /* Track if -r was used */
 static bool g_stdin_consumed_for_option = false; /* Track if stdin was used for @- */
+static bool ignore_config_flag = false; /* Track if --ignore-config was used */
 /* No specific CLI flag for copy yet, so no copy_flag_used needed */
 
 /* Helper to handle argument for -c/--command */
@@ -1650,11 +1654,11 @@ static void handle_system_arg(const char *arg) {
 
 /* Helper to handle argument for -e/--editor-comments */
 static void handle_editor_arg(const char *arg) {
-    /* Case 1: -e without argument -> Use default PR-style review behavior */
+    /* Case 1: -e without argument -> Mark flag used, guide loaded from config later */
     if (arg == NULL) {
         want_editor_comments = true;
         e_flag_used = true;
-        custom_response_guide = NULL; /* Use default behavior */
+        /* Don't set custom_response_guide here - let config loading handle it */
         return;
     }
 
@@ -1845,6 +1849,9 @@ int main(int argc, char *argv[]) {
             case 1: /* --no-gitignore (long option without short equiv) */
                 respect_gitignore = false;
                 break;
+            case 2: /* --ignore-config */
+                ignore_config_flag = true;
+                break;
             case 'b': /* -b or --token-budget */
                 if (!optarg) {
                     fprintf(stderr, "Error: -b/--token-budget requires a numeric argument\n");
@@ -1918,7 +1925,56 @@ int main(int argc, char *argv[]) {
     int file_args_start = optind;
 
     /* --- Configuration File Loading --- */
-    /* Configuration file loading has been removed */
+    ConfigSettings loaded_settings = {0};
+    bool config_loaded = false;
+    
+    if (!ignore_config_flag) {
+        config_loaded = config_load(&loaded_settings, &g_arena);
+        if (debug_mode && config_loaded) {
+            config_debug_print(&loaded_settings);
+        }
+    }
+    
+    /* Apply configuration values if no CLI flags override them */
+    if (config_loaded) {
+        /* system_prompt_file - only if -s flag was used */
+        if (s_flag_used && loaded_settings.system_prompt_file) {
+            char *expanded_path = config_expand_path(loaded_settings.system_prompt_file, &g_arena);
+            if (expanded_path) {
+                system_instructions = slurp_file(expanded_path);
+                if (!system_instructions) {
+                    fprintf(stderr, "warning: config refers to %s (not found)\n", expanded_path);
+                }
+            }
+        }
+        
+        /* response_guide_file - only if -e flag was used (same logic as -s) */
+        if (e_flag_used && loaded_settings.response_guide_file) {
+            char *expanded_path = config_expand_path(loaded_settings.response_guide_file, &g_arena);
+            if (expanded_path) {
+                custom_response_guide = slurp_file(expanded_path);
+                if (!custom_response_guide) {
+                    fprintf(stderr, "warning: config refers to %s (not found)\n", expanded_path);
+                } else {
+                    want_editor_comments = true; /* Enable editor comments if guide loaded */
+                }
+            }
+        }
+        
+        /* copy_to_clipboard - will be applied after all flags are processed */
+        
+        /* token_budget - only if not set via CLI */
+        if (loaded_settings.token_budget > 0 && g_token_budget == 96000) {
+            g_token_budget = loaded_settings.token_budget;
+        }
+    }
+    /* --- Finalize copy_to_clipboard setting --- */
+    /* Note: g_effective_copy_to_clipboard is already set to false if -o was used */
+    /* Apply config setting only if -o was not used */
+    if (g_effective_copy_to_clipboard && config_loaded && loaded_settings.copy_to_clipboard != -1) {
+        g_effective_copy_to_clipboard = (loaded_settings.copy_to_clipboard == 1);
+    }
+    
     /* --- Finalize editor_comments setting (apply toggle logic) --- */
     /* Determine initial state (default false) */
     bool initial_want_editor_comments = false;
