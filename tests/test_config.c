@@ -84,13 +84,24 @@ void test_config_load_no_file(void) {
     Arena arena = arena_create(1024 * 1024);
     ConfigSettings settings = {0};
     
-    // Ensure no config file exists
+    // Save current HOME
+    char *orig_home = getenv("HOME");
+    
+    // Ensure no config file exists by clearing all paths
     unsetenv("LLM_CTX_CONFIG");
     unsetenv("XDG_CONFIG_HOME");
+    setenv("HOME", "/nonexistent", 1);  // Set HOME to non-existent path
     
     // Should return false when no config file found
     bool loaded = config_load(&settings, &arena);
     assert(!loaded);
+    
+    // Restore HOME
+    if (orig_home) {
+        setenv("HOME", orig_home, 1);
+    } else {
+        unsetenv("HOME");
+    }
     
     arena_destroy(&arena);
     

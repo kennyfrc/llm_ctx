@@ -901,7 +901,7 @@ void show_help(void) {
     printf("  -c @-          Read instruction text from standard input until EOF\n");
     printf("  -C             Shortcut for -c @-. Reads user instructions from stdin\n");
     printf("  -c=\"TEXT\"     Equals form also accepted\n");
-    printf("  -s             Use default system prompt (see README for content)\n"); // Keep help concise
+    printf("  -s             Enable system prompt from config file\n"); // Keep help concise
     printf("  -s@FILE        Read system prompt from FILE (no space after -s)\n");
     printf("  -s@-           Read system prompt from standard input (no space after -s)\n");
     printf("  -e             Use default PR-style code review response guide\n");
@@ -1937,8 +1937,8 @@ int main(int argc, char *argv[]) {
     
     /* Apply configuration values if no CLI flags override them */
     if (config_loaded) {
-        /* system_prompt_file - only if -s was not used */
-        if (!s_flag_used && loaded_settings.system_prompt_file) {
+        /* system_prompt_file - only if -s flag was used */
+        if (s_flag_used && loaded_settings.system_prompt_file) {
             char *expanded_path = config_expand_path(loaded_settings.system_prompt_file, &g_arena);
             if (expanded_path) {
                 system_instructions = slurp_file(expanded_path);
