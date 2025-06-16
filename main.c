@@ -345,6 +345,64 @@ static bool tree_only_output = false; /* -O flag - tree only without file conten
 static int tree_max_depth = 4; /* -L flag - default depth of 4 for web dev projects */
 /* debug_mode defined in debug.c */
 
+/* FileRank weight configuration */
+static double g_filerank_weight_path = 2.0;      /* Weight for path hits */
+static double g_filerank_weight_content = 1.0;   /* Weight for content hits */
+static double g_filerank_weight_size = 0.05;     /* Weight for size penalty */
+static double g_filerank_weight_tfidf = 10.0;    /* Weight for TF-IDF score */
+
+/**
+ * Parse FileRank weights from string format "path:2,content:1,size:0.05,tfidf:10"
+ * Returns true on success, false on error
+ */
+static bool parse_filerank_weights(const char *weight_str) {
+    if (!weight_str || !*weight_str) return false;
+    
+    /* Make a copy to tokenize */
+    char *str_copy = strdup(weight_str);
+    if (!str_copy) return false;
+    
+    char *token = strtok(str_copy, ",");
+    while (token) {
+        char *colon = strchr(token, ':');
+        if (!colon) {
+            fprintf(stderr, "Error: Invalid weight format '%s' (expected name:value)\n", token);
+            free(str_copy);
+            return false;
+        }
+        
+        *colon = '\0';
+        char *name = token;
+        char *value_str = colon + 1;
+        char *endptr;
+        double value = strtod(value_str, &endptr);
+        
+        if (*endptr != '\0') {
+            fprintf(stderr, "Error: Invalid weight value '%s' for '%s'\n", value_str, name);
+            free(str_copy);
+            return false;
+        }
+        
+        /* Apply the weight */
+        if (strcmp(name, "path") == 0) {
+            g_filerank_weight_path = value;
+        } else if (strcmp(name, "content") == 0) {
+            g_filerank_weight_content = value;
+        } else if (strcmp(name, "size") == 0) {
+            g_filerank_weight_size = value;
+        } else if (strcmp(name, "tfidf") == 0) {
+            g_filerank_weight_tfidf = value;
+        } else {
+            fprintf(stderr, "Warning: Unknown weight name '%s' (valid: path, content, size, tfidf)\n", name);
+        }
+        
+        token = strtok(NULL, ",");
+    }
+    
+    free(str_copy);
+    return true;
+}
+
 /**
  * Open the file context block if it hasn't been opened yet.
  * Add system instructions to the output if provided
@@ -932,6 +990,8 @@ void show_help(void) {
     printf("                 Token diagnostics are shown automatically when available\n");
     printf("  --token-budget=N      Set token budget limit (default: 96000)\n");
     printf("  --token-model=MODEL   Set model for token counting (default: gpt-4o)\n");
+    printf("  --filerank-debug      Show FileRank scoring details\n");
+    printf("  --filerank-weight=W   Set FileRank weights (format: path:2,content:1,size:0.05,tfidf:10)\n");
     printf("  --no-gitignore Ignore .gitignore files when collecting files\n");
     printf("  --ignore-config       Skip loading configuration file\n\n");
     printf("By default, llm_ctx reads content from stdin.\n");
@@ -1570,6 +1630,7 @@ static const struct option long_options[] = {
     {"token-model",     required_argument, 0, 401}, /* Model for token counting */
     {"token-diagnostics", optional_argument, 0, 402}, /* Token count diagnostics */
     {"filerank-debug",  no_argument,       0, 403}, /* FileRank debug output */
+    {"filerank-weight", required_argument, 0, 404}, /* FileRank custom weights */
     {0, 0, 0, 0} /* Terminator */
 };
 static bool s_flag_used = false; /* Track if -s was used */
@@ -2003,9 +2064,9 @@ void rank_files(const char *query, FileRank *ranks, int num_files) {
             fclose(f);
         }
         
-        /* Calculate score: TF-IDF weight + content_hits + 2*path_hits - λ*(bytes/1MiB) */
-        double size_penalty = 0.05 * (ranks[i].bytes / (1024.0 * 1024.0));
-        ranks[i].score = tfidf_score * 10.0 + content_hits + 2.0 * path_hits - size_penalty;
+        /* Calculate score: TF-IDF weight + content_hits + path_weight*path_hits - size_weight*(bytes/1MiB) */
+        double size_penalty = g_filerank_weight_size * (ranks[i].bytes / (1024.0 * 1024.0));
+        ranks[i].score = tfidf_score * g_filerank_weight_tfidf + content_hits * g_filerank_weight_content + g_filerank_weight_path * path_hits - size_penalty;
     }
     
     free(doc_freq);
@@ -2047,9 +2108,9 @@ basic_scoring:
             fclose(f);
         }
         
-        /* Calculate score: content_hits + 2*path_hits - λ*(bytes/1MiB) */
-        double size_penalty = 0.05 * (ranks[i].bytes / (1024.0 * 1024.0));
-        ranks[i].score = content_hits + 2.0 * path_hits - size_penalty;
+        /* Calculate score: content_hits + path_weight*path_hits - size_weight*(bytes/1MiB) */
+        double size_penalty = g_filerank_weight_size * (ranks[i].bytes / (1024.0 * 1024.0));
+        ranks[i].score = content_hits * g_filerank_weight_content + g_filerank_weight_path * path_hits - size_penalty;
     }
 }
 
@@ -2230,6 +2291,16 @@ int main(int argc, char *argv[]) {
             case 403: /* --filerank-debug */
                 g_filerank_debug = true;
                 break;
+            case 404: /* --filerank-weight */
+                if (!optarg) {
+                    fprintf(stderr, "Error: --filerank-weight requires an argument (e.g., path:2,content:1,size:0.05,tfidf:10)\n");
+                    return 1;
+                }
+                if (!parse_filerank_weights(optarg)) {
+                    fprintf(stderr, "Error: Failed to parse filerank weights from '%s'\n", optarg);
+                    return 1;
+                }
+                break;
             case '?': /* Unknown option OR missing required argument */
                 /* optopt contains the failing option character */
                 if (optopt == 'c') {
@@ -2338,6 +2409,20 @@ int main(int argc, char *argv[]) {
         /* token_budget - only if not set via CLI */
         if (loaded_settings.token_budget > 0 && g_token_budget == 96000) {
             g_token_budget = loaded_settings.token_budget;
+        }
+        
+        /* FileRank weights - only if not set via CLI */
+        if (loaded_settings.filerank_weight_path >= 0.0) {
+            g_filerank_weight_path = loaded_settings.filerank_weight_path;
+        }
+        if (loaded_settings.filerank_weight_content >= 0.0) {
+            g_filerank_weight_content = loaded_settings.filerank_weight_content;
+        }
+        if (loaded_settings.filerank_weight_size >= 0.0) {
+            g_filerank_weight_size = loaded_settings.filerank_weight_size;
+        }
+        if (loaded_settings.filerank_weight_tfidf >= 0.0) {
+            g_filerank_weight_tfidf = loaded_settings.filerank_weight_tfidf;
         }
     }
     /* --- Finalize copy_to_clipboard setting --- */

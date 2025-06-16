@@ -862,6 +862,82 @@ llm_ctx -f file.txt --token-model=gpt-3.5-turbo
 - Token counts are exact, not estimates
 - Performance impact is minimal (< 100ms for most contexts)
 
+### FileRank: Intelligent File Selection
+
+When your file selection exceeds the token budget, `llm_ctx` automatically uses FileRank to select the most relevant files based on your query (`-c` instruction). FileRank scores files using:
+
+- **TF-IDF scoring**: Term frequency-inverse document frequency for query relevance
+- **Path matching**: Query terms found in file paths get higher weight
+- **Content matching**: Query terms found in file content
+- **Size penalty**: Larger files are slightly penalized to maximize file count
+
+#### Using FileRank
+
+FileRank activates automatically when the token budget is exceeded:
+
+```bash
+# If total tokens exceed 50k, FileRank selects most relevant files for "search"
+llm_ctx -f 'src/**/*.js' -c "optimize the search algorithm" -b 50000
+
+# Debug FileRank scoring to see why files were selected
+llm_ctx -f 'src/**/*.js' -c "search" -b 50000 --filerank-debug
+```
+
+#### Customizing FileRank Weights
+
+You can adjust how FileRank scores files using `--filerank-weight`:
+
+```bash
+# Heavily favor files with query terms in their path
+llm_ctx -f '**/*.py' -c "test" -b 30000 \
+  --filerank-weight path:10,content:1,size:0.01,tfidf:5
+
+# Focus on content matches over path matches  
+llm_ctx -f '**/*.py' -c "async" -b 30000 \
+  --filerank-weight path:0.5,content:5,size:0.05,tfidf:10
+```
+
+Weight parameters:
+- `path`: Weight for query matches in file paths (default: 2.0)
+- `content`: Weight for query matches in file content (default: 1.0)
+- `size`: Penalty per MiB of file size (default: 0.05)
+- `tfidf`: Weight for TF-IDF score (default: 10.0)
+
+#### Configuration File Support
+
+You can set default FileRank weights in your config file:
+
+```toml
+# ~/.config/llm_ctx/config.toml
+token_budget = 48000
+
+# FileRank weights (as integers x100 for precision)
+filerank_weight_path_x100 = 500      # 5.0 - favor path matches
+filerank_weight_content_x100 = 100   # 1.0
+filerank_weight_size_x100 = 10       # 0.1 - stronger size penalty
+filerank_weight_tfidf_x100 = 1000    # 10.0
+```
+
+#### FileRank Examples
+
+1. **Finding test files:**
+   ```bash
+   # FileRank will prioritize files with "test" in path/content
+   llm_ctx -f 'src/**/*' -c "analyze test coverage" -b 50000
+   ```
+
+2. **Focusing on specific algorithms:**
+   ```bash
+   # FileRank prioritizes files mentioning "dijkstra"
+   llm_ctx -f '**/*.{c,h}' -c "optimize dijkstra implementation" -b 40000
+   ```
+
+3. **Debugging file selection:**
+   ```bash
+   # See FileRank scores and understand selection
+   llm_ctx -f '**/*.py' -c "database queries" -b 30000 --filerank-debug
+   ```
+
 ## Limitations
 
 ### Binary File Detection

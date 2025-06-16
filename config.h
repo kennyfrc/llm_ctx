@@ -20,6 +20,11 @@ typedef struct {
     size_t token_budget;          // 0 → unset
     ConfigTemplate *templates;    // Array of named templates
     size_t template_count;        // Number of templates
+    // FileRank weight configuration
+    double filerank_weight_path;      // -1.0 → unset
+    double filerank_weight_content;   // -1.0 → unset
+    double filerank_weight_size;      // -1.0 → unset
+    double filerank_weight_tfidf;     // -1.0 → unset
 } ConfigSettings;
 
 // Load configuration from default locations

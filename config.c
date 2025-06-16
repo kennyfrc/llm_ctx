@@ -100,6 +100,11 @@ bool config_load(ConfigSettings *settings, Arena *arena) {
     settings->token_budget = 0; // unset
     settings->templates = NULL;
     settings->template_count = 0;
+    // Initialize FileRank weights to -1.0 (unset)
+    settings->filerank_weight_path = -1.0;
+    settings->filerank_weight_content = -1.0;
+    settings->filerank_weight_size = -1.0;
+    settings->filerank_weight_tfidf = -1.0;
     
     // Check if we should skip config loading
     if (config_should_skip()) {
@@ -155,6 +160,10 @@ void config_debug_print(const ConfigSettings *settings) {
             settings->response_guide_file ? settings->response_guide_file : "(null)");
     fprintf(stderr, "[DEBUG]   copy_to_clipboard: %d\n", settings->copy_to_clipboard);
     fprintf(stderr, "[DEBUG]   token_budget: %zu\n", settings->token_budget);
+    fprintf(stderr, "[DEBUG]   filerank_weight_path: %.2f\n", settings->filerank_weight_path);
+    fprintf(stderr, "[DEBUG]   filerank_weight_content: %.2f\n", settings->filerank_weight_content);
+    fprintf(stderr, "[DEBUG]   filerank_weight_size: %.2f\n", settings->filerank_weight_size);
+    fprintf(stderr, "[DEBUG]   filerank_weight_tfidf: %.2f\n", settings->filerank_weight_tfidf);
     fprintf(stderr, "[DEBUG]   template_count: %zu\n", settings->template_count);
     
     for (size_t i = 0; i < settings->template_count; i++) {
@@ -358,6 +367,29 @@ static bool parse_toml_file(const char *path, ConfigSettings *settings, Arena *a
     toml_datum_t token_budget = toml_int_in(conf, "token_budget");
     if (token_budget.ok) {
         settings->token_budget = (size_t)token_budget.u.i;
+    }
+    
+    // Parse FileRank weights as integers (multiplied by 100 for precision)
+    // Since our minimal TOML parser doesn't support nested tables or doubles,
+    // we use flat integer values: filerank_weight_path_x100, etc.
+    toml_datum_t weight_path = toml_int_in(conf, "filerank_weight_path_x100");
+    if (weight_path.ok) {
+        settings->filerank_weight_path = weight_path.u.i / 100.0;
+    }
+    
+    toml_datum_t weight_content = toml_int_in(conf, "filerank_weight_content_x100");
+    if (weight_content.ok) {
+        settings->filerank_weight_content = weight_content.u.i / 100.0;
+    }
+    
+    toml_datum_t weight_size = toml_int_in(conf, "filerank_weight_size_x100");
+    if (weight_size.ok) {
+        settings->filerank_weight_size = weight_size.u.i / 100.0;
+    }
+    
+    toml_datum_t weight_tfidf = toml_int_in(conf, "filerank_weight_tfidf_x100");
+    if (weight_tfidf.ok) {
+        settings->filerank_weight_tfidf = weight_tfidf.u.i / 100.0;
     }
     
     toml_free(conf);
