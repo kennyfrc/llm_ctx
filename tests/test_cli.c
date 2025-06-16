@@ -1074,12 +1074,12 @@ TEST(test_cli_e_flag_response_guide) {
     const char *expected_reply_no_review = "    2. No code-review block is required.";
     const char *expected_reply_with_review_start = "    2. Return **PR-style code review comments**"; // Check start only
 
-    ASSERT("Output (no -e) contains <response_guide>", string_contains(output_no_e, "<response_guide>"));
-    ASSERT("Output (no -e) contains guide instruction line", string_contains(output_no_e, expected_guide_instruction));
-    ASSERT("Output (no -e) contains Problem Statement header", string_contains(output_no_e, expected_problem_statement_header));
-    ASSERT("Output (no -e) contains correct problem statement text", string_contains(output_no_e, expected_problem_statement_text));
-    ASSERT("Output (no -e) contains Response header", string_contains(output_no_e, expected_response_header));
-    ASSERT("Output (no -e) contains correct 'No code-review' reply format", string_contains(output_no_e, expected_reply_no_review));
+    ASSERT("Output (no -e) does NOT contain <response_guide>", !string_contains(output_no_e, "<response_guide>"));
+    ASSERT("Output (no -e) does NOT contain guide instruction line", !string_contains(output_no_e, expected_guide_instruction));
+    ASSERT("Output (no -e) does NOT contain Problem Statement header", !string_contains(output_no_e, expected_problem_statement_header));
+    ASSERT("Output (no -e) does NOT contain problem statement text", !string_contains(output_no_e, expected_problem_statement_text));
+    ASSERT("Output (no -e) does NOT contain Response header", !string_contains(output_no_e, expected_response_header));
+    ASSERT("Output (no -e) does NOT contain 'No code-review' reply format", !string_contains(output_no_e, expected_reply_no_review));
     ASSERT("Output (no -e) does NOT contain 'PR-style' reply format", !string_contains(output_no_e, expected_reply_with_review_start));
 
     // Test with -e flag

@@ -32,55 +32,45 @@ static void ensure_dir(const char *path) {
     }
 }
 
-void test_config_should_skip(void) {
-    printf("test_config_should_skip...\n");
-    
+TEST(test_config_should_skip) {
     // Test with no environment variable
     unsetenv("LLM_CTX_NO_CONFIG");
-    assert(!config_should_skip());
+    ASSERT("Should not skip when env not set", !config_should_skip());
     
     // Test with LLM_CTX_NO_CONFIG=1
     setenv("LLM_CTX_NO_CONFIG", "1", 1);
-    assert(config_should_skip());
+    ASSERT("Should skip when env=1", config_should_skip());
     
     // Test with LLM_CTX_NO_CONFIG=0
     setenv("LLM_CTX_NO_CONFIG", "0", 1);
-    assert(!config_should_skip());
+    ASSERT("Should not skip when env=0", !config_should_skip());
     
     // Clean up
     unsetenv("LLM_CTX_NO_CONFIG");
-    
-    printf("✓ test_config_should_skip passed\n");
 }
 
-void test_config_expand_path(void) {
-    printf("test_config_expand_path...\n");
-    
+TEST(test_config_expand_path) {
     Arena arena = arena_create(1024 * 1024);
     const char *home = getenv("HOME");
     
     // Test no tilde
     char *result = config_expand_path("/absolute/path", &arena);
-    assert(strcmp(result, "/absolute/path") == 0);
+    ASSERT_STR_EQUALS("/absolute/path", result);
     
     // Test simple tilde
     result = config_expand_path("~/test", &arena);
     char expected[256];
     snprintf(expected, sizeof(expected), "%s/test", home);
-    assert(strcmp(result, expected) == 0);
+    ASSERT_STR_EQUALS(expected, result);
     
     // Test tilde alone
     result = config_expand_path("~", &arena);
-    assert(strcmp(result, home) == 0);
+    ASSERT_STR_EQUALS(home, result);
     
     arena_destroy(&arena);
-    
-    printf("✓ test_config_expand_path passed\n");
 }
 
-void test_config_load_no_file(void) {
-    printf("test_config_load_no_file...\n");
-    
+TEST(test_config_load_no_file) {
     Arena arena = arena_create(1024 * 1024);
     ConfigSettings settings = {0};
     
@@ -94,7 +84,7 @@ void test_config_load_no_file(void) {
     
     // Should return false when no config file found
     bool loaded = config_load(&settings, &arena);
-    assert(!loaded);
+    ASSERT("Config should not load when no file exists", !loaded);
     
     // Restore HOME
     if (orig_home) {
@@ -104,13 +94,9 @@ void test_config_load_no_file(void) {
     }
     
     arena_destroy(&arena);
-    
-    printf("✓ test_config_load_no_file passed\n");
 }
 
-void test_config_load_explicit_path(void) {
-    printf("test_config_load_explicit_path...\n");
-    
+TEST(test_config_load_explicit_path) {
     Arena arena = arena_create(1024 * 1024);
     ConfigSettings settings = {0};
     
@@ -127,25 +113,21 @@ void test_config_load_explicit_path(void) {
     
     // Should load successfully
     bool loaded = config_load(&settings, &arena);
-    assert(loaded);
-    assert(settings.system_prompt_file != NULL);
-    assert(strcmp(settings.system_prompt_file, "~/prompts/sys.md") == 0);
-    assert(settings.response_guide_file != NULL);
-    assert(strcmp(settings.response_guide_file, "~/prompts/guide.md") == 0);
-    assert(settings.copy_to_clipboard == 1);
-    assert(settings.token_budget == 128000);
+    ASSERT("Config should load from explicit path", loaded);
+    ASSERT("System prompt file should be set", settings.system_prompt_file != NULL);
+    ASSERT_STR_EQUALS("~/prompts/sys.md", settings.system_prompt_file);
+    ASSERT("Response guide file should be set", settings.response_guide_file != NULL);
+    ASSERT_STR_EQUALS("~/prompts/guide.md", settings.response_guide_file);
+    ASSERT_EQUALS(1, settings.copy_to_clipboard);
+    ASSERT_EQUALS(128000, (int)settings.token_budget);
     
     // Clean up
     unlink(test_config);
     unsetenv("LLM_CTX_CONFIG");
     arena_destroy(&arena);
-    
-    printf("✓ test_config_load_explicit_path passed\n");
 }
 
-void test_config_load_xdg_path(void) {
-    printf("test_config_load_xdg_path...\n");
-    
+TEST(test_config_load_xdg_path) {
     Arena arena = arena_create(1024 * 1024);
     ConfigSettings settings = {0};
     
@@ -165,12 +147,12 @@ void test_config_load_xdg_path(void) {
     
     // Should load successfully
     bool loaded = config_load(&settings, &arena);
-    assert(loaded);
-    assert(settings.system_prompt_file != NULL);
-    assert(strcmp(settings.system_prompt_file, "/abs/path/sys.md") == 0);
-    assert(settings.response_guide_file == NULL);
-    assert(settings.copy_to_clipboard == -1);
-    assert(settings.token_budget == 64000);
+    ASSERT("Config should load from XDG path", loaded);
+    ASSERT("System prompt file should be set", settings.system_prompt_file != NULL);
+    ASSERT_STR_EQUALS("/abs/path/sys.md", settings.system_prompt_file);
+    ASSERT("Response guide file should be null", settings.response_guide_file == NULL);
+    ASSERT_EQUALS(-1, settings.copy_to_clipboard);
+    ASSERT_EQUALS(64000, (int)settings.token_budget);
     
     // Clean up
     unlink(test_config);
@@ -178,13 +160,9 @@ void test_config_load_xdg_path(void) {
     rmdir(xdg_base);
     unsetenv("XDG_CONFIG_HOME");
     arena_destroy(&arena);
-    
-    printf("✓ test_config_load_xdg_path passed\n");
 }
 
-void test_config_load_partial(void) {
-    printf("test_config_load_partial...\n");
-    
+TEST(test_config_load_partial) {
     Arena arena = arena_create(1024 * 1024);
     ConfigSettings settings = {0};
     
@@ -201,23 +179,19 @@ void test_config_load_partial(void) {
     
     // Should load successfully with partial config
     bool loaded = config_load(&settings, &arena);
-    assert(loaded);
-    assert(settings.system_prompt_file != NULL);
-    assert(settings.response_guide_file == NULL);
-    assert(settings.copy_to_clipboard == 0);
-    assert(settings.token_budget == 0);
+    ASSERT("Config should load with partial settings", loaded);
+    ASSERT("System prompt file should be set", settings.system_prompt_file != NULL);
+    ASSERT("Response guide file should be null", settings.response_guide_file == NULL);
+    ASSERT_EQUALS(0, settings.copy_to_clipboard);
+    ASSERT_EQUALS(0, (int)settings.token_budget);
     
     // Clean up
     unlink(test_config);
     unsetenv("LLM_CTX_CONFIG");
     arena_destroy(&arena);
-    
-    printf("✓ test_config_load_partial passed\n");
 }
 
-void test_config_load_invalid_toml(void) {
-    printf("test_config_load_invalid_toml...\n");
-    
+TEST(test_config_load_invalid_toml) {
     Arena arena = arena_create(1024 * 1024);
     ConfigSettings settings = {0};
     
@@ -237,34 +211,33 @@ void test_config_load_invalid_toml(void) {
     // If it loaded, check that values are not parsed correctly
     if (loaded) {
         // The string with missing quote should not be parsed
-        assert(settings.system_prompt_file == NULL);
+        ASSERT("Invalid string should not be parsed", settings.system_prompt_file == NULL);
         // The invalid integer should not be parsed
-        assert(settings.token_budget == 0);
+        ASSERT_EQUALS(0, (int)settings.token_budget);
     }
     
     // Clean up
     unlink(test_config);
     unsetenv("LLM_CTX_CONFIG");
     arena_destroy(&arena);
-    
-    printf("✓ test_config_load_invalid_toml passed\n");
 }
 
 int main(void) {
-    printf("Running config tests...\n\n");
+    printf("Running config tests\n");
+    printf("===================\n");
     
     // Save original environment
     char *orig_llm_ctx_config = getenv("LLM_CTX_CONFIG");
     char *orig_xdg_config = getenv("XDG_CONFIG_HOME");
     
     // Run tests
-    test_config_should_skip();
-    test_config_expand_path();
-    test_config_load_no_file();
-    test_config_load_explicit_path();
-    test_config_load_xdg_path();
-    test_config_load_partial();
-    test_config_load_invalid_toml();
+    RUN_TEST(test_config_should_skip);
+    RUN_TEST(test_config_expand_path);
+    RUN_TEST(test_config_load_no_file);
+    RUN_TEST(test_config_load_explicit_path);
+    RUN_TEST(test_config_load_xdg_path);
+    RUN_TEST(test_config_load_partial);
+    RUN_TEST(test_config_load_invalid_toml);
     
     // Restore original environment
     if (orig_llm_ctx_config) {
@@ -278,6 +251,6 @@ int main(void) {
         unsetenv("XDG_CONFIG_HOME");
     }
     
-    printf("\nAll config tests passed! ✨\n");
-    return 0;
+    printf("\n");
+    PRINT_TEST_SUMMARY();
 }
