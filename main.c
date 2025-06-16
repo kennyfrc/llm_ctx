@@ -901,10 +901,13 @@ void show_help(void) {
     printf("  -c @-          Read instruction text from standard input until EOF\n");
     printf("  -C             Shortcut for -c @-. Reads user instructions from stdin\n");
     printf("  -c=\"TEXT\"     Equals form also accepted\n");
-    printf("  -s             Enable system prompt from config file\n"); // Keep help concise
+    printf("  -s             Enable system prompt from config file\n");
+    printf("  -s:TEMPLATE    Use named template for system prompt (no space after -s)\n");
+    printf("  -sTEXT         Use TEXT as inline system prompt (no space after -s)\n");
     printf("  -s@FILE        Read system prompt from FILE (no space after -s)\n");
     printf("  -s@-           Read system prompt from standard input (no space after -s)\n");
     printf("  -e             Enable response guide from config file or default PR-style\n");
+    printf("  -e:TEMPLATE    Use named template for response guide (no space after -e)\n");
     printf("  -eTEXT         Use TEXT as custom response guide (no space after -e)\n");
     printf("  -e@FILE        Read custom response guide from FILE (no space after -e)\n");
     printf("  -e@-           Read custom response guide from stdin (no space after -e)\n");
@@ -943,6 +946,10 @@ void show_help(void) {
     printf("  llm_ctx -t -f src/main.c\n\n");
     printf("  # Generate file tree of specified files only\n");
     printf("  llm_ctx -T -f src/main.c src/utils.c\n\n");
+    printf("  # Use named templates from config\n");
+    printf("  llm_ctx -s:concise -e:detailed -f src/*.c\n\n");
+    printf("  # Mix template with custom instruction\n");
+    printf("  llm_ctx -s:architect -c \"Design a cache layer\" -f src/*.c\n\n");
     exit(0);
 }
 
@@ -1564,6 +1571,8 @@ static bool r_flag_used = false; /* Track if -r was used */
 static bool g_stdin_consumed_for_option = false; /* Track if stdin was used for @- */
 static bool ignore_config_flag = false; /* Track if --ignore-config was used */
 /* No specific CLI flag for copy yet, so no copy_flag_used needed */
+static char *s_template_name = NULL; /* Template name for -s flag */
+static char *e_template_name = NULL; /* Template name for -e flag */
 
 /* Helper to handle argument for -c/--command */
 static void handle_command_arg(const char *arg) {
@@ -1615,6 +1624,7 @@ static void handle_command_arg(const char *arg) {
 /* Helper to handle argument for -s/--system */
 static void handle_system_arg(const char *arg) {
     system_instructions = NULL; /* Reset before handling */
+    s_template_name = NULL; /* Reset template name */
 
     /* Case 1: -s without argument (optarg is NULL) -> Mark flag used, prompt loaded later */
     if (arg == NULL) {
@@ -1644,8 +1654,13 @@ static void handle_system_arg(const char *arg) {
                 fatal("Cannot open or read system prompt file '%s': %s", expanded_path, strerror(errno));
             s_flag_used = true; /* Track that CLI flag was used */
         }
+    } else if (arg[0] == ':' && arg[1] != '\0') {
+        /* Case 3: -s:template_name -> Use named template */
+        s_template_name = arena_strdup_safe(&g_arena, arg + 1); /* skip ':' */
+        if (!s_template_name) fatal("Out of memory duplicating template name");
+        s_flag_used = true;
     } else {
-        /* Case 3: -s with an argument not starting with '@' -> Treat as inline text */
+        /* Case 4: -s with inline text -> Use as system instructions */
         system_instructions = arena_strdup_safe(&g_arena, arg);
         if (!system_instructions) fatal("Out of memory duplicating -s argument");
         s_flag_used = true; /* Track that CLI flag was used */
@@ -1654,6 +1669,8 @@ static void handle_system_arg(const char *arg) {
 
 /* Helper to handle argument for -e/--editor-comments */
 static void handle_editor_arg(const char *arg) {
+    e_template_name = NULL; /* Reset template name */
+    
     /* Case 1: -e without argument -> Mark flag used, guide loaded from config later */
     if (arg == NULL) {
         want_editor_comments = true;
@@ -1686,8 +1703,14 @@ static void handle_editor_arg(const char *arg) {
             want_editor_comments = true;
             e_flag_used = true;
         }
+    } else if (arg[0] == ':' && arg[1] != '\0') {
+        /* Case 3: -e:template_name -> Use named template */
+        e_template_name = arena_strdup_safe(&g_arena, arg + 1); /* skip ':' */
+        if (!e_template_name) fatal("Out of memory duplicating template name");
+        want_editor_comments = true;
+        e_flag_used = true;
     } else {
-        /* Case 3: -e with inline text -> Use as custom response guide */
+        /* Case 4: -e with inline text -> Use as custom response guide */
         custom_response_guide = arena_strdup_safe(&g_arena, arg);
         if (!custom_response_guide) fatal("Out of memory duplicating -e argument");
         want_editor_comments = true;
@@ -1937,26 +1960,60 @@ int main(int argc, char *argv[]) {
     
     /* Apply configuration values if no CLI flags override them */
     if (config_loaded) {
-        /* system_prompt_file - only if -s flag was used */
-        if (s_flag_used && loaded_settings.system_prompt_file) {
-            char *expanded_path = config_expand_path(loaded_settings.system_prompt_file, &g_arena);
-            if (expanded_path) {
-                system_instructions = slurp_file(expanded_path);
-                if (!system_instructions) {
-                    fprintf(stderr, "warning: config refers to %s (not found)\n", expanded_path);
+        /* system_prompt_file - only if -s flag was used and no direct content provided */
+        if (s_flag_used && !system_instructions) {
+            char *prompt_file = NULL;
+            
+            /* Check if a template name was specified */
+            if (s_template_name) {
+                ConfigTemplate *tmpl = config_find_template(&loaded_settings, s_template_name);
+                if (tmpl && tmpl->system_prompt_file) {
+                    prompt_file = tmpl->system_prompt_file;
+                } else {
+                    fprintf(stderr, "warning: template '%s' not found or has no system_prompt_file\n", s_template_name);
+                }
+            } else if (loaded_settings.system_prompt_file) {
+                /* Use default system prompt file */
+                prompt_file = loaded_settings.system_prompt_file;
+            }
+            
+            if (prompt_file) {
+                char *expanded_path = config_expand_path(prompt_file, &g_arena);
+                if (expanded_path) {
+                    system_instructions = slurp_file(expanded_path);
+                    if (!system_instructions) {
+                        fprintf(stderr, "warning: config refers to %s (not found)\n", expanded_path);
+                    }
                 }
             }
         }
         
-        /* response_guide_file - only if -e flag was used (same logic as -s) */
-        if (e_flag_used && loaded_settings.response_guide_file) {
-            char *expanded_path = config_expand_path(loaded_settings.response_guide_file, &g_arena);
-            if (expanded_path) {
-                custom_response_guide = slurp_file(expanded_path);
-                if (!custom_response_guide) {
-                    fprintf(stderr, "warning: config refers to %s (not found)\n", expanded_path);
+        /* response_guide_file - only if -e flag was used and no direct content provided */
+        if (e_flag_used && !custom_response_guide) {
+            char *guide_file = NULL;
+            
+            /* Check if a template name was specified */
+            if (e_template_name) {
+                ConfigTemplate *tmpl = config_find_template(&loaded_settings, e_template_name);
+                if (tmpl && tmpl->response_guide_file) {
+                    guide_file = tmpl->response_guide_file;
                 } else {
-                    want_editor_comments = true; /* Enable editor comments if guide loaded */
+                    fprintf(stderr, "warning: template '%s' not found or has no response_guide_file\n", e_template_name);
+                }
+            } else if (loaded_settings.response_guide_file) {
+                /* Use default response guide file */
+                guide_file = loaded_settings.response_guide_file;
+            }
+            
+            if (guide_file) {
+                char *expanded_path = config_expand_path(guide_file, &g_arena);
+                if (expanded_path) {
+                    custom_response_guide = slurp_file(expanded_path);
+                    if (!custom_response_guide) {
+                        fprintf(stderr, "warning: config refers to %s (not found)\n", expanded_path);
+                    } else {
+                        want_editor_comments = true; /* Enable editor comments if guide loaded */
+                    }
                 }
             }
         }

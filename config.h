@@ -8,10 +8,18 @@
 struct Arena;
 
 typedef struct {
+    char *name;                   // Template name
+    char *system_prompt_file;     // System prompt file path
+    char *response_guide_file;    // Response guide file path
+} ConfigTemplate;
+
+typedef struct {
     char *system_prompt_file;     // NULL → none
     char *response_guide_file;    // NULL → none
     int copy_to_clipboard;        // tri-state: -1=unset, 0=false, 1=true
     size_t token_budget;          // 0 → unset
+    ConfigTemplate *templates;    // Array of named templates
+    size_t template_count;        // Number of templates
 } ConfigSettings;
 
 // Load configuration from default locations
@@ -26,5 +34,8 @@ char *config_expand_path(const char *path, struct Arena *arena);
 
 // Debug helper to print loaded config
 void config_debug_print(const ConfigSettings *settings);
+
+// Find a template by name
+ConfigTemplate *config_find_template(const ConfigSettings *settings, const char *name);
 
 #endif // CONFIG_H
