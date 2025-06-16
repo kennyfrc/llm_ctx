@@ -346,10 +346,133 @@ static int tree_max_depth = 4; /* -L flag - default depth of 4 for web dev proje
 /* debug_mode defined in debug.c */
 
 /* FileRank weight configuration */
-static double g_filerank_weight_path = 2.0;      /* Weight for path hits */
-static double g_filerank_weight_content = 1.0;   /* Weight for content hits */
-static double g_filerank_weight_size = 0.05;     /* Weight for size penalty */
-static double g_filerank_weight_tfidf = 10.0;    /* Weight for TF-IDF score */
+static double g_filerank_weight_path = 8.0;      /* Weight for path hits */
+static double g_filerank_weight_content = 0.8;   /* Weight for content hits */
+static double g_filerank_weight_size = 0.08;     /* Weight for size penalty */
+static double g_filerank_weight_tfidf = 16.0;    /* Weight for TF-IDF score */
+
+/* Keywords boost configuration */
+#define MAX_KEYWORDS 32
+#define KEYWORD_BASE_MULTIPLIER 64.0
+
+typedef struct {
+    char  *token;     /* lowercase, arena-owned */
+    double weight;    /* factor * BASE_MULTIPLIER */
+} KeywordBoost;
+
+/* globals */
+static KeywordBoost g_kw_boosts[MAX_KEYWORDS];
+static int          g_kw_boosts_len = 0;   /* 0..MAX_KEYWORDS */
+static bool         g_keywords_flag_used = false; /* Track if --keywords was used */
+
+/**
+ * Parse keywords specification from string
+ * Format: "token1:weight1,token2:weight2,..." or "token1,token2,..."
+ * Returns true on success, false on error
+ */
+static bool parse_keywords(const char *spec) {
+    if (!spec || !*spec) {
+        return true; /* Empty spec is valid */
+    }
+    
+    /* Reset keywords */
+    g_kw_boosts_len = 0;
+    
+    /* Make a copy to tokenize */
+    char *str_copy = arena_strdup_safe(&g_arena, spec);
+    if (!str_copy) return false;
+    
+    /* Split by comma or space */
+    char *saveptr;
+    char *token_spec = strtok_r(str_copy, ", ", &saveptr);
+    
+    while (token_spec) {
+        /* Check limit */
+        if (g_kw_boosts_len >= MAX_KEYWORDS) {
+            fprintf(stderr, "Warning: Maximum %d keywords allowed, ignoring '%s' and remaining keywords\n",
+                    MAX_KEYWORDS, token_spec);
+            break;
+        }
+        /* Check for colon separator for weight */
+        char *colon = strchr(token_spec, ':');
+        double factor = 2.0; /* Default factor */
+        
+        if (colon) {
+            *colon = '\0';
+            char *weight_str = colon + 1;
+            char *endptr;
+            factor = strtod(weight_str, &endptr);
+            
+            /* Validate factor */
+            if (*endptr != '\0') {
+                fprintf(stderr, "Warning: Invalid factor '%s' for keyword '%s', using default 2\n", 
+                        weight_str, token_spec);
+                factor = 2.0;
+            } else if (factor <= 0) {
+                fprintf(stderr, "Warning: Factor must be positive for keyword '%s', using default 2\n", 
+                        token_spec);
+                factor = 2.0;
+            }
+        }
+        
+        /* Apply base multiplier to get actual weight */
+        double weight = factor * KEYWORD_BASE_MULTIPLIER;
+        
+        /* Skip empty tokens */
+        if (!*token_spec) {
+            token_spec = strtok_r(NULL, ", ", &saveptr);
+            continue;
+        }
+        
+        /* Tokenize and store */
+        char *lowercase_token = arena_strdup_safe(&g_arena, token_spec);
+        if (!lowercase_token) return false;
+        
+        /* Convert to lowercase */
+        for (char *p = lowercase_token; *p; p++) {
+            *p = tolower((unsigned char)*p);
+        }
+        
+        /* Check for duplicates */
+        bool is_duplicate = false;
+        for (int i = 0; i < g_kw_boosts_len; i++) {
+            if (strcmp(g_kw_boosts[i].token, lowercase_token) == 0) {
+                double new_factor = weight / KEYWORD_BASE_MULTIPLIER;
+                fprintf(stderr, "Warning: Duplicate keyword '%s', updating to factor %.1f (%.0fx boost)\n",
+                        lowercase_token, new_factor, weight);
+                g_kw_boosts[i].weight = weight;
+                is_duplicate = true;
+                break;
+            }
+        }
+        
+        if (!is_duplicate) {
+            /* Store the keyword */
+            g_kw_boosts[g_kw_boosts_len].token = lowercase_token;
+            g_kw_boosts[g_kw_boosts_len].weight = weight;
+            g_kw_boosts_len++;
+        }
+        
+        token_spec = strtok_r(NULL, ", ", &saveptr);
+    }
+    
+    return true;
+}
+
+/**
+ * Get keyword weight for a token
+ */
+static inline double kw_weight_for(const char *tok)
+{
+    /* Look up token in keywords array */
+    for (int i = 0; i < g_kw_boosts_len; ++i) {
+        if (strcasecmp(g_kw_boosts[i].token, tok) == 0) {
+            return g_kw_boosts[i].weight;
+        }
+    }
+    
+    return 1.0; /* No boost */
+}
 
 /**
  * Parse FileRank weights from string format "path:2,content:1,size:0.05,tfidf:10"
@@ -992,7 +1115,12 @@ void show_help(void) {
     printf("  --token-model=MODEL   Set model for token counting (default: gpt-4o)\n");
     printf("  --filerank-debug      Show FileRank scoring details\n");
     printf("  --filerank-weight=W   Set FileRank weights (format: path:2,content:1,size:0.05,tfidf:10)\n");
-    printf("  --no-gitignore Ignore .gitignore files when collecting files\n");
+    printf("  -k, --keywords=SPEC   Boost specific keywords in FileRank scoring\n");
+    printf("                        Format: token1:factor1,token2:factor2 or token1,token2\n");
+    printf("                        Factors are multiplied by 64 (e.g., factor 2 = 128x boost)\n");
+    printf("                        Default factor is 2 if not specified\n");
+    printf("                        Example: -k 'chat_input:3,prosemirror:1.5'\n");
+    printf("  --no-gitignore        Ignore .gitignore files when collecting files\n");
     printf("  --ignore-config       Skip loading configuration file\n\n");
     printf("By default, llm_ctx reads content from stdin.\n");
     printf("Use -f flag to indicate file arguments are provided.\n\n");
@@ -1017,6 +1145,9 @@ void show_help(void) {
     printf("  llm_ctx -s:concise -e:detailed -f src/*.c\n\n");
     printf("  # Mix template with custom instruction\n");
     printf("  llm_ctx -s:architect -c \"Design a cache layer\" -f src/*.c\n\n");
+    printf("  # Boost specific keywords for focused results\n");
+    printf("  llm_ctx -c \"How does authentication work?\" -k auth:3,session:2 -f src/**/*.js\n");
+    printf("  # auth gets 192x boost (3*64), session gets 128x boost (2*64)\n\n");
     exit(0);
 }
 
@@ -1631,6 +1762,7 @@ static const struct option long_options[] = {
     {"token-diagnostics", optional_argument, 0, 402}, /* Token count diagnostics */
     {"filerank-debug",  no_argument,       0, 403}, /* FileRank debug output */
     {"filerank-weight", required_argument, 0, 404}, /* FileRank custom weights */
+    {"keywords",        required_argument, 0, 405}, /* Keywords boost specification */
     {0, 0, 0, 0} /* Terminator */
 };
 static bool s_flag_used = false; /* Track if -s was used */
@@ -1994,7 +2126,8 @@ void rank_files(const char *query, FileRank *ranks, int num_files) {
         
         /* Count hits in path */
         for (int j = 0; j < num_tokens; j++) {
-            path_hits += count_word_hits(ranks[i].path, tokens[j]);
+            double w = kw_weight_for(tokens[j]);
+            path_hits += w * count_word_hits(ranks[i].path, tokens[j]);
         }
         
         /* Get file size for penalty calculation */
@@ -2034,7 +2167,8 @@ void rank_files(const char *query, FileRank *ranks, int num_files) {
                         for (int j = 0; j < num_tokens; j++) {
                             int hits = count_word_hits(buffer, tokens[j]);
                             term_freq[j] += hits;
-                            content_hits += hits;
+                            double w = kw_weight_for(tokens[j]);
+                            content_hits += w * hits;
                         }
                     }
                     
@@ -2044,7 +2178,8 @@ void rank_files(const char *query, FileRank *ranks, int num_files) {
                             if (term_freq[j] > 0 && doc_freq[j] > 0) {
                                 double tf = (double)term_freq[j] / total_words;
                                 double idf = log((double)num_files / doc_freq[j]);
-                                tfidf_score += tf * idf;
+                                double w = kw_weight_for(tokens[j]);
+                                tfidf_score += w * tf * idf;
                             }
                         }
                     }
@@ -2056,7 +2191,8 @@ void rank_files(const char *query, FileRank *ranks, int num_files) {
                     rewind(f);
                     while (fgets(buffer, sizeof(buffer), f)) {
                         for (int j = 0; j < num_tokens; j++) {
-                            content_hits += count_word_hits(buffer, tokens[j]);
+                            double w = kw_weight_for(tokens[j]);
+                            content_hits += w * count_word_hits(buffer, tokens[j]);
                         }
                     }
                 }
@@ -2080,7 +2216,8 @@ basic_scoring:
         
         /* Count hits in path */
         for (int j = 0; j < num_tokens; j++) {
-            path_hits += count_word_hits(ranks[i].path, tokens[j]);
+            double w = kw_weight_for(tokens[j]);
+            path_hits += w * count_word_hits(ranks[i].path, tokens[j]);
         }
         
         /* Get file size for penalty calculation */
@@ -2101,7 +2238,8 @@ basic_scoring:
                 rewind(f);
                 while (fgets(buffer, sizeof(buffer), f)) {
                     for (int j = 0; j < num_tokens; j++) {
-                        content_hits += count_word_hits(buffer, tokens[j]);
+                        double w = kw_weight_for(tokens[j]);
+                        content_hits += w * count_word_hits(buffer, tokens[j]);
                     }
                 }
             }
@@ -2154,7 +2292,7 @@ int main(int argc, char *argv[]) {
     int opt;
     /* Add 'C' to the short options string. It takes no argument. */
     /* Add 'b:' for short form of --token-budget and 'D::' for token diagnostics */
-    while ((opt = getopt_long(argc, argv, "hc:s::fre::CtdTOL:o::b:D::", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s::fre::CtdTOL:o::b:D::k:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
                 show_help(); /* Exits */
@@ -2298,6 +2436,18 @@ int main(int argc, char *argv[]) {
                 }
                 if (!parse_filerank_weights(optarg)) {
                     fprintf(stderr, "Error: Failed to parse filerank weights from '%s'\n", optarg);
+                    return 1;
+                }
+                break;
+            case 'k': /* -k or --keywords */
+            case 405: /* --keywords (long form) */
+                if (!optarg) {
+                    fprintf(stderr, "Error: -k/--keywords requires an argument\n");
+                    return 1;
+                }
+                g_keywords_flag_used = true;
+                if (!parse_keywords(optarg)) {
+                    fprintf(stderr, "Error: Failed to parse keywords from '%s'\n", optarg);
                     return 1;
                 }
                 break;
@@ -2590,6 +2740,18 @@ int main(int argc, char *argv[]) {
         /* Debug output if requested - show sorted order */
         if (g_filerank_debug) {
             fprintf(stderr, "FileRank (query: \"%s\")\n", user_instructions);
+            
+            /* Show keyword boosts if any */
+            if (g_kw_boosts_len > 0) {
+                fprintf(stderr, "Keywords: ");
+                for (int i = 0; i < g_kw_boosts_len; i++) {
+                    if (i > 0) fprintf(stderr, ", ");
+                    double factor = g_kw_boosts[i].weight / KEYWORD_BASE_MULTIPLIER;
+                    fprintf(stderr, "%s:%.1fx(=%.0f)", g_kw_boosts[i].token, factor, g_kw_boosts[i].weight);
+                }
+                fprintf(stderr, "\n");
+            }
+            
             for (int i = 0; i < num_processed_files; i++) {
                 fprintf(stderr, "  %.2f  %s\n", ranks[i].score, ranks[i].path);
             }
