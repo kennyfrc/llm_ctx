@@ -371,9 +371,8 @@ static void open_file_context_if_needed(void) {
  * Add the response guide block to the output
  */
 static void add_response_guide(const char *problem) {
-    // Add the guide if editor comments are requested OR if user instructions were provided.
-    // This ensures -e always adds the guide, even without -c.
-    if (want_editor_comments || (problem && *problem)) {
+    // Only add the guide if -e flag was explicitly used
+    if (want_editor_comments) {
         fprintf(temp_file, "<response_guide>\n");
         
         // If custom response guide provided, use it directly
@@ -391,10 +390,7 @@ static void add_response_guide(const char *problem) {
 
             fprintf(temp_file, "## Response\n");
             fprintf(temp_file, "    1. Provide a clear, step-by-step solution or explanation.\n");
-            fprintf(temp_file, "    2. %s\n",
-                    want_editor_comments ?
-                      "Return **PR-style code review comments**: use GitHub inline-diff syntax, group notes per file, justify each change, and suggest concrete refactors."
-                      : "No code-review block is required."); // If !want_editor_comments, this is only reached if 'problem' exists.
+            fprintf(temp_file, "    2. Return **PR-style code review comments**: use GitHub inline-diff syntax, group notes per file, justify each change, and suggest concrete refactors.\n");
         }
 
         fprintf(temp_file, "</response_guide>\n\n");
@@ -2289,7 +2285,7 @@ int main(int argc, char *argv[]) {
                 if (tmpl && tmpl->system_prompt_file) {
                     prompt_file = tmpl->system_prompt_file;
                 } else {
-                    fprintf(stderr, "warning: template '%s' not found or has no system_prompt_file\n", s_template_name);
+                    fatal("Error: template '%s' not found or has no system_prompt_file in config", s_template_name);
                 }
             } else if (loaded_settings.system_prompt_file) {
                 /* Use default system prompt file */
@@ -2317,7 +2313,7 @@ int main(int argc, char *argv[]) {
                 if (tmpl && tmpl->response_guide_file) {
                     guide_file = tmpl->response_guide_file;
                 } else {
-                    fprintf(stderr, "warning: template '%s' not found or has no response_guide_file\n", e_template_name);
+                    fatal("Error: template '%s' not found or has no response_guide_file in config", e_template_name);
                 }
             } else if (loaded_settings.response_guide_file) {
                 /* Use default response guide file */
