@@ -123,7 +123,7 @@ static void test_invalid_weight_handling(void) {
         pclose(pipe);
     }
     
-    ASSERT("Should warn about invalid weight", strstr(output, "Warning: Invalid weight") != NULL);
+    ASSERT("Should warn about invalid weight", strstr(output, "Warning: Invalid factor") != NULL);
 }
 
 static void test_duplicate_keyword_handling(void) {
@@ -171,7 +171,7 @@ static void test_help_includes_keywords(void) {
     
     ASSERT("Help should mention --keywords", strstr(output, "--keywords") != NULL);
     ASSERT("Help should mention -k short form", strstr(output, "-k,") != NULL);
-    ASSERT("Help should include format info", strstr(output, "token1:weight1") != NULL);
+    ASSERT("Help should include format info", strstr(output, "token1:factor1") != NULL);
 }
 
 int main(void) {

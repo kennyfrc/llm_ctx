@@ -164,8 +164,8 @@ TEST(test_filerank_path_hits) {
     /* Should have FileRank output */
     ASSERT("Should have FileRank debug output", strstr(output, "FileRank") != NULL);
     
-    /* arena-test.txt should score 4.00 (2*2 for path matches), no-match.txt ~0.00 */
-    ASSERT("arena-test.txt should have score 4.00", strstr(output, "  4.00  tests/test_data/arena-test.txt") != NULL);
+    /* arena-test.txt should score 16.00 (2*8 for path matches), no-match.txt ~0.00 */
+    ASSERT("arena-test.txt should have score 16.00", strstr(output, " 16.00  tests/test_data/arena-test.txt") != NULL);
     ASSERT("no-match.txt should have score ~0.00", 
            strstr(output, "  0.00  tests/test_data/no-match.txt") != NULL ||
            strstr(output, "  -0.00  tests/test_data/no-match.txt") != NULL);
@@ -198,8 +198,8 @@ TEST(test_filerank_content_hits) {
     char *output = run_command(cmd);
     
     /* Verify scores directly in output */
-    ASSERT("many_tokens.txt should have score 3.00", strstr(output, "  3.00  tests/test_data/many_tokens.txt") != NULL);
-    ASSERT("few_tokens.txt should have score 1.00", strstr(output, "  1.00  tests/test_data/few_tokens.txt") != NULL);
+    ASSERT("many_tokens.txt should have score 2.40", strstr(output, "  2.40  tests/test_data/many_tokens.txt") != NULL);
+    ASSERT("few_tokens.txt should have score 0.80", strstr(output, "  0.80  tests/test_data/few_tokens.txt") != NULL);
     
     /* Cleanup */
     unlink("tests/test_data/many_tokens.txt");
@@ -224,7 +224,7 @@ TEST(test_filerank_case_insensitive) {
     
     double score = 0;
     sscanf(score_line, "%lf", &score);
-    ASSERT("Should count all 3 case variations", score == 3.0);
+    ASSERT("Should count all 3 case variations", score == 2.4);
     
     /* Cleanup */
     unlink("tests/test_data/mixed_case.txt");

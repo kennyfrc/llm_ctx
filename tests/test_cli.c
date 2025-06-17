@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <limits.h>
+#include <sys/types.h>
 #include "test_framework.h"
 
 /**
@@ -219,14 +220,8 @@ void setup_test_env(void) {
 
 /* Clean up the test environment */
 void teardown_test_env(void) {
-    /* Remove all test files */
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "rm -rf %s", TEST_DIR);
-    system(cmd);
-    /* Remove tmp directory if empty */
-    rmdir("./tmp");
-    /* NOTE: User config file handling is now done in global_setup/global_teardown */
-    /* No need to explicitly remove .llm_ctx.conf, rm -rf handles it */
+    /* Just nuke the entire tmp directory - much simpler! */
+    system("rm -rf ./tmp");
 }
 
 /* Helper function to check if a string contains a substring */
@@ -368,9 +363,16 @@ TEST(test_cli_ignore_dirs) {
 
     /* Clean up */
     unlink(TEST_DIR "/.gitignore");
-    /* Restore original gitignore for subsequent tests by re-running setup.
-       NOTE: This ensures the default gitignore is present for the next test run. */
-    setup_test_env();
+    /* Restore original gitignore for subsequent tests */
+    FILE *gitignore = fopen(TEST_DIR "/.gitignore", "w");
+    if (gitignore) {
+        fprintf(gitignore, "# Test gitignore file\n");
+        fprintf(gitignore, "*.log\n");
+        fprintf(gitignore, "__test_*.txt\n");
+        fprintf(gitignore, "!__test_important.txt\n");
+        fprintf(gitignore, "__secrets/\n");
+        fclose(gitignore);
+    }
 }
 
 /* Test help message includes new options */
