@@ -11,7 +11,7 @@ TARGET = llm_ctx
 TEST_JS_PARSER = test_js_parser
 SRC = main.c gitignore.c arena.c tokenizer.c tokenizer_diagnostics.c config.c toml.c debug.c
 TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c
-TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin tests/test_tree_flags tests/test_tokenizer tests/test_tokenizer_cli tests/test_arena tests/test_config tests/test_filerank tests/test_keywords
+TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin tests/test_tree_flags tests/test_tokenizer tests/test_tokenizer_cli tests/test_arena tests/test_config tests/test_filerank tests/test_keywords tests/test_filerank_cutoff
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 
@@ -110,6 +110,10 @@ tests/test_filerank: tests/test_filerank.c
 tests/test_keywords: tests/test_keywords.c
 	$(CC) $(CFLAGS) -o $@ $^
 
+# Build test_filerank_cutoff
+tests/test_filerank_cutoff: tests/test_filerank_cutoff.c
+	$(CC) $(CFLAGS) -o $@ $^
+
 test: $(TARGET) $(TEST_TARGETS)
 	@echo ""
 	@LLM_CTX_NO_CONFIG=1 ./tests/test_gitignore || true
@@ -131,6 +135,8 @@ test: $(TARGET) $(TEST_TARGETS)
 	@LLM_CTX_NO_CONFIG=1 ./tests/test_filerank || true
 	@echo ""
 	@LLM_CTX_NO_CONFIG=1 ./tests/test_keywords || true
+	@echo ""
+	@LLM_CTX_NO_CONFIG=1 ./tests/test_filerank_cutoff || true
 	@echo "Test run complete."
 	@# Exit with non-zero status if any test failed (requires more complex tracking or a test runner)
 

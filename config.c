@@ -105,6 +105,7 @@ bool config_load(ConfigSettings *settings, Arena *arena) {
     settings->filerank_weight_content = -1.0;
     settings->filerank_weight_size = -1.0;
     settings->filerank_weight_tfidf = -1.0;
+    settings->filerank_cutoff = NULL;
     
     // Check if we should skip config loading
     if (config_should_skip()) {
@@ -164,6 +165,7 @@ void config_debug_print(const ConfigSettings *settings) {
     fprintf(stderr, "[DEBUG]   filerank_weight_content: %.2f\n", settings->filerank_weight_content);
     fprintf(stderr, "[DEBUG]   filerank_weight_size: %.2f\n", settings->filerank_weight_size);
     fprintf(stderr, "[DEBUG]   filerank_weight_tfidf: %.2f\n", settings->filerank_weight_tfidf);
+    fprintf(stderr, "[DEBUG]   filerank_cutoff: %s\n", settings->filerank_cutoff ? settings->filerank_cutoff : "(unset)");
     fprintf(stderr, "[DEBUG]   template_count: %zu\n", settings->template_count);
     
     for (size_t i = 0; i < settings->template_count; i++) {
@@ -390,6 +392,13 @@ static bool parse_toml_file(const char *path, ConfigSettings *settings, Arena *a
     toml_datum_t weight_tfidf = toml_int_in(conf, "filerank_weight_tfidf_x100");
     if (weight_tfidf.ok) {
         settings->filerank_weight_tfidf = weight_tfidf.u.i / 100.0;
+    }
+    
+    // Parse filerank_cutoff as a string
+    toml_datum_t cutoff = toml_string_in(conf, "filerank_cutoff");
+    if (cutoff.ok) {
+        settings->filerank_cutoff = arena_strdup_safe(arena, cutoff.u.s);
+        free(cutoff.u.s);
     }
     
     toml_free(conf);

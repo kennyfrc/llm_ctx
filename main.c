@@ -27,6 +27,7 @@
 #include <limits.h>   /* For PATH_MAX */
 #include <getopt.h>   /* For getopt_long */
 #include <math.h>     /* For log() in TF-IDF calculation */
+#include <float.h>    /* For DBL_MAX */
 #ifdef __APPLE__
 #  include <mach-o/dyld.h> /* _NSGetExecutablePath */
 #endif
@@ -350,6 +351,7 @@ static double g_filerank_weight_path = 8.0;      /* Weight for path hits */
 static double g_filerank_weight_content = 0.8;   /* Weight for content hits */
 static double g_filerank_weight_size = 0.08;     /* Weight for size penalty */
 static double g_filerank_weight_tfidf = 16.0;    /* Weight for TF-IDF score */
+static char *g_filerank_cutoff_spec = NULL;      /* Cutoff specification string */
 
 /* Keywords boost configuration */
 #define MAX_KEYWORDS 32
@@ -1763,6 +1765,7 @@ static const struct option long_options[] = {
     {"filerank-debug",  no_argument,       0, 403}, /* FileRank debug output */
     {"filerank-weight", required_argument, 0, 404}, /* FileRank custom weights */
     {"keywords",        required_argument, 0, 405}, /* Keywords boost specification */
+    {"filerank-cutoff", required_argument, 0, 406}, /* FileRank cutoff specification */
     {0, 0, 0, 0} /* Terminator */
 };
 static bool s_flag_used = false; /* Track if -s was used */
@@ -2034,6 +2037,62 @@ static char **tokenize_query(const char *query, int *num_tokens) {
     
     *num_tokens = idx;
     return tokens;
+}
+
+/**
+ * Compute threshold based on cutoff specification
+ * Returns the minimum score required to keep a file
+ */
+static double compute_filerank_threshold(const char *spec, FileRank *ranks, int num_files) {
+    double threshold = -DBL_MAX;
+    
+    if (!spec || num_files == 0) {
+        return threshold;
+    }
+    
+    if (strncmp(spec, "ratio:", 6) == 0) {
+        double alpha = atof(spec + 6);
+        if (alpha > 0 && alpha <= 1.0) {
+            threshold = ranks[0].score * alpha;
+        }
+    } else if (strncmp(spec, "topk:", 5) == 0) {
+        int k = atoi(spec + 5);
+        if (k > 0 && k < num_files) {
+            threshold = ranks[k-1].score;
+        } else if (k >= num_files) {
+            /* Keep all files if k >= num_files */
+            threshold = -DBL_MAX;
+        }
+    } else if (strncmp(spec, "percentile:", 11) == 0) {
+        int p = atoi(spec + 11);
+        if (p > 0 && p <= 100) {
+            int idx = ((100 - p) * num_files) / 100;
+            if (idx < num_files) {
+                threshold = ranks[idx].score;
+            }
+        }
+    } else if (strcmp(spec, "auto") == 0) {
+        /* Knee/elbow detection */
+        double max_drop = 0;
+        int knee = num_files - 1;
+        for (int i = 0; i < num_files - 1; i++) {
+            double drop = ranks[i].score - ranks[i+1].score;
+            if (drop > max_drop) {
+                max_drop = drop;
+                knee = i + 1;
+            }
+        }
+        if (knee < num_files) {
+            threshold = ranks[knee].score;
+        }
+    }
+    
+    /* Always discard files with score <= 0 */
+    if (threshold < 0) {
+        threshold = 0;
+    }
+    
+    return threshold;
 }
 
 /**
@@ -2451,12 +2510,22 @@ int main(int argc, char *argv[]) {
                     return 1;
                 }
                 break;
+            case 406: /* --filerank-cutoff */
+                if (!optarg) {
+                    fprintf(stderr, "Error: --filerank-cutoff requires an argument (e.g., ratio:0.15, topk:10, percentile:30, auto)\n");
+                    return 1;
+                }
+                g_filerank_cutoff_spec = arena_strdup_safe(&g_arena, optarg);
+                break;
             case '?': /* Unknown option OR missing required argument */
                 /* optopt contains the failing option character */
                 if (optopt == 'c') {
                     /* Replicate the standard missing-argument banner */
                     fprintf(stderr, "%s: option requires an argument -- '%c'\n",
                             argv[0], optopt);
+                } else if (optopt == 406) {
+                    /* Special case for --filerank-cutoff missing argument */
+                    fprintf(stderr, "Error: --filerank-cutoff requires an argument (e.g., ratio:0.15, topk:10, percentile:30, auto)\n");
                 } else if (isprint(optopt)) {
                     /* Handle other unknown options */
                      fprintf(stderr, "Unknown option `-%c'.\n", optopt);
@@ -2573,6 +2642,10 @@ int main(int argc, char *argv[]) {
         }
         if (loaded_settings.filerank_weight_tfidf >= 0.0) {
             g_filerank_weight_tfidf = loaded_settings.filerank_weight_tfidf;
+        }
+        /* FileRank cutoff - only if not set via CLI */
+        if (loaded_settings.filerank_cutoff && !g_filerank_cutoff_spec) {
+            g_filerank_cutoff_spec = arena_strdup_safe(&g_arena, loaded_settings.filerank_cutoff);
         }
     }
     /* --- Finalize copy_to_clipboard setting --- */
@@ -2736,6 +2809,26 @@ int main(int argc, char *argv[]) {
         
         /* Sort files by score (for budget-based selection) */
         qsort(ranks, num_processed_files, sizeof(FileRank), compare_filerank);
+        
+        /* Apply filerank cutoff if specified */
+        if (g_filerank_cutoff_spec) {
+            double threshold = compute_filerank_threshold(g_filerank_cutoff_spec, ranks, num_processed_files);
+            
+            /* Filter files based on threshold */
+            int kept = 0;
+            for (int i = 0; i < num_processed_files; i++) {
+                if (ranks[i].score >= threshold) {
+                    ranks[kept++] = ranks[i];
+                }
+            }
+            
+            if (g_filerank_debug && kept < num_processed_files) {
+                fprintf(stderr, "FileRank cutoff (%s): threshold=%.2f, kept %d/%d files\n", 
+                        g_filerank_cutoff_spec, threshold, kept, num_processed_files);
+            }
+            
+            num_processed_files = kept;
+        }
         
         /* Debug output if requested - show sorted order */
         if (g_filerank_debug) {

@@ -25,6 +25,7 @@ typedef struct {
     double filerank_weight_content;   // -1.0 → unset
     double filerank_weight_size;      // -1.0 → unset
     double filerank_weight_tfidf;     // -1.0 → unset
+    char *filerank_cutoff;            // NULL → unset
 } ConfigSettings;
 
 // Load configuration from default locations
