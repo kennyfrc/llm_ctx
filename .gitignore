@@ -57,3 +57,4 @@ tokenizer/tiktoken-c/target/
 # **/*.dylib
 
 tmp/
+testfile*
