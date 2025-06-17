@@ -2822,7 +2822,7 @@ int main(int argc, char *argv[]) {
                 }
             }
             
-            if (g_filerank_debug && kept < num_processed_files) {
+            if (kept < num_processed_files) {
                 fprintf(stderr, "FileRank cutoff (%s): threshold=%.2f, kept %d/%d files\n", 
                         g_filerank_cutoff_spec, threshold, kept, num_processed_files);
             }
