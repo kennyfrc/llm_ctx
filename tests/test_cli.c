@@ -1437,16 +1437,22 @@ TEST(test_cli_exclude_pattern) {
 TEST(test_cli_exclude_multiple_patterns) {
     char cmd[1024];
     
+    /* Create a subdirectory for this test to avoid conflicts */
+    char test_subdir[PATH_MAX];
+    snprintf(test_subdir, sizeof(test_subdir), "%s/excl_test", TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "rm -rf %s && mkdir -p %s", test_subdir, test_subdir);
+    run_command(cmd);
+    
     /* Create test files */
     char c_file[PATH_MAX];
     char log_file[PATH_MAX];
     char tmp_file[PATH_MAX];
     char txt_file[PATH_MAX];
     
-    snprintf(c_file, sizeof(c_file), "%s/__test_code.c", TEST_DIR);
-    snprintf(log_file, sizeof(log_file), "%s/__test_error.log", TEST_DIR);
-    snprintf(tmp_file, sizeof(tmp_file), "%s/__test_cache.tmp", TEST_DIR);
-    snprintf(txt_file, sizeof(txt_file), "%s/__test_readme.txt", TEST_DIR);
+    snprintf(c_file, sizeof(c_file), "%s/code.c", test_subdir);
+    snprintf(log_file, sizeof(log_file), "%s/error.log", test_subdir);
+    snprintf(tmp_file, sizeof(tmp_file), "%s/cache.tmp", test_subdir);
+    snprintf(txt_file, sizeof(txt_file), "%s/readme.txt", test_subdir);
     
     FILE *f = fopen(c_file, "w");
     if (f) {
@@ -1472,22 +1478,20 @@ TEST(test_cli_exclude_multiple_patterns) {
         fclose(f);
     }
     
-    /* Test excluding multiple patterns */
-    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __test_*.* -x '*.log' -x '*.tmp' 2>&1", TEST_DIR, getenv("PWD"));
+    /* Test excluding multiple patterns using glob from subdirectory */
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -f '%s/*' -x '*.log' -x '*.tmp' 2>&1", getenv("PWD"), test_subdir);
     char *output = run_command(cmd);
     
-    ASSERT("Output contains code.c", string_contains(output, "__test_code.c"));
-    ASSERT("Output contains readme.txt", string_contains(output, "__test_readme.txt"));
-    ASSERT("Output does not contain error.log", !string_contains(output, "__test_error.log"));
-    ASSERT("Output does not contain cache.tmp", !string_contains(output, "__test_cache.tmp"));
+    ASSERT("Output contains code.c", string_contains(output, "code.c"));
+    ASSERT("Output contains readme.txt", string_contains(output, "readme.txt"));
+    ASSERT("Output does not contain error.log", !string_contains(output, "error.log"));
+    ASSERT("Output does not contain cache.tmp", !string_contains(output, "cache.tmp"));
     ASSERT("Output does not contain log content", !string_contains(output, "Error log"));
     ASSERT("Output does not contain temp content", !string_contains(output, "Temp cache"));
     
     /* Clean up */
-    unlink(c_file);
-    unlink(log_file);
-    unlink(tmp_file);
-    unlink(txt_file);
+    snprintf(cmd, sizeof(cmd), "rm -rf %s", test_subdir);
+    run_command(cmd);
 }
 
 TEST(test_cli_exclude_with_glob) {
