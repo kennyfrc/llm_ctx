@@ -25,6 +25,9 @@
 /* void test_cli_codemap(void); -- removed -m option */
 void test_cli_output_to_file(void);
 void test_cli_e_flag_custom_guide(void);
+void test_cli_exclude_pattern(void);
+void test_cli_exclude_multiple_patterns(void);
+void test_cli_exclude_with_glob(void);
 
 /* Set up the test environment */
 void setup_test_env(void) {
@@ -1386,6 +1389,168 @@ TEST(test_cli_e_at_file_tilde_expansion_error) {
     ASSERT("Output mentions the tilde path", string_contains(output, "~/__test_nonexistent_guide.txt"));
 }
 
+TEST(test_cli_exclude_pattern) {
+    char cmd[1024];
+    
+    /* Create test files */
+    char test_file[PATH_MAX];
+    char log_file[PATH_MAX];
+    char min_js_file[PATH_MAX];
+    
+    snprintf(test_file, sizeof(test_file), "%s/__test_main.c", TEST_DIR);
+    snprintf(log_file, sizeof(log_file), "%s/__test_debug.log", TEST_DIR);
+    snprintf(min_js_file, sizeof(min_js_file), "%s/__test_app.min.js", TEST_DIR);
+    
+    FILE *f = fopen(test_file, "w");
+    if (f) {
+        fprintf(f, "// Main test file\nint main() { return 0; }\n");
+        fclose(f);
+    }
+    
+    f = fopen(log_file, "w");
+    if (f) {
+        fprintf(f, "Debug log content\n");
+        fclose(f);
+    }
+    
+    f = fopen(min_js_file, "w");
+    if (f) {
+        fprintf(f, "// Minified JavaScript\n");
+        fclose(f);
+    }
+    
+    /* Test excluding .log files */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __test_*.* -x '*.log' 2>&1", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains main.c", string_contains(output, "__test_main.c"));
+    ASSERT("Output contains app.min.js", string_contains(output, "__test_app.min.js"));
+    ASSERT("Output does not contain debug.log", !string_contains(output, "__test_debug.log"));
+    ASSERT("Output does not contain log content", !string_contains(output, "Debug log content"));
+    
+    /* Clean up */
+    unlink(test_file);
+    unlink(log_file);
+    unlink(min_js_file);
+}
+
+TEST(test_cli_exclude_multiple_patterns) {
+    char cmd[1024];
+    
+    /* Create test files */
+    char c_file[PATH_MAX];
+    char log_file[PATH_MAX];
+    char tmp_file[PATH_MAX];
+    char txt_file[PATH_MAX];
+    
+    snprintf(c_file, sizeof(c_file), "%s/__test_code.c", TEST_DIR);
+    snprintf(log_file, sizeof(log_file), "%s/__test_error.log", TEST_DIR);
+    snprintf(tmp_file, sizeof(tmp_file), "%s/__test_cache.tmp", TEST_DIR);
+    snprintf(txt_file, sizeof(txt_file), "%s/__test_readme.txt", TEST_DIR);
+    
+    FILE *f = fopen(c_file, "w");
+    if (f) {
+        fprintf(f, "// C code\n");
+        fclose(f);
+    }
+    
+    f = fopen(log_file, "w");
+    if (f) {
+        fprintf(f, "Error log\n");
+        fclose(f);
+    }
+    
+    f = fopen(tmp_file, "w");
+    if (f) {
+        fprintf(f, "Temp cache\n");
+        fclose(f);
+    }
+    
+    f = fopen(txt_file, "w");
+    if (f) {
+        fprintf(f, "README content\n");
+        fclose(f);
+    }
+    
+    /* Test excluding multiple patterns */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __test_*.* -x '*.log' -x '*.tmp' 2>&1", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains code.c", string_contains(output, "__test_code.c"));
+    ASSERT("Output contains readme.txt", string_contains(output, "__test_readme.txt"));
+    ASSERT("Output does not contain error.log", !string_contains(output, "__test_error.log"));
+    ASSERT("Output does not contain cache.tmp", !string_contains(output, "__test_cache.tmp"));
+    ASSERT("Output does not contain log content", !string_contains(output, "Error log"));
+    ASSERT("Output does not contain temp content", !string_contains(output, "Temp cache"));
+    
+    /* Clean up */
+    unlink(c_file);
+    unlink(log_file);
+    unlink(tmp_file);
+    unlink(txt_file);
+}
+
+TEST(test_cli_exclude_with_glob) {
+    char cmd[1024];
+    
+    /* Create directory structure */
+    char src_dir[PATH_MAX];
+    char gen_dir[PATH_MAX];
+    char lib_dir[PATH_MAX];
+    
+    snprintf(src_dir, sizeof(src_dir), "%s/__test_src", TEST_DIR);
+    snprintf(gen_dir, sizeof(gen_dir), "%s/__test_src/__test_generated", TEST_DIR);
+    snprintf(lib_dir, sizeof(lib_dir), "%s/__test_src/__test_lib", TEST_DIR);
+    
+    mkdir(src_dir, 0755);
+    mkdir(gen_dir, 0755);
+    mkdir(lib_dir, 0755);
+    
+    /* Create test files */
+    char main_file[PATH_MAX];
+    char gen_file[PATH_MAX];
+    char lib_file[PATH_MAX];
+    
+    snprintf(main_file, sizeof(main_file), "%s/__test_main.js", src_dir);
+    snprintf(gen_file, sizeof(gen_file), "%s/__test_api.js", gen_dir);
+    snprintf(lib_file, sizeof(lib_file), "%s/__test_util.js", lib_dir);
+    
+    FILE *f = fopen(main_file, "w");
+    if (f) {
+        fprintf(f, "// Main JS\n");
+        fclose(f);
+    }
+    
+    f = fopen(gen_file, "w");
+    if (f) {
+        fprintf(f, "// Generated API\n");
+        fclose(f);
+    }
+    
+    f = fopen(lib_file, "w");
+    if (f) {
+        fprintf(f, "// Utility library\n");
+        fclose(f);
+    }
+    
+    /* Test excluding directory with double-star pattern */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f '__test_src/**' -x '__test_src/__test_generated/**' 2>&1", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains main.js", string_contains(output, "__test_main.js"));
+    ASSERT("Output contains util.js", string_contains(output, "__test_util.js"));
+    ASSERT("Output does not contain generated api.js", !string_contains(output, "__test_api.js"));
+    ASSERT("Output does not contain generated content", !string_contains(output, "Generated API"));
+    
+    /* Clean up */
+    unlink(main_file);
+    unlink(gen_file);
+    unlink(lib_file);
+    rmdir(gen_dir);
+    rmdir(lib_dir);
+    rmdir(src_dir);
+}
+
 
 
 
@@ -1482,6 +1647,11 @@ int main(void) {
     
     /* Test for file output functionality */
     RUN_TEST(test_cli_output_to_file);
+    
+    /* Tests for CLI exclude patterns */
+    RUN_TEST(test_cli_exclude_pattern);
+    RUN_TEST(test_cli_exclude_multiple_patterns);
+    RUN_TEST(test_cli_exclude_with_glob);
 
     /* Temporarily skipped tests for UTF-16/32 handling, as the current heuristic */
     /* correctly identifies them as binary (due to null bytes), but the ideal */

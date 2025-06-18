@@ -367,6 +367,11 @@ static KeywordBoost g_kw_boosts[MAX_KEYWORDS];
 static int          g_kw_boosts_len = 0;   /* 0..MAX_KEYWORDS */
 static bool         g_keywords_flag_used = false; /* Track if --keywords was used */
 
+/* CLI exclude pattern configuration */
+#define MAX_CLI_EXCLUDE_PATTERNS 128
+static char *g_cli_exclude_patterns[MAX_CLI_EXCLUDE_PATTERNS];
+static int   g_cli_exclude_count = 0;
+
 /**
  * Parse keywords specification from string
  * Format: "token1:weight1,token2:weight2,..." or "token1,token2,..."
@@ -526,6 +531,67 @@ static bool parse_filerank_weights(const char *weight_str) {
     
     free(str_copy);
     return true;
+}
+
+/**
+ * Add a CLI exclude pattern to the global list
+ */
+static void add_cli_exclude_pattern(const char *raw) {
+    if (g_cli_exclude_count >= MAX_CLI_EXCLUDE_PATTERNS) {
+        fprintf(stderr, "Warning: Maximum %d exclude patterns allowed, ignoring '%s'\n",
+                MAX_CLI_EXCLUDE_PATTERNS, raw);
+        return;
+    }
+    g_cli_exclude_patterns[g_cli_exclude_count++] =
+        arena_strdup_safe(&g_arena, raw);
+}
+
+/**
+ * Check if a path matches any CLI exclude pattern
+ */
+static bool matches_cli_exclude(const char *path) {
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    
+    for (int i = 0; i < g_cli_exclude_count; ++i) {
+        const char *pat = g_cli_exclude_patterns[i];
+        
+        /* Handle ** patterns for recursive directory matching */
+        const char *double_star = strstr(pat, "**");
+        if (double_star) {
+            /* Pattern contains **, needs special handling */
+            size_t prefix_len = double_star - pat;
+            
+            /* Check if path starts with the prefix before ** */
+            if (prefix_len > 0 && strncmp(path, pat, prefix_len) != 0) {
+                continue;
+            }
+            
+            /* If pattern ends with double-star or slash-double-star, match any path with that prefix */
+            if (double_star[2] == '\0' || 
+                (double_star[2] == '/' && double_star[3] == '\0')) {
+                return true;
+            }
+            
+            /* If pattern is like dir/double-star, match anything under dir/ */
+            if (prefix_len > 0 && pat[prefix_len-1] == '/') {
+                return true;
+            }
+            
+            /* For patterns like dir/double-star/file, use simple substring match for now */
+            const char *suffix = double_star + 2;
+            if (*suffix == '/') suffix++;
+            if (*suffix && strstr(path + prefix_len, suffix)) {
+                return true;
+            }
+        } else {
+            /* Standard fnmatch for patterns without ** */
+            if (fnmatch(pat, path, FNM_PATHNAME | FNM_PERIOD) == 0 ||
+                fnmatch(pat, base, 0) == 0)
+                return true;
+        }
+    }
+    return false;
 }
 
 /**
@@ -735,6 +801,8 @@ void add_directory_tree_with_depth(const char *base_dir, int current_depth) {
         if (lstat(path, &statbuf) == -1)
             continue;
         if (respect_gitignore && should_ignore_path(path))
+            continue;
+        if (matches_cli_exclude(path))
             continue;
         if (!file_already_in_tree(path))
             add_to_file_tree(path);
@@ -1122,6 +1190,9 @@ void show_help(void) {
     printf("                        Factors are multiplied by 64 (e.g., factor 2 = 128x boost)\n");
     printf("                        Default factor is 2 if not specified\n");
     printf("                        Example: -k 'chat_input:3,prosemirror:1.5'\n");
+    printf("  -x, --exclude=PATTERN Exclude files/directories matching PATTERN (repeatable)\n");
+    printf("                        Patterns use git-style glob syntax\n");
+    printf("                        Applied after .gitignore processing\n");
     printf("  --no-gitignore        Ignore .gitignore files when collecting files\n");
     printf("  --ignore-config       Skip loading configuration file\n\n");
     printf("By default, llm_ctx reads content from stdin.\n");
@@ -1150,6 +1221,10 @@ void show_help(void) {
     printf("  # Boost specific keywords for focused results\n");
     printf("  llm_ctx -c \"How does authentication work?\" -k auth:3,session:2 -f src/**/*.js\n");
     printf("  # auth gets 192x boost (3*64), session gets 128x boost (2*64)\n\n");
+    printf("  # Exclude specific patterns\n");
+    printf("  llm_ctx -f src/** -x 'src/generated/**' -x '*.min.js'\n\n");
+    printf("  # Include directory but exclude subdirectory\n");
+    printf("  llm_ctx -f javascripts/ -x 'javascripts/lib/cami/**'\n\n");
     exit(0);
 }
 
@@ -1537,6 +1612,11 @@ void find_recursive(const char *base_dir, const char *pattern) {
         if (respect_gitignore && should_ignore_path(path)) {
             continue; /* Skip ignored files/directories */
         }
+        
+        /* Check CLI exclude patterns */
+        if (matches_cli_exclude(path)) {
+            continue; /* Skip CLI-excluded files/directories */
+        }
 
         // Add any non-ignored entry to the file tree structure
         add_to_file_tree(path);
@@ -1634,6 +1714,11 @@ bool process_pattern(const char *pattern) {
 
             // Check ignore rules before adding
             if (respect_gitignore && should_ignore_path(path)) {
+                continue;
+            }
+            
+            // Check CLI exclude patterns
+            if (matches_cli_exclude(path)) {
                 continue;
             }
 
@@ -1766,6 +1851,7 @@ static const struct option long_options[] = {
     {"filerank-weight", required_argument, 0, 404}, /* FileRank custom weights */
     {"keywords",        required_argument, 0, 405}, /* Keywords boost specification */
     {"filerank-cutoff", required_argument, 0, 406}, /* FileRank cutoff specification */
+    {"exclude",         required_argument, 0, 'x'}, /* Exclude pattern */
     {0, 0, 0, 0} /* Terminator */
 };
 static bool s_flag_used = false; /* Track if -s was used */
@@ -2351,7 +2437,7 @@ int main(int argc, char *argv[]) {
     int opt;
     /* Add 'C' to the short options string. It takes no argument. */
     /* Add 'b:' for short form of --token-budget and 'D::' for token diagnostics */
-    while ((opt = getopt_long(argc, argv, "hc:s::fre::CtdTOL:o::b:D::k:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s::fre::CtdTOL:o::b:D::k:x:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
                 show_help(); /* Exits */
@@ -2516,6 +2602,14 @@ int main(int argc, char *argv[]) {
                     return 1;
                 }
                 g_filerank_cutoff_spec = arena_strdup_safe(&g_arena, optarg);
+                break;
+            case 'x': /* -x or --exclude */
+                if (!optarg) {
+                    fprintf(stderr, "Error: -x/--exclude requires a pattern argument\n");
+                    return 1;
+                }
+                /* Forward declaration - will be implemented soon */
+                add_cli_exclude_pattern(optarg);
                 break;
             case '?': /* Unknown option OR missing required argument */
                 /* optopt contains the failing option character */
