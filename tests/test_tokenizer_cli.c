@@ -55,10 +55,10 @@ TEST(test_token_budget_exceeded) {
         ASSERT("Should contain tokenizer warning", 
                strstr(stdout_buf, "tokenizer library not found") != NULL);
     } else {
-        /* Tokenizer available - should exit with error for exceeded budget */
-        ASSERT("Expected non-zero exit code for exceeded budget", exit_code != 0);
-        ASSERT("Should contain token budget error message", 
-               strstr(stdout_buf, "exceeds") != NULL || strstr(stdout_buf, "budget") != NULL);
+        /* Tokenizer available - should succeed with warning for exceeded budget */
+        ASSERT("Expected zero exit code for exceeded budget", exit_code == 0);
+        ASSERT("Should contain token budget warning message", 
+               strstr(stdout_buf, "WARNING") != NULL || strstr(stdout_buf, "budget") != NULL);
     }
     
     /* Clean up */

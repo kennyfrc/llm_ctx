@@ -110,7 +110,7 @@ TEST(test_filerank_debug_no_query) {
 /* Test --filerank-debug flag with query (updated for Slice 1) */
 TEST(test_filerank_debug_with_query) {
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -o -c \"test query\" -f tests/test_data/simple.txt tests/test_data/example.txt", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -r -o -c \"test query\" -f tests/test_data/simple.txt tests/test_data/example.txt", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     /* Should output FileRank debug info */
@@ -134,7 +134,7 @@ TEST(test_filerank_debug_with_query) {
 TEST(test_filerank_preserves_order) {
     /* Use a query that matches simple.txt to ensure it ranks first */
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -o -c \"test\" -f tests/test_data/simple.txt tests/test_data/example.txt tests/test_data/binary.bin", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -r -o -c \"test\" -f tests/test_data/simple.txt tests/test_data/example.txt tests/test_data/binary.bin", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     /* Find positions of files in output */
@@ -158,7 +158,7 @@ TEST(test_filerank_path_hits) {
     if (f) { fprintf(f, "No matching content\n"); fclose(f); }
     
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -o -c \"arena test\" -f tests/test_data/arena-test.txt tests/test_data/no-match.txt", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -r -o -c \"arena test\" -f tests/test_data/arena-test.txt tests/test_data/no-match.txt", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     /* Should have FileRank output */
@@ -194,7 +194,7 @@ TEST(test_filerank_content_hits) {
     }
     
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -o -c \"token\" -f tests/test_data/many_tokens.txt tests/test_data/few_tokens.txt", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -r -o -c \"token\" -f tests/test_data/many_tokens.txt tests/test_data/few_tokens.txt", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     /* Verify scores directly in output */
@@ -216,7 +216,7 @@ TEST(test_filerank_case_insensitive) {
     }
     
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -o -c \"arena\" -f tests/test_data/mixed_case.txt", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -r -o -c \"arena\" -f tests/test_data/mixed_case.txt", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     char *score_line = strstr(output, "  ");
@@ -252,7 +252,7 @@ TEST(test_filerank_size_penalty) {
     }
     
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -o -c \"test\" -f tests/test_data/small.txt tests/test_data/large.txt", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -r -o -c \"test\" -f tests/test_data/small.txt tests/test_data/large.txt", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     /* Both should match "test" but large file should have lower score due to penalty */
@@ -304,7 +304,7 @@ TEST(test_filerank_sorting) {
     
     /* Test with files in reverse order */
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -o -c \"arena\" -f tests/test_data/no-score.txt tests/test_data/low-score.txt tests/test_data/medium-score.txt tests/test_data/high-score.txt", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -r -o -c \"arena\" -f tests/test_data/no-score.txt tests/test_data/low-score.txt tests/test_data/medium-score.txt tests/test_data/high-score.txt", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     /* Check debug output shows sorted scores */
@@ -375,7 +375,7 @@ TEST(test_filerank_tfidf) {
     }
     
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -o -c \"algorithm\" -f tests/test_data/unique-term.txt tests/test_data/common-terms.txt tests/test_data/mixed-terms.txt", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-debug -r -o -c \"algorithm\" -f tests/test_data/unique-term.txt tests/test_data/common-terms.txt tests/test_data/mixed-terms.txt", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     /* Check that TF-IDF scoring works */

@@ -113,7 +113,7 @@ TEST(test_filerank_cutoff_cli_parsing) {
     char cmd[2048];
     
     /* Test valid cutoff specification first */
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-cutoff ratio:0.5 -c test --filerank-debug -o -f /dev/null", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s --filerank-cutoff ratio:0.5 -c test -r --filerank-debug -o -f /dev/null", get_llm_ctx_path());
     char *output = run_command(cmd);
     /* Should accept valid cutoff */
     ASSERT("Should accept valid cutoff specification", strstr(output, "error") == NULL || strstr(output, "Error") == NULL);
@@ -123,7 +123,7 @@ TEST(test_filerank_cutoff_cli_parsing) {
 TEST(test_filerank_cutoff_ratio) {
     char cmd[2048];
     
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -c 'search' --filerank-cutoff ratio:0.5 --filerank-debug -o -f tests/test_data/cutoff/*.txt", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -c 'search' -r --filerank-cutoff ratio:0.5 --filerank-debug -o -f tests/test_data/cutoff/*.txt", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     /* Should see cutoff debug message */
@@ -140,7 +140,7 @@ TEST(test_filerank_cutoff_ratio) {
 TEST(test_filerank_cutoff_topk) {
     char cmd[2048];
     
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -c 'search' --filerank-cutoff topk:2 --filerank-debug -o -f tests/test_data/cutoff/*.txt", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -c 'search' -r --filerank-cutoff topk:2 --filerank-debug -o -f tests/test_data/cutoff/*.txt", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     /* Should see cutoff debug message showing only 2 files kept */
@@ -151,7 +151,7 @@ TEST(test_filerank_cutoff_topk) {
 TEST(test_filerank_cutoff_percentile) {
     char cmd[2048];
     
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -c 'search' --filerank-cutoff percentile:50 --filerank-debug -o -f tests/test_data/cutoff/*.txt", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -c 'search' -r --filerank-cutoff percentile:50 --filerank-debug -o -f tests/test_data/cutoff/*.txt", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     /* Should keep top 50% of files (2 out of 4) */
@@ -162,7 +162,7 @@ TEST(test_filerank_cutoff_percentile) {
 TEST(test_filerank_cutoff_auto) {
     char cmd[2048];
     
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -c 'search' --filerank-cutoff auto --filerank-debug -o -f tests/test_data/cutoff/*.txt", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -c 'search' -r --filerank-cutoff auto --filerank-debug -o -f tests/test_data/cutoff/*.txt", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     /* Should automatically detect cutoff point */
@@ -181,7 +181,7 @@ TEST(test_filerank_cutoff_zero_scores) {
     char cmd[2048];
     
     /* Query that won't match any files well */
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -c 'xyzzy123' --filerank-cutoff ratio:0.1 --filerank-debug -o -f tests/test_data/cutoff/*.txt", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -c 'xyzzy123' -r --filerank-cutoff ratio:0.1 --filerank-debug -o -f tests/test_data/cutoff/*.txt", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     /* All files should score 0 or very low and be filtered */
@@ -198,7 +198,7 @@ TEST(test_filerank_cutoff_zero_scores) {
 TEST(test_filerank_cutoff_topk_large) {
     char cmd[2048];
     
-    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -c 'search' --filerank-cutoff topk:100 --filerank-debug -o -f tests/test_data/cutoff/*.txt", get_llm_ctx_path());
+    snprintf(cmd, sizeof(cmd), "LLM_CTX_NO_CONFIG=1 %s -c 'search' -r --filerank-cutoff topk:100 --filerank-debug -o -f tests/test_data/cutoff/*.txt", get_llm_ctx_path());
     char *output = run_command(cmd);
     
     /* Should process files normally when k > num_files */

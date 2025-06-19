@@ -49,7 +49,7 @@ static void test_cli_parsing_single_keyword(void) {
     fclose(f);
     
     /* Test single keyword parsing */
-    FILE *pipe = popen("./llm_ctx -f " TEST_DIR "/*.txt -c chat_input "
+    FILE *pipe = popen("./llm_ctx -f " TEST_DIR "/*.txt -c chat_input -r "
                       "--keywords chat_input --filerank-debug 2>&1 | grep Keywords:", "r");
     char line[256] = {0};
     if (pipe) {
@@ -69,7 +69,7 @@ static void test_cli_parsing_multiple_keywords(void) {
     fclose(f);
     
     /* Test multiple keywords with custom weights */
-    FILE *pipe = popen("./llm_ctx -f " TEST_DIR "/*.txt -c 'chat_input prosemirror' "
+    FILE *pipe = popen("./llm_ctx -f " TEST_DIR "/*.txt -c 'chat_input prosemirror' -r "
                       "--keywords 'chat_input:3,prosemirror:1.5' --filerank-debug 2>&1 | grep Keywords:", "r");
     char line[256] = {0};
     if (pipe) {
@@ -92,7 +92,7 @@ static void test_case_insensitivity(void) {
     /* Test case insensitive matching */
     char cmd[512];
     snprintf(cmd, sizeof(cmd), 
-             "./llm_ctx -f " TEST_DIR "/*.txt -c CHAT_INPUT "
+             "./llm_ctx -f " TEST_DIR "/*.txt -c CHAT_INPUT -r "
              "--keywords chat_input:3 --filerank-weight tfidf:0.1,content:10.0 "
              "--filerank-debug 2>&1");
     

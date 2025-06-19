@@ -338,7 +338,8 @@ char *user_instructions = NULL;   /* Allocated from arena */
 static char *system_instructions = NULL;   /* Allocated from arena */
 static bool want_editor_comments = false;   /* -e flag */
 static char *custom_response_guide = NULL; /* Custom response guide from -e argument */
-static bool raw_mode = false; /* -r flag */
+static bool raw_mode = false; /* -R flag */
+static bool enable_filerank = false; /* -r flag */
 static bool g_filerank_debug = false; /* --filerank-debug flag */
 static bool tree_only = false; /* -T flag - filtered tree */
 static bool global_tree_only = false; /* -t flag - global tree */
@@ -1169,7 +1170,9 @@ void show_help(void) {
     printf("  -eTEXT         Use TEXT as custom response guide (no space after -e)\n");
     printf("  -e@FILE        Read custom response guide from FILE (no space after -e)\n");
     printf("  -e@-           Read custom response guide from stdin (no space after -e)\n");
-    printf("  -r             Raw mode: omit system instructions and response guide\n");
+    printf("  -r, --rank     Enable FileRank to sort files by relevance to query\n");
+    printf("                 (default: preserve file order as specified)\n");
+    printf("  -R, --raw      Raw mode: omit system instructions and response guide\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
     printf("  -t             Generate complete directory tree (full tree)\n");
     printf("  -T             Generate file tree only for specified files (filtered tree)\n");
@@ -1834,7 +1837,8 @@ static const struct option long_options[] = {
     {"system",          optional_argument, 0, 's'}, /* Argument is optional (@file/@-/default) */
     {"files",           no_argument,       0, 'f'}, /* Indicates file args follow */
     {"editor-comments", optional_argument, 0, 'e'},
-    {"raw",             no_argument,       0, 'r'},
+    {"raw",             no_argument,       0, 'R'},
+    {"rank",            no_argument,       0, 'r'}, /* Enable FileRank sorting */
     {"tree",            no_argument,       0, 't'}, /* Generate complete directory tree */
     {"filtered-tree",   no_argument,       0, 'T'}, /* Generate file tree for specified files */
     {"tree-only",       no_argument,       0, 'O'}, /* Generate tree only without file content */
@@ -2437,7 +2441,7 @@ int main(int argc, char *argv[]) {
     int opt;
     /* Add 'C' to the short options string. It takes no argument. */
     /* Add 'b:' for short form of --token-budget and 'D::' for token diagnostics */
-    while ((opt = getopt_long(argc, argv, "hc:s::fre::CtdTOL:o::b:D::k:x:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s::fRe::CtdTOL:o::b:D::k:x:r", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
                 show_help(); /* Exits */
@@ -2474,7 +2478,10 @@ int main(int argc, char *argv[]) {
                     handle_editor_arg(optarg);  /* glued/NULL */
                 }
                 break;
-            case 'r': /* -r or --raw */
+            case 'r': /* -r or --rank */
+                enable_filerank = true;
+                break;
+            case 'R': /* -R or --raw */
                 raw_mode = true;
                 r_flag_used = true;
                 break;
@@ -2882,8 +2889,8 @@ int main(int argc, char *argv[]) {
     /* Process codemap and file content unless tree_only_output is set */
     if (!tree_only_output) {
     
-    /* Apply FileRank if we have files and a query */
-    if (num_processed_files > 0 && user_instructions) {
+    /* Apply FileRank if we have files and a query and FileRank is enabled */
+    if (num_processed_files > 0 && user_instructions && enable_filerank) {
         /* Allocate FileRank array */
         ranks = arena_push_array_safe(&g_arena, FileRank, num_processed_files);
         if (!ranks) {
@@ -3086,13 +3093,16 @@ int main(int argc, char *argv[]) {
                             total_tokens, g_token_budget, (total_tokens * 100) / g_token_budget);
                 }
             } else {
-                /* No FileRank available - provide helpful error message */
-                fprintf(stderr, "error: context uses %zu tokens > budget %zu – output rejected\n", 
+                /* No FileRank available - show warning but continue */
+                fprintf(stderr, "WARNING: context uses %zu tokens > budget %zu\n", 
                         total_tokens, g_token_budget);
-                fprintf(stderr, "\nHint: Use -c \"query terms\" to enable FileRank, which will select the most relevant files\n");
-                fprintf(stderr, "      that fit within your token budget based on your search query.\n");
-                unlink(temp_file_path);
-                return 3; /* Exit with status 3 for budget exceeded */
+                if (user_instructions) {
+                    fprintf(stderr, "\nHint: Use -r flag to enable FileRank, which will select the most relevant files\n");
+                    fprintf(stderr, "      that fit within your token budget based on your search query.\n");
+                } else {
+                    fprintf(stderr, "\nHint: Use -c \"query terms\" with -r flag to enable FileRank file selection.\n");
+                }
+                /* Continue with output despite exceeding budget */
             }
         }
         
