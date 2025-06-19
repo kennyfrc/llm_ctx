@@ -38,7 +38,7 @@
     
     # Set a custom budget (diagnostics shown automatically)
     llm_ctx -f 'src/**/*.py' -b 100000 -c "Review this Python codebase"
-    # If over budget, exits with code 3 before copying
+    # If over budget, shows warning but still outputs content
     ```
     *(Token counting built with `make all` - see [Token Counting](#token-counting-and-budget-management))*
 
@@ -454,7 +454,7 @@ Options:
   -b N, --token-budget=N
                  Set a token budget limit (default: 96000). If the generated context
                  exceeds this token count (using OpenAI tokenization), the output is
-                 rejected and the program exits with code 3. Token usage and detailed
+                 rejected unless using -r flag for automatic file selection. Token usage and detailed
                  diagnostics are displayed automatically when the tokenizer is available.
                  Example: -b 128000 (for GPT-4's context limit)
 
@@ -777,8 +777,9 @@ llm_ctx -f 'src/**/*.js' -b 128000
 # If the context exceeds the budget:
 # - Token usage shown with percentage over 100%
 # - Error message printed to stderr  
-# - Program exits with code 3
-# - No output is generated (clipboard/stdout/file)
+# - Program continues with warning (exit code 0)
+# - Output is still generated (clipboard/stdout/file)
+# - Use -r flag to enable FileRank for automatic file selection
 ```
 
 Exit codes:
@@ -864,7 +865,7 @@ llm_ctx -f file.txt --token-model=gpt-3.5-turbo
 
 ### FileRank: Intelligent File Selection
 
-When your file selection exceeds the token budget, `llm_ctx` automatically uses FileRank to select the most relevant files based on your query (`-c` instruction). FileRank scores files using:
+FileRank is an opt-in feature that sorts files by relevance to your query. When enabled with the `-r` flag, FileRank scores files using:
 
 - **TF-IDF scoring**: Term frequency-inverse document frequency for query relevance
 - **Path matching**: Query terms found in file paths get higher weight
@@ -873,14 +874,17 @@ When your file selection exceeds the token budget, `llm_ctx` automatically uses 
 
 #### Using FileRank
 
-FileRank activates automatically when the token budget is exceeded:
+Enable FileRank with the `-r` flag to sort files by relevance:
 
 ```bash
-# If total tokens exceed 50k, FileRank selects most relevant files for "search"
-llm_ctx -f 'src/**/*.js' -c "optimize the search algorithm" -b 50000
+# Sort files by relevance to "search algorithm"
+llm_ctx -r -f 'src/**/*.js' -c "optimize the search algorithm"
+
+# FileRank also helps when exceeding token budget
+llm_ctx -r -f 'src/**/*.js' -c "search" -b 50000
 
 # Debug FileRank scoring to see why files were selected
-llm_ctx -f 'src/**/*.js' -c "search" -b 50000 --filerank-debug
+llm_ctx -r -f 'src/**/*.js' -c "search" --filerank-debug
 ```
 
 #### Customizing FileRank Weights
@@ -889,7 +893,7 @@ You can adjust how FileRank scores files using `--filerank-weight`:
 
 ```bash
 # Heavily favor files with query terms in their path
-llm_ctx -f '**/*.py' -c "test" -b 30000 \
+llm_ctx -r -f '**/*.py' -c "test" \
   --filerank-weight path:10,content:1,size:0.01,tfidf:5
 
 # Focus on content matches over path matches  
@@ -923,19 +927,19 @@ filerank_weight_tfidf_x100 = 1000    # 10.0
 1. **Finding test files:**
    ```bash
    # FileRank will prioritize files with "test" in path/content
-   llm_ctx -f 'src/**/*' -c "analyze test coverage" -b 50000
+   llm_ctx -r -f 'src/**/*' -c "analyze test coverage"
    ```
 
 2. **Focusing on specific algorithms:**
    ```bash
    # FileRank prioritizes files mentioning "dijkstra"
-   llm_ctx -f '**/*.{c,h}' -c "optimize dijkstra implementation" -b 40000
+   llm_ctx -r -f '**/*.{c,h}' -c "optimize dijkstra implementation"
    ```
 
 3. **Debugging file selection:**
    ```bash
    # See FileRank scores and understand selection
-   llm_ctx -f '**/*.py' -c "database queries" -b 30000 --filerank-debug
+   llm_ctx -r -f '**/*.py' -c "database queries" --filerank-debug
    ```
 
 ## Limitations
