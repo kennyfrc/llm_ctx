@@ -336,6 +336,12 @@ int num_special_files = 0;
 static int file_mode = 0;         /* 0 = stdin mode, 1 = file mode (-f or @-) */
 char *user_instructions = NULL;   /* Allocated from arena */
 static char *system_instructions = NULL;   /* Allocated from arena */
+
+/* Default system instructions based on traits of pragmatic developers */
+static const char *DEFAULT_SYSTEM_INSTRUCTIONS = 
+    "You are pragmatic, direct, and focused on simplicity. You prioritize elegant solutions "
+    "with minimal complexity, favor data-driven designs over excessive abstraction, and "
+    "communicate technical ideas clearly without unnecessary verbosity.";
 static bool want_editor_comments = false;   /* -e flag */
 static char *custom_response_guide = NULL; /* Custom response guide from -e argument */
 static bool raw_mode = false; /* -R flag */
@@ -2674,8 +2680,8 @@ int main(int argc, char *argv[]) {
     
     /* Apply configuration values if no CLI flags override them */
     if (config_loaded) {
-        /* system_prompt_file - only if -s flag was used and no direct content provided */
-        if (s_flag_used && !system_instructions) {
+        /* system_prompt_file - load from config if no direct content provided */
+        if (!system_instructions) {
             char *prompt_file = NULL;
             
             /* Check if a template name was specified */
@@ -2780,6 +2786,12 @@ int main(int argc, char *argv[]) {
     /* OR if editor comments were requested (via -e) */
     /* OR if stdin was consumed by an option like -c @- or -s @- */
     allow_empty_context = c_flag_used || s_flag_used || e_flag_used || g_stdin_consumed_for_option;
+    
+    /* Use default system instructions if none provided */
+    if (!system_instructions && !raw_mode) {
+        system_instructions = arena_strdup_safe(&g_arena, DEFAULT_SYSTEM_INSTRUCTIONS);
+    }
+    
     if (!raw_mode) {
         /* Add user instructions first, if provided */
         add_user_instructions(user_instructions);
