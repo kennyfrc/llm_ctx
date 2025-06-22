@@ -3013,7 +3013,7 @@ int main(int argc, char *argv[]) {
                     fprintf(temp_file, "<user_instructions>\n%s\n</user_instructions>\n\n", user_instructions);
                 }
                 if (system_instructions) {
-                    fprintf(temp_file, "%s\n\n", system_instructions);
+                    add_system_instructions(system_instructions);
                 }
                 if (custom_response_guide) {
                     fprintf(temp_file, "<response_guide>\n%s\n</response_guide>\n\n", custom_response_guide);
