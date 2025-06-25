@@ -26,6 +26,8 @@
 #include <stdarg.h>   /* For va_list, va_start, va_end */
 #include <limits.h>   /* For PATH_MAX */
 #include <getopt.h>   /* For getopt_long */
+#include <math.h>     /* For log() in TF-IDF calculation */
+#include <float.h>    /* For DBL_MAX */
 #ifdef __APPLE__
 #  include <mach-o/dyld.h> /* _NSGetExecutablePath */
 #endif
@@ -33,6 +35,7 @@
 #include "arena.h"
 #include "debug.h"
 #include "tokenizer.h"
+#include "config.h"
 
 static Arena g_arena;
 
@@ -163,6 +166,14 @@ typedef struct {
     bool is_dir;
 } FileInfo;
 
+/* FileRank structure for relevance scoring */
+typedef struct {
+    const char *path;   /* shares memory with processed_files[i] */
+    double      score;  /* relevance score */
+    size_t      bytes;  /* cached to avoid stat() twice */
+    size_t      tokens; /* set later by tokenizer */
+} FileRank;
+
 /* Function declarations with proper prototypes */
 void show_help(void);
 bool collect_file(const char *filepath);
@@ -177,6 +188,7 @@ int compare_file_paths(const void *a, const void *b);
 char *find_common_prefix(void);
 void print_tree_node(const char *path, int level, bool is_last, const char *prefix);
 void build_tree_recursive(char **paths, int count, int level, char *prefix, const char *path_prefix);
+void rank_files(const char *query, FileRank *ranks, int num_files);
 
 /* Read entire FILE* into a NUL-terminated buffer.
  * Uses arena allocation. Returns NULL on OOM or read error. */
@@ -253,6 +265,48 @@ static char *slurp_file(const char *path) {
     errno = slurp_errno;
     return txt;
 }
+
+/* Helper function to expand tilde (~) in file paths */
+static char *expand_tilde_path(const char *path) {
+    if (!path || path[0] != '~') {
+        /* No tilde to expand, return a copy of the original path */
+        return arena_strdup_safe(&g_arena, path);
+    }
+
+    glob_t glob_result;
+    int glob_flags = GLOB_TILDE;
+    
+    /* Use glob to expand the tilde */
+    int glob_status = glob(path, glob_flags, NULL, &glob_result);
+    if (glob_status != 0) {
+        /* glob failed - return NULL and preserve errno */
+        if (glob_status == GLOB_NOMATCH) {
+            errno = ENOENT; /* File not found */
+        } else {
+            errno = EINVAL; /* Invalid path */
+        }
+        return NULL;
+    }
+    
+    /* Check that we got exactly one match */
+    if (glob_result.gl_pathc != 1) {
+        globfree(&glob_result);
+        errno = EINVAL; /* Ambiguous path */
+        return NULL;
+    }
+    
+    /* Copy the expanded path */
+    char *expanded_path = arena_strdup_safe(&g_arena, glob_result.gl_pathv[0]);
+    globfree(&glob_result);
+    
+    if (!expanded_path) {
+        errno = ENOMEM;
+        return NULL;
+    }
+    
+    return expanded_path;
+}
+
 bool process_stdin_content(void);
 void output_file_callback(const char *name, const char *type, const char *content);
 bool is_binary(FILE *file);
@@ -282,14 +336,270 @@ int num_special_files = 0;
 static int file_mode = 0;         /* 0 = stdin mode, 1 = file mode (-f or @-) */
 char *user_instructions = NULL;   /* Allocated from arena */
 static char *system_instructions = NULL;   /* Allocated from arena */
+
+/* Default system instructions based on traits of pragmatic developers */
+static const char *DEFAULT_SYSTEM_INSTRUCTIONS = 
+    "You are pragmatic, direct, and focused on simplicity. You prioritize elegant solutions "
+    "with minimal complexity, favor data-driven designs over excessive abstraction, and "
+    "communicate technical ideas clearly without unnecessary verbosity.";
 static bool want_editor_comments = false;   /* -e flag */
 static char *custom_response_guide = NULL; /* Custom response guide from -e argument */
-static bool raw_mode = false; /* -r flag */
+static bool raw_mode = false; /* -R flag */
+static bool enable_filerank = false; /* -r flag */
+static bool g_filerank_debug = false; /* --filerank-debug flag */
 static bool tree_only = false; /* -T flag - filtered tree */
 static bool global_tree_only = false; /* -t flag - global tree */
 static bool tree_only_output = false; /* -O flag - tree only without file content */
 static int tree_max_depth = 4; /* -L flag - default depth of 4 for web dev projects */
-bool debug_mode = false; /* -d flag */
+/* debug_mode defined in debug.c */
+
+/* FileRank weight configuration */
+static double g_filerank_weight_path = 8.0;      /* Weight for path hits */
+static double g_filerank_weight_content = 0.8;   /* Weight for content hits */
+static double g_filerank_weight_size = 0.08;     /* Weight for size penalty */
+static double g_filerank_weight_tfidf = 16.0;    /* Weight for TF-IDF score */
+static char *g_filerank_cutoff_spec = NULL;      /* Cutoff specification string */
+
+/* Keywords boost configuration */
+#define MAX_KEYWORDS 32
+#define KEYWORD_BASE_MULTIPLIER 64.0
+
+typedef struct {
+    char  *token;     /* lowercase, arena-owned */
+    double weight;    /* factor * BASE_MULTIPLIER */
+} KeywordBoost;
+
+/* globals */
+static KeywordBoost g_kw_boosts[MAX_KEYWORDS];
+static int          g_kw_boosts_len = 0;   /* 0..MAX_KEYWORDS */
+static bool         g_keywords_flag_used = false; /* Track if --keywords was used */
+
+/* CLI exclude pattern configuration */
+#define MAX_CLI_EXCLUDE_PATTERNS 128
+static char *g_cli_exclude_patterns[MAX_CLI_EXCLUDE_PATTERNS];
+static int   g_cli_exclude_count = 0;
+
+/**
+ * Parse keywords specification from string
+ * Format: "token1:weight1,token2:weight2,..." or "token1,token2,..."
+ * Returns true on success, false on error
+ */
+static bool parse_keywords(const char *spec) {
+    if (!spec || !*spec) {
+        return true; /* Empty spec is valid */
+    }
+    
+    /* Reset keywords */
+    g_kw_boosts_len = 0;
+    
+    /* Make a copy to tokenize */
+    char *str_copy = arena_strdup_safe(&g_arena, spec);
+    if (!str_copy) return false;
+    
+    /* Split by comma or space */
+    char *saveptr;
+    char *token_spec = strtok_r(str_copy, ", ", &saveptr);
+    
+    while (token_spec) {
+        /* Check limit */
+        if (g_kw_boosts_len >= MAX_KEYWORDS) {
+            fprintf(stderr, "Warning: Maximum %d keywords allowed, ignoring '%s' and remaining keywords\n",
+                    MAX_KEYWORDS, token_spec);
+            break;
+        }
+        /* Check for colon separator for weight */
+        char *colon = strchr(token_spec, ':');
+        double factor = 2.0; /* Default factor */
+        
+        if (colon) {
+            *colon = '\0';
+            char *weight_str = colon + 1;
+            char *endptr;
+            factor = strtod(weight_str, &endptr);
+            
+            /* Validate factor */
+            if (*endptr != '\0') {
+                fprintf(stderr, "Warning: Invalid factor '%s' for keyword '%s', using default 2\n", 
+                        weight_str, token_spec);
+                factor = 2.0;
+            } else if (factor <= 0) {
+                fprintf(stderr, "Warning: Factor must be positive for keyword '%s', using default 2\n", 
+                        token_spec);
+                factor = 2.0;
+            }
+        }
+        
+        /* Apply base multiplier to get actual weight */
+        double weight = factor * KEYWORD_BASE_MULTIPLIER;
+        
+        /* Skip empty tokens */
+        if (!*token_spec) {
+            token_spec = strtok_r(NULL, ", ", &saveptr);
+            continue;
+        }
+        
+        /* Tokenize and store */
+        char *lowercase_token = arena_strdup_safe(&g_arena, token_spec);
+        if (!lowercase_token) return false;
+        
+        /* Convert to lowercase */
+        for (char *p = lowercase_token; *p; p++) {
+            *p = tolower((unsigned char)*p);
+        }
+        
+        /* Check for duplicates */
+        bool is_duplicate = false;
+        for (int i = 0; i < g_kw_boosts_len; i++) {
+            if (strcmp(g_kw_boosts[i].token, lowercase_token) == 0) {
+                double new_factor = weight / KEYWORD_BASE_MULTIPLIER;
+                fprintf(stderr, "Warning: Duplicate keyword '%s', updating to factor %.1f (%.0fx boost)\n",
+                        lowercase_token, new_factor, weight);
+                g_kw_boosts[i].weight = weight;
+                is_duplicate = true;
+                break;
+            }
+        }
+        
+        if (!is_duplicate) {
+            /* Store the keyword */
+            g_kw_boosts[g_kw_boosts_len].token = lowercase_token;
+            g_kw_boosts[g_kw_boosts_len].weight = weight;
+            g_kw_boosts_len++;
+        }
+        
+        token_spec = strtok_r(NULL, ", ", &saveptr);
+    }
+    
+    return true;
+}
+
+/**
+ * Get keyword weight for a token
+ */
+static inline double kw_weight_for(const char *tok)
+{
+    /* Look up token in keywords array */
+    for (int i = 0; i < g_kw_boosts_len; ++i) {
+        if (strcasecmp(g_kw_boosts[i].token, tok) == 0) {
+            return g_kw_boosts[i].weight;
+        }
+    }
+    
+    return 1.0; /* No boost */
+}
+
+/**
+ * Parse FileRank weights from string format "path:2,content:1,size:0.05,tfidf:10"
+ * Returns true on success, false on error
+ */
+static bool parse_filerank_weights(const char *weight_str) {
+    if (!weight_str || !*weight_str) return false;
+    
+    /* Make a copy to tokenize */
+    char *str_copy = strdup(weight_str);
+    if (!str_copy) return false;
+    
+    char *token = strtok(str_copy, ",");
+    while (token) {
+        char *colon = strchr(token, ':');
+        if (!colon) {
+            fprintf(stderr, "Error: Invalid weight format '%s' (expected name:value)\n", token);
+            free(str_copy);
+            return false;
+        }
+        
+        *colon = '\0';
+        char *name = token;
+        char *value_str = colon + 1;
+        char *endptr;
+        double value = strtod(value_str, &endptr);
+        
+        if (*endptr != '\0') {
+            fprintf(stderr, "Error: Invalid weight value '%s' for '%s'\n", value_str, name);
+            free(str_copy);
+            return false;
+        }
+        
+        /* Apply the weight */
+        if (strcmp(name, "path") == 0) {
+            g_filerank_weight_path = value;
+        } else if (strcmp(name, "content") == 0) {
+            g_filerank_weight_content = value;
+        } else if (strcmp(name, "size") == 0) {
+            g_filerank_weight_size = value;
+        } else if (strcmp(name, "tfidf") == 0) {
+            g_filerank_weight_tfidf = value;
+        } else {
+            fprintf(stderr, "Warning: Unknown weight name '%s' (valid: path, content, size, tfidf)\n", name);
+        }
+        
+        token = strtok(NULL, ",");
+    }
+    
+    free(str_copy);
+    return true;
+}
+
+/**
+ * Add a CLI exclude pattern to the global list
+ */
+static void add_cli_exclude_pattern(const char *raw) {
+    if (g_cli_exclude_count >= MAX_CLI_EXCLUDE_PATTERNS) {
+        fprintf(stderr, "Warning: Maximum %d exclude patterns allowed, ignoring '%s'\n",
+                MAX_CLI_EXCLUDE_PATTERNS, raw);
+        return;
+    }
+    g_cli_exclude_patterns[g_cli_exclude_count++] =
+        arena_strdup_safe(&g_arena, raw);
+}
+
+/**
+ * Check if a path matches any CLI exclude pattern
+ */
+static bool matches_cli_exclude(const char *path) {
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    
+    for (int i = 0; i < g_cli_exclude_count; ++i) {
+        const char *pat = g_cli_exclude_patterns[i];
+        
+        /* Handle ** patterns for recursive directory matching */
+        const char *double_star = strstr(pat, "**");
+        if (double_star) {
+            /* Pattern contains **, needs special handling */
+            size_t prefix_len = double_star - pat;
+            
+            /* Check if path starts with the prefix before ** */
+            if (prefix_len > 0 && strncmp(path, pat, prefix_len) != 0) {
+                continue;
+            }
+            
+            /* If pattern ends with double-star or slash-double-star, match any path with that prefix */
+            if (double_star[2] == '\0' || 
+                (double_star[2] == '/' && double_star[3] == '\0')) {
+                return true;
+            }
+            
+            /* If pattern is like dir/double-star, match anything under dir/ */
+            if (prefix_len > 0 && pat[prefix_len-1] == '/') {
+                return true;
+            }
+            
+            /* For patterns like dir/double-star/file, use simple substring match for now */
+            const char *suffix = double_star + 2;
+            if (*suffix == '/') suffix++;
+            if (*suffix && strstr(path + prefix_len, suffix)) {
+                return true;
+            }
+        } else {
+            /* Standard fnmatch for patterns without ** */
+            if (fnmatch(pat, path, FNM_PATHNAME | FNM_PERIOD) == 0 ||
+                fnmatch(pat, base, 0) == 0)
+                return true;
+        }
+    }
+    return false;
+}
 
 /**
  * Open the file context block if it hasn't been opened yet.
@@ -317,9 +627,8 @@ static void open_file_context_if_needed(void) {
  * Add the response guide block to the output
  */
 static void add_response_guide(const char *problem) {
-    // Add the guide if editor comments are requested OR if user instructions were provided.
-    // This ensures -e always adds the guide, even without -c.
-    if (want_editor_comments || (problem && *problem)) {
+    // Only add the guide if -e flag was explicitly used
+    if (want_editor_comments) {
         fprintf(temp_file, "<response_guide>\n");
         
         // If custom response guide provided, use it directly
@@ -337,10 +646,7 @@ static void add_response_guide(const char *problem) {
 
             fprintf(temp_file, "## Response\n");
             fprintf(temp_file, "    1. Provide a clear, step-by-step solution or explanation.\n");
-            fprintf(temp_file, "    2. %s\n",
-                    want_editor_comments ?
-                      "Return **PR-style code review comments**: use GitHub inline-diff syntax, group notes per file, justify each change, and suggest concrete refactors."
-                      : "No code-review block is required."); // If !want_editor_comments, this is only reached if 'problem' exists.
+            fprintf(temp_file, "    2. Return **PR-style code review comments**: use GitHub inline-diff syntax, group notes per file, justify each change, and suggest concrete refactors.\n");
         }
 
         fprintf(temp_file, "</response_guide>\n\n");
@@ -502,6 +808,8 @@ void add_directory_tree_with_depth(const char *base_dir, int current_depth) {
         if (lstat(path, &statbuf) == -1)
             continue;
         if (respect_gitignore && should_ignore_path(path))
+            continue;
+        if (matches_cli_exclude(path))
             continue;
         if (!file_already_in_tree(path))
             add_to_file_tree(path);
@@ -772,8 +1080,8 @@ void generate_file_tree(void) {
     
     fprintf(temp_file, "</file_tree>\n\n");
     
-    /* Remove temporary tree file */
-    unlink(tree_file_path);
+    /* Don't remove tree file yet - FileRank might need it later */
+    /* Tree file will be cleaned up in cleanup() function */
     
     /* Clear relative path pointers */
     for (int i = 0; i < file_tree_count; i++) {
@@ -858,14 +1166,19 @@ void show_help(void) {
     printf("  -c @-          Read instruction text from standard input until EOF\n");
     printf("  -C             Shortcut for -c @-. Reads user instructions from stdin\n");
     printf("  -c=\"TEXT\"     Equals form also accepted\n");
-    printf("  -s             Use default system prompt (see README for content)\n"); // Keep help concise
+    printf("  -s             Enable system prompt from config file\n");
+    printf("  -s:TEMPLATE    Use named template for system prompt (no space after -s)\n");
+    printf("  -sTEXT         Use TEXT as inline system prompt (no space after -s)\n");
     printf("  -s@FILE        Read system prompt from FILE (no space after -s)\n");
     printf("  -s@-           Read system prompt from standard input (no space after -s)\n");
-    printf("  -e             Use default PR-style code review response guide\n");
+    printf("  -e             Enable response guide from config file or default PR-style\n");
+    printf("  -e:TEMPLATE    Use named template for response guide (no space after -e)\n");
     printf("  -eTEXT         Use TEXT as custom response guide (no space after -e)\n");
     printf("  -e@FILE        Read custom response guide from FILE (no space after -e)\n");
     printf("  -e@-           Read custom response guide from stdin (no space after -e)\n");
-    printf("  -r             Raw mode: omit system instructions and response guide\n");
+    printf("  -r, --rank     Enable FileRank to sort files by relevance to query\n");
+    printf("                 (default: preserve file order as specified)\n");
+    printf("  -R, --raw      Raw mode: omit system instructions and response guide\n");
     printf("  -f [FILE...]   Process files instead of stdin content\n");
     printf("  -t             Generate complete directory tree (full tree)\n");
     printf("  -T             Generate file tree only for specified files (filtered tree)\n");
@@ -875,13 +1188,28 @@ void show_help(void) {
     printf("  -o@FILE        Write output to FILE (no space after -o)\n");
     printf("  -d, --debug    Enable debug output (prefixed with [DEBUG])\n");
     printf("  -h             Show this help message\n");
-    printf("  -b N           Set token budget limit (default: 96000, exits with code 3 if exceeded)\n");
-    printf("                 Token diagnostics are shown automatically when available\n");
+    printf("  -b N           Set token budget limit (default: 96000)\n");
+    printf("                 Shows warning if exceeded (use -r to auto-select files)\n");
     printf("  --token-budget=N      Set token budget limit (default: 96000)\n");
     printf("  --token-model=MODEL   Set model for token counting (default: gpt-4o)\n");
-    printf("  --no-gitignore Ignore .gitignore files when collecting files\n\n");
+    printf("  --filerank-debug      Show FileRank scoring details (requires -r flag)\n");
+    printf("  --filerank-weight=W   Set FileRank weights (requires -r flag)\n");
+    printf("                        Format: path:2,content:1,size:0.05,tfidf:10\n");
+    printf("  --filerank-cutoff=SPEC Set FileRank score threshold (requires -r flag)\n");
+    printf("                        Format: ratio:0.125, topk:10, percentile:75, auto\n");
+    printf("  -k, --keywords=SPEC   Boost specific keywords in FileRank scoring (requires -r)\n");
+    printf("                        Format: token1:factor1,token2:factor2 or token1,token2\n");
+    printf("                        Factors are multiplied by 64 (e.g., factor 2 = 128x boost)\n");
+    printf("                        Default factor is 2 if not specified\n");
+    printf("                        Example: -k 'chat_input:3,prosemirror:1.5'\n");
+    printf("  -x, --exclude=PATTERN Exclude files/directories matching PATTERN (repeatable)\n");
+    printf("                        Patterns use git-style glob syntax\n");
+    printf("                        Applied after .gitignore processing\n");
+    printf("  --no-gitignore        Ignore .gitignore files when collecting files\n");
+    printf("  --ignore-config       Skip loading configuration file\n\n");
     printf("By default, llm_ctx reads content from stdin.\n");
-    printf("Use -f flag to indicate file arguments are provided.\n\n");
+    printf("Use -f flag to indicate file arguments are provided.\n");
+    printf("Files are processed in the order specified unless -r flag is used.\n\n");
     printf("Examples:\n");
     printf("  # Process content from stdin (default behavior)\n");
     printf("  git diff | llm_ctx -c \"Please explain these changes\"\n\n");
@@ -899,6 +1227,21 @@ void show_help(void) {
     printf("  llm_ctx -t -f src/main.c\n\n");
     printf("  # Generate file tree of specified files only\n");
     printf("  llm_ctx -T -f src/main.c src/utils.c\n\n");
+    printf("  # Use named templates from config\n");
+    printf("  llm_ctx -s:concise -e:detailed -f src/*.c\n\n");
+    printf("  # Mix template with custom instruction\n");
+    printf("  llm_ctx -s:architect -c \"Design a cache layer\" -f src/*.c\n\n");
+    printf("  # Enable FileRank to sort files by relevance to your query\n");
+    printf("  llm_ctx -c \"How does authentication work?\" -r -f src/**/*.js\n\n");
+    printf("  # Boost specific keywords for better ranking (requires -r)\n");
+    printf("  llm_ctx -c \"How does auth work?\" -r -k auth:3,session:2 -f src/**/*.js\n");
+    printf("  # auth gets 192x boost (3*64), session gets 128x boost (2*64)\n\n");
+    printf("  # Handle token budget overflow by auto-selecting most relevant files\n");
+    printf("  llm_ctx -c \"explain the API\" -r -b 4000 -f src/**/*.js\n\n");
+    printf("  # Exclude specific patterns\n");
+    printf("  llm_ctx -f src/** -x 'src/generated/**' -x '*.min.js'\n\n");
+    printf("  # Include directory but exclude subdirectory\n");
+    printf("  llm_ctx -f javascripts/ -x 'javascripts/lib/cami/**'\n\n");
     exit(0);
 }
 
@@ -1286,6 +1629,11 @@ void find_recursive(const char *base_dir, const char *pattern) {
         if (respect_gitignore && should_ignore_path(path)) {
             continue; /* Skip ignored files/directories */
         }
+        
+        /* Check CLI exclude patterns */
+        if (matches_cli_exclude(path)) {
+            continue; /* Skip CLI-excluded files/directories */
+        }
 
         // Add any non-ignored entry to the file tree structure
         add_to_file_tree(path);
@@ -1383,6 +1731,11 @@ bool process_pattern(const char *pattern) {
 
             // Check ignore rules before adding
             if (respect_gitignore && should_ignore_path(path)) {
+                continue;
+            }
+            
+            // Check CLI exclude patterns
+            if (matches_cli_exclude(path)) {
                 continue;
             }
 
@@ -1498,7 +1851,8 @@ static const struct option long_options[] = {
     {"system",          optional_argument, 0, 's'}, /* Argument is optional (@file/@-/default) */
     {"files",           no_argument,       0, 'f'}, /* Indicates file args follow */
     {"editor-comments", optional_argument, 0, 'e'},
-    {"raw",             no_argument,       0, 'r'},
+    {"raw",             no_argument,       0, 'R'},
+    {"rank",            no_argument,       0, 'r'}, /* Enable FileRank sorting */
     {"tree",            no_argument,       0, 't'}, /* Generate complete directory tree */
     {"filtered-tree",   no_argument,       0, 'T'}, /* Generate file tree for specified files */
     {"tree-only",       no_argument,       0, 'O'}, /* Generate tree only without file content */
@@ -1507,9 +1861,15 @@ static const struct option long_options[] = {
     {"stdout",          optional_argument, 0, 'o'}, /* Alias for --output */
     {"debug",           no_argument,       0, 'd'}, /* Enable debug output */
     {"no-gitignore",    no_argument,       0,  1 }, /* Use a value > 255 for long-only */
+    {"ignore-config",   no_argument,       0,  2 }, /* Ignore config file */
     {"token-budget",    required_argument, 0, 400}, /* Token budget limit */
     {"token-model",     required_argument, 0, 401}, /* Model for token counting */
     {"token-diagnostics", optional_argument, 0, 402}, /* Token count diagnostics */
+    {"filerank-debug",  no_argument,       0, 403}, /* FileRank debug output */
+    {"filerank-weight", required_argument, 0, 404}, /* FileRank custom weights */
+    {"keywords",        required_argument, 0, 405}, /* Keywords boost specification */
+    {"filerank-cutoff", required_argument, 0, 406}, /* FileRank cutoff specification */
+    {"exclude",         required_argument, 0, 'x'}, /* Exclude pattern */
     {0, 0, 0, 0} /* Terminator */
 };
 static bool s_flag_used = false; /* Track if -s was used */
@@ -1517,7 +1877,10 @@ static bool c_flag_used = false; /* Track if -c/-C/--command was used */
 static bool e_flag_used = false; /* Track if -e was used */
 static bool r_flag_used = false; /* Track if -r was used */
 static bool g_stdin_consumed_for_option = false; /* Track if stdin was used for @- */
+static bool ignore_config_flag = false; /* Track if --ignore-config was used */
 /* No specific CLI flag for copy yet, so no copy_flag_used needed */
+static char *s_template_name = NULL; /* Template name for -s flag */
+static char *e_template_name = NULL; /* Template name for -e flag */
 
 /* Helper to handle argument for -c/--command */
 static void handle_command_arg(const char *arg) {
@@ -1569,6 +1932,7 @@ static void handle_command_arg(const char *arg) {
 /* Helper to handle argument for -s/--system */
 static void handle_system_arg(const char *arg) {
     system_instructions = NULL; /* Reset before handling */
+    s_template_name = NULL; /* Reset template name */
 
     /* Case 1: -s without argument (optarg is NULL) -> Mark flag used, prompt loaded later */
     if (arg == NULL) {
@@ -1588,13 +1952,23 @@ static void handle_system_arg(const char *arg) {
             s_flag_used = true; /* Track that CLI flag was used */
             file_mode = 1; /* Set file mode globally */
         } else { /* Read from file */
-            system_instructions = slurp_file(arg + 1); /* skip '@' */
+            const char *filename = arg + 1; /* skip '@' */
+            char *expanded_path = expand_tilde_path(filename);
+            if (!expanded_path) {
+                fatal("Cannot expand path '%s': %s", filename, strerror(errno));
+            }
+            system_instructions = slurp_file(expanded_path);
             if (!system_instructions)
-                fatal("Cannot open or read system prompt file '%s': %s", arg + 1, strerror(errno));
+                fatal("Cannot open or read system prompt file '%s': %s", expanded_path, strerror(errno));
             s_flag_used = true; /* Track that CLI flag was used */
         }
+    } else if (arg[0] == ':' && arg[1] != '\0') {
+        /* Case 3: -s:template_name -> Use named template */
+        s_template_name = arena_strdup_safe(&g_arena, arg + 1); /* skip ':' */
+        if (!s_template_name) fatal("Out of memory duplicating template name");
+        s_flag_used = true;
     } else {
-        /* Case 3: -s with an argument not starting with '@' -> Treat as inline text */
+        /* Case 4: -s with inline text -> Use as system instructions */
         system_instructions = arena_strdup_safe(&g_arena, arg);
         if (!system_instructions) fatal("Out of memory duplicating -s argument");
         s_flag_used = true; /* Track that CLI flag was used */
@@ -1603,11 +1977,13 @@ static void handle_system_arg(const char *arg) {
 
 /* Helper to handle argument for -e/--editor-comments */
 static void handle_editor_arg(const char *arg) {
-    /* Case 1: -e without argument -> Use default PR-style review behavior */
+    e_template_name = NULL; /* Reset template name */
+    
+    /* Case 1: -e without argument -> Mark flag used, guide loaded from config later */
     if (arg == NULL) {
         want_editor_comments = true;
         e_flag_used = true;
-        custom_response_guide = NULL; /* Use default behavior */
+        /* Don't set custom_response_guide here - let config loading handle it */
         return;
     }
 
@@ -1624,14 +2000,25 @@ static void handle_editor_arg(const char *arg) {
             e_flag_used = true;
             file_mode = 1; /* Set file mode globally */
         } else { /* Read from file */
-            custom_response_guide = slurp_file(arg + 1); /* skip '@' */
+            const char *filename = arg + 1; /* skip '@' */
+            char *expanded_path = expand_tilde_path(filename);
+            if (!expanded_path) {
+                fatal("Cannot expand path '%s': %s", filename, strerror(errno));
+            }
+            custom_response_guide = slurp_file(expanded_path);
             if (!custom_response_guide)
-                fatal("Cannot open or read response guide file '%s': %s", arg + 1, strerror(errno));
+                fatal("Cannot open or read response guide file '%s': %s", expanded_path, strerror(errno));
             want_editor_comments = true;
             e_flag_used = true;
         }
+    } else if (arg[0] == ':' && arg[1] != '\0') {
+        /* Case 3: -e:template_name -> Use named template */
+        e_template_name = arena_strdup_safe(&g_arena, arg + 1); /* skip ':' */
+        if (!e_template_name) fatal("Out of memory duplicating template name");
+        want_editor_comments = true;
+        e_flag_used = true;
     } else {
-        /* Case 3: -e with inline text -> Use as custom response guide */
+        /* Case 4: -e with inline text -> Use as custom response guide */
         custom_response_guide = arena_strdup_safe(&g_arena, arg);
         if (!custom_response_guide) fatal("Out of memory duplicating -e argument");
         want_editor_comments = true;
@@ -1662,6 +2049,372 @@ static void handle_output_arg(const char *arg) {
         fatal("Error: -o requires @ prefix for files (e.g., -o@output.txt). Use -o alone for stdout.");
     }
 }
+
+/**
+ * Check if character is a word boundary
+ */
+static bool is_word_boundary(char c) {
+    return !isalnum(c) && c != '_';
+}
+
+/**
+ * Case-insensitive word boundary search
+ * Returns number of times needle appears as a whole word in haystack
+ */
+static int count_word_hits(const char *haystack, const char *needle) {
+    int count = 0;
+    size_t needle_len = strlen(needle);
+    const char *pos = haystack;
+    
+    while ((pos = strcasestr(pos, needle)) != NULL) {
+        /* Check word boundaries */
+        bool start_ok = (pos == haystack || is_word_boundary(*(pos - 1)));
+        bool end_ok = is_word_boundary(*(pos + needle_len));
+        
+        if (start_ok && end_ok) {
+            count++;
+        }
+        pos++;
+    }
+    
+    return count;
+}
+
+/**
+ * Tokenize query into lowercase words
+ * Returns array of tokens allocated from arena
+ */
+static char **tokenize_query(const char *query, int *num_tokens) {
+    if (!query || !num_tokens) {
+        *num_tokens = 0;
+        return NULL;
+    }
+    
+    /* Create a working copy */
+    size_t query_len = strlen(query);
+    char *work = arena_push_array_safe(&g_arena, char, query_len + 1);
+    if (!work) {
+        *num_tokens = 0;
+        return NULL;
+    }
+    strcpy(work, query);
+    
+    /* Convert to lowercase */
+    for (size_t i = 0; i < query_len; i++) {
+        work[i] = tolower((unsigned char)work[i]);
+    }
+    
+    /* Count tokens first */
+    int count = 0;
+    char *temp = arena_push_array_safe(&g_arena, char, query_len + 1);
+    if (!temp) {
+        *num_tokens = 0;
+        return NULL;
+    }
+    strcpy(temp, work);
+    
+    char *token = strtok(temp, " \t\n\r.,;:!?()[]{}\"'`~@#$%^&*+=|\\/<>");
+    while (token) {
+        count++;
+        token = strtok(NULL, " \t\n\r.,;:!?()[]{}\"'`~@#$%^&*+=|\\/<>");
+    }
+    
+    if (count == 0) {
+        *num_tokens = 0;
+        return NULL;
+    }
+    
+    /* Allocate token array */
+    char **tokens = arena_push_array_safe(&g_arena, char*, count);
+    if (!tokens) {
+        *num_tokens = 0;
+        return NULL;
+    }
+    
+    /* Tokenize again to fill array */
+    int idx = 0;
+    token = strtok(work, " \t\n\r.,;:!?()[]{}\"'`~@#$%^&*+=|\\/<>");
+    while (token && idx < count) {
+        tokens[idx++] = token;
+        token = strtok(NULL, " \t\n\r.,;:!?()[]{}\"'`~@#$%^&*+=|\\/<>");
+    }
+    
+    *num_tokens = idx;
+    return tokens;
+}
+
+/**
+ * Compute threshold based on cutoff specification
+ * Returns the minimum score required to keep a file
+ */
+static double compute_filerank_threshold(const char *spec, FileRank *ranks, int num_files) {
+    double threshold = -DBL_MAX;
+    
+    if (!spec || num_files == 0) {
+        return threshold;
+    }
+    
+    if (strncmp(spec, "ratio:", 6) == 0) {
+        double alpha = atof(spec + 6);
+        if (alpha > 0 && alpha <= 1.0) {
+            threshold = ranks[0].score * alpha;
+        }
+    } else if (strncmp(spec, "topk:", 5) == 0) {
+        int k = atoi(spec + 5);
+        if (k > 0 && k < num_files) {
+            threshold = ranks[k-1].score;
+        } else if (k >= num_files) {
+            /* Keep all files if k >= num_files */
+            threshold = -DBL_MAX;
+        }
+    } else if (strncmp(spec, "percentile:", 11) == 0) {
+        int p = atoi(spec + 11);
+        if (p > 0 && p <= 100) {
+            int idx = ((100 - p) * num_files) / 100;
+            if (idx < num_files) {
+                threshold = ranks[idx].score;
+            }
+        }
+    } else if (strcmp(spec, "auto") == 0) {
+        /* Knee/elbow detection */
+        double max_drop = 0;
+        int knee = num_files - 1;
+        for (int i = 0; i < num_files - 1; i++) {
+            double drop = ranks[i].score - ranks[i+1].score;
+            if (drop > max_drop) {
+                max_drop = drop;
+                knee = i + 1;
+            }
+        }
+        if (knee < num_files) {
+            threshold = ranks[knee].score;
+        }
+    }
+    
+    /* Always discard files with score <= 0 */
+    if (threshold < 0) {
+        threshold = 0;
+    }
+    
+    return threshold;
+}
+
+/**
+ * Compare FileRank entries by score (descending)
+ */
+static int compare_filerank(const void *a, const void *b) {
+    const FileRank *ra = (const FileRank *)a;
+    const FileRank *rb = (const FileRank *)b;
+    
+    /* Sort by score descending */
+    if (ra->score > rb->score) return -1;
+    if (ra->score < rb->score) return 1;
+    
+    /* If scores are equal, maintain original order (stable sort) */
+    return 0;
+}
+
+/**
+ * Implementation of rank_files for Slice 3
+ * Uses TF-IDF scoring with path/content hits and size penalty
+ * TF-IDF helps prioritize files with unique/rare terms
+ */
+void rank_files(const char *query, FileRank *ranks, int num_files) {
+    /* Parse query into tokens */
+    int num_tokens;
+    char **tokens = tokenize_query(query, &num_tokens);
+    
+    if (!tokens || num_tokens == 0) {
+        /* No query tokens - all scores remain 0 */
+        for (int i = 0; i < num_files; i++) {
+            ranks[i].score = 0.0;
+        }
+        return;
+    }
+    
+    /* Slice 3: First pass - calculate document frequency for each term */
+    int *doc_freq = calloc(num_tokens, sizeof(int));
+    if (!doc_freq) {
+        /* Fallback to basic scoring if allocation fails */
+        goto basic_scoring;
+    }
+    
+    for (int i = 0; i < num_files; i++) {
+        /* Track which terms appear in this document */
+        int *term_found = calloc(num_tokens, sizeof(int));
+        if (!term_found) {
+            free(doc_freq);
+            goto basic_scoring;
+        }
+        
+        /* Check path for terms */
+        for (int j = 0; j < num_tokens; j++) {
+            if (count_word_hits(ranks[i].path, tokens[j]) > 0) {
+                term_found[j] = 1;
+            }
+        }
+        
+        /* Check content for terms */
+        FILE *f = fopen(ranks[i].path, "r");
+        if (f && !is_binary(f)) {
+            char buffer[4096];
+            rewind(f);
+            while (fgets(buffer, sizeof(buffer), f)) {
+                for (int j = 0; j < num_tokens; j++) {
+                    if (!term_found[j] && count_word_hits(buffer, tokens[j]) > 0) {
+                        term_found[j] = 1;
+                    }
+                }
+            }
+            fclose(f);
+        } else if (f) {
+            fclose(f);
+        }
+        
+        /* Update document frequency counts */
+        for (int j = 0; j < num_tokens; j++) {
+            if (term_found[j]) {
+                doc_freq[j]++;
+            }
+        }
+        
+        free(term_found);
+    }
+    
+    /* Second pass - calculate TF-IDF scores */
+    for (int i = 0; i < num_files; i++) {
+        double path_hits = 0;
+        double content_hits = 0;
+        double tfidf_score = 0;
+        
+        /* Count hits in path */
+        for (int j = 0; j < num_tokens; j++) {
+            double w = kw_weight_for(tokens[j]);
+            path_hits += w * count_word_hits(ranks[i].path, tokens[j]);
+        }
+        
+        /* Get file size for penalty calculation */
+        struct stat st;
+        if (stat(ranks[i].path, &st) == 0) {
+            ranks[i].bytes = st.st_size;
+        } else {
+            ranks[i].bytes = 0;
+        }
+        
+        /* Read file content to count hits and calculate TF-IDF */
+        FILE *f = fopen(ranks[i].path, "r");
+        if (f) {
+            /* Check if binary */
+            if (!is_binary(f)) {
+                /* Count total words for TF calculation */
+                int total_words = 0;
+                int *term_freq = calloc(num_tokens, sizeof(int));
+                
+                if (term_freq) {
+                    /* Read content and count term frequencies */
+                    char buffer[4096];
+                    char buffer_copy[4096];
+                    rewind(f);
+                    while (fgets(buffer, sizeof(buffer), f)) {
+                        /* Make a copy for word counting since strtok modifies the buffer */
+                        strcpy(buffer_copy, buffer);
+                        
+                        /* Simple word count - count space-separated tokens */
+                        char *word = strtok(buffer_copy, " \t\n\r");
+                        while (word) {
+                            total_words++;
+                            word = strtok(NULL, " \t\n\r");
+                        }
+                        
+                        /* Count term hits on original buffer */
+                        for (int j = 0; j < num_tokens; j++) {
+                            int hits = count_word_hits(buffer, tokens[j]);
+                            term_freq[j] += hits;
+                            double w = kw_weight_for(tokens[j]);
+                            content_hits += w * hits;
+                        }
+                    }
+                    
+                    /* Calculate TF-IDF score */
+                    if (total_words > 0) {
+                        for (int j = 0; j < num_tokens; j++) {
+                            if (term_freq[j] > 0 && doc_freq[j] > 0) {
+                                double tf = (double)term_freq[j] / total_words;
+                                double idf = log((double)num_files / doc_freq[j]);
+                                double w = kw_weight_for(tokens[j]);
+                                tfidf_score += w * tf * idf;
+                            }
+                        }
+                    }
+                    
+                    free(term_freq);
+                } else {
+                    /* Fallback to simple counting */
+                    char buffer[4096];
+                    rewind(f);
+                    while (fgets(buffer, sizeof(buffer), f)) {
+                        for (int j = 0; j < num_tokens; j++) {
+                            double w = kw_weight_for(tokens[j]);
+                            content_hits += w * count_word_hits(buffer, tokens[j]);
+                        }
+                    }
+                }
+            }
+            fclose(f);
+        }
+        
+        /* Calculate score: TF-IDF weight + content_hits + path_weight*path_hits - size_weight*(bytes/1MiB) */
+        double size_penalty = g_filerank_weight_size * (ranks[i].bytes / (1024.0 * 1024.0));
+        ranks[i].score = tfidf_score * g_filerank_weight_tfidf + content_hits * g_filerank_weight_content + g_filerank_weight_path * path_hits - size_penalty;
+    }
+    
+    free(doc_freq);
+    return;
+    
+basic_scoring:
+    /* Fallback: basic scoring without TF-IDF */
+    for (int i = 0; i < num_files; i++) {
+        double path_hits = 0;
+        double content_hits = 0;
+        
+        /* Count hits in path */
+        for (int j = 0; j < num_tokens; j++) {
+            double w = kw_weight_for(tokens[j]);
+            path_hits += w * count_word_hits(ranks[i].path, tokens[j]);
+        }
+        
+        /* Get file size for penalty calculation */
+        struct stat st;
+        if (stat(ranks[i].path, &st) == 0) {
+            ranks[i].bytes = st.st_size;
+        } else {
+            ranks[i].bytes = 0;
+        }
+        
+        /* Read file content to count hits */
+        FILE *f = fopen(ranks[i].path, "r");
+        if (f) {
+            /* Check if binary */
+            if (!is_binary(f)) {
+                /* Read content and count hits */
+                char buffer[4096];
+                rewind(f);
+                while (fgets(buffer, sizeof(buffer), f)) {
+                    for (int j = 0; j < num_tokens; j++) {
+                        double w = kw_weight_for(tokens[j]);
+                        content_hits += w * count_word_hits(buffer, tokens[j]);
+                    }
+                }
+            }
+            fclose(f);
+        }
+        
+        /* Calculate score: content_hits + path_weight*path_hits - size_weight*(bytes/1MiB) */
+        double size_penalty = g_filerank_weight_size * (ranks[i].bytes / (1024.0 * 1024.0));
+        ranks[i].score = content_hits * g_filerank_weight_content + g_filerank_weight_path * path_hits - size_penalty;
+    }
+}
+
 /**
  * Main function - program entry point
  */
@@ -1674,6 +2427,12 @@ int main(int argc, char *argv[]) {
 
     g_arena = arena_create(MiB(256));
     if (!g_arena.base) fatal("Failed to allocate arena");
+    
+    /* Set executable directory for tokenizer library loading */
+    char *exe_dir = get_executable_dir();
+    if (exe_dir) {
+        llm_set_executable_dir(exe_dir);
+    }
 
     /* Create temporary file for output assembly */
     strcpy(temp_file_path, TEMP_FILE_TEMPLATE);
@@ -1696,7 +2455,7 @@ int main(int argc, char *argv[]) {
     int opt;
     /* Add 'C' to the short options string. It takes no argument. */
     /* Add 'b:' for short form of --token-budget and 'D::' for token diagnostics */
-    while ((opt = getopt_long(argc, argv, "hc:s::fre::CtdTOL:o::b:D::", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hc:s::fRe::CtdTOL:o::b:D::k:x:r", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h': /* -h or --help */
                 show_help(); /* Exits */
@@ -1733,7 +2492,10 @@ int main(int argc, char *argv[]) {
                     handle_editor_arg(optarg);  /* glued/NULL */
                 }
                 break;
-            case 'r': /* -r or --raw */
+            case 'r': /* -r or --rank */
+                enable_filerank = true;
+                break;
+            case 'R': /* -R or --raw */
                 raw_mode = true;
                 r_flag_used = true;
                 break;
@@ -1787,6 +2549,9 @@ int main(int argc, char *argv[]) {
             case 1: /* --no-gitignore (long option without short equiv) */
                 respect_gitignore = false;
                 break;
+            case 2: /* --ignore-config */
+                ignore_config_flag = true;
+                break;
             case 'b': /* -b or --token-budget */
                 if (!optarg) {
                     fprintf(stderr, "Error: -b/--token-budget requires a numeric argument\n");
@@ -1827,12 +2592,55 @@ int main(int argc, char *argv[]) {
             case 402: /* --token-diagnostics - deprecated, diagnostics now shown by default */
                 /* For backward compatibility, just ignore this flag */
                 break;
+            case 403: /* --filerank-debug */
+                g_filerank_debug = true;
+                break;
+            case 404: /* --filerank-weight */
+                if (!optarg) {
+                    fprintf(stderr, "Error: --filerank-weight requires an argument (e.g., path:2,content:1,size:0.05,tfidf:10)\n");
+                    return 1;
+                }
+                if (!parse_filerank_weights(optarg)) {
+                    fprintf(stderr, "Error: Failed to parse filerank weights from '%s'\n", optarg);
+                    return 1;
+                }
+                break;
+            case 'k': /* -k or --keywords */
+            case 405: /* --keywords (long form) */
+                if (!optarg) {
+                    fprintf(stderr, "Error: -k/--keywords requires an argument\n");
+                    return 1;
+                }
+                g_keywords_flag_used = true;
+                if (!parse_keywords(optarg)) {
+                    fprintf(stderr, "Error: Failed to parse keywords from '%s'\n", optarg);
+                    return 1;
+                }
+                break;
+            case 406: /* --filerank-cutoff */
+                if (!optarg) {
+                    fprintf(stderr, "Error: --filerank-cutoff requires an argument (e.g., ratio:0.15, topk:10, percentile:30, auto)\n");
+                    return 1;
+                }
+                g_filerank_cutoff_spec = arena_strdup_safe(&g_arena, optarg);
+                break;
+            case 'x': /* -x or --exclude */
+                if (!optarg) {
+                    fprintf(stderr, "Error: -x/--exclude requires a pattern argument\n");
+                    return 1;
+                }
+                /* Forward declaration - will be implemented soon */
+                add_cli_exclude_pattern(optarg);
+                break;
             case '?': /* Unknown option OR missing required argument */
                 /* optopt contains the failing option character */
                 if (optopt == 'c') {
                     /* Replicate the standard missing-argument banner */
                     fprintf(stderr, "%s: option requires an argument -- '%c'\n",
                             argv[0], optopt);
+                } else if (optopt == 406) {
+                    /* Special case for --filerank-cutoff missing argument */
+                    fprintf(stderr, "Error: --filerank-cutoff requires an argument (e.g., ratio:0.15, topk:10, percentile:30, auto)\n");
                 } else if (isprint(optopt)) {
                     /* Handle other unknown options */
                      fprintf(stderr, "Unknown option `-%c'.\n", optopt);
@@ -1860,7 +2668,108 @@ int main(int argc, char *argv[]) {
     int file_args_start = optind;
 
     /* --- Configuration File Loading --- */
-    /* Configuration file loading has been removed */
+    ConfigSettings loaded_settings = {0};
+    bool config_loaded = false;
+    
+    if (!ignore_config_flag) {
+        config_loaded = config_load(&loaded_settings, &g_arena);
+        if (debug_mode && config_loaded) {
+            config_debug_print(&loaded_settings);
+        }
+    }
+    
+    /* Apply configuration values if no CLI flags override them */
+    if (config_loaded) {
+        /* system_prompt_file - load from config if no direct content provided */
+        if (!system_instructions) {
+            char *prompt_file = NULL;
+            
+            /* Check if a template name was specified */
+            if (s_template_name) {
+                ConfigTemplate *tmpl = config_find_template(&loaded_settings, s_template_name);
+                if (tmpl && tmpl->system_prompt_file) {
+                    prompt_file = tmpl->system_prompt_file;
+                } else {
+                    fatal("Error: template '%s' not found or has no system_prompt_file in config", s_template_name);
+                }
+            } else if (loaded_settings.system_prompt_file) {
+                /* Use default system prompt file */
+                prompt_file = loaded_settings.system_prompt_file;
+            }
+            
+            if (prompt_file) {
+                char *expanded_path = config_expand_path(prompt_file, &g_arena);
+                if (expanded_path) {
+                    system_instructions = slurp_file(expanded_path);
+                    if (!system_instructions) {
+                        fprintf(stderr, "warning: config refers to %s (not found)\n", expanded_path);
+                    }
+                }
+            }
+        }
+        
+        /* response_guide_file - only if -e flag was used and no direct content provided */
+        if (e_flag_used && !custom_response_guide) {
+            char *guide_file = NULL;
+            
+            /* Check if a template name was specified */
+            if (e_template_name) {
+                ConfigTemplate *tmpl = config_find_template(&loaded_settings, e_template_name);
+                if (tmpl && tmpl->response_guide_file) {
+                    guide_file = tmpl->response_guide_file;
+                } else {
+                    fatal("Error: template '%s' not found or has no response_guide_file in config", e_template_name);
+                }
+            } else if (loaded_settings.response_guide_file) {
+                /* Use default response guide file */
+                guide_file = loaded_settings.response_guide_file;
+            }
+            
+            if (guide_file) {
+                char *expanded_path = config_expand_path(guide_file, &g_arena);
+                if (expanded_path) {
+                    custom_response_guide = slurp_file(expanded_path);
+                    if (!custom_response_guide) {
+                        fprintf(stderr, "warning: config refers to %s (not found)\n", expanded_path);
+                    } else {
+                        want_editor_comments = true; /* Enable editor comments if guide loaded */
+                    }
+                }
+            }
+        }
+        
+        /* copy_to_clipboard - will be applied after all flags are processed */
+        
+        /* token_budget - only if not set via CLI */
+        if (loaded_settings.token_budget > 0 && g_token_budget == 96000) {
+            g_token_budget = loaded_settings.token_budget;
+        }
+        
+        /* FileRank weights - only if not set via CLI */
+        if (loaded_settings.filerank_weight_path >= 0.0) {
+            g_filerank_weight_path = loaded_settings.filerank_weight_path;
+        }
+        if (loaded_settings.filerank_weight_content >= 0.0) {
+            g_filerank_weight_content = loaded_settings.filerank_weight_content;
+        }
+        if (loaded_settings.filerank_weight_size >= 0.0) {
+            g_filerank_weight_size = loaded_settings.filerank_weight_size;
+        }
+        if (loaded_settings.filerank_weight_tfidf >= 0.0) {
+            g_filerank_weight_tfidf = loaded_settings.filerank_weight_tfidf;
+        }
+        /* FileRank cutoff - only if not set via CLI */
+        if (loaded_settings.filerank_cutoff && !g_filerank_cutoff_spec) {
+            g_filerank_cutoff_spec = arena_strdup_safe(&g_arena, loaded_settings.filerank_cutoff);
+        }
+    }
+    /* --- Finalize copy_to_clipboard setting --- */
+    /* Note: g_effective_copy_to_clipboard is already set to false if -o was used */
+    /* Apply config setting only if -o was not used */
+    if (g_effective_copy_to_clipboard && config_loaded && loaded_settings.copy_to_clipboard != -1) {
+        g_effective_copy_to_clipboard = (loaded_settings.copy_to_clipboard == 1);
+    }
+    
     /* --- Finalize editor_comments setting (apply toggle logic) --- */
     /* Determine initial state (default false) */
     bool initial_want_editor_comments = false;
@@ -1877,6 +2786,12 @@ int main(int argc, char *argv[]) {
     /* OR if editor comments were requested (via -e) */
     /* OR if stdin was consumed by an option like -c @- or -s @- */
     allow_empty_context = c_flag_used || s_flag_used || e_flag_used || g_stdin_consumed_for_option;
+    
+    /* Use default system instructions if none provided */
+    if (!system_instructions && !raw_mode) {
+        system_instructions = arena_strdup_safe(&g_arena, DEFAULT_SYSTEM_INSTRUCTIONS);
+    }
+    
     if (!raw_mode) {
         /* Add user instructions first, if provided */
         add_user_instructions(user_instructions);
@@ -1988,10 +2903,81 @@ int main(int argc, char *argv[]) {
         generate_file_tree();
     }
     
+    /* FileRank array - declared at broader scope for budget handling */
+    FileRank *ranks = NULL;
+    
     /* Process codemap and file content unless tree_only_output is set */
     if (!tree_only_output) {
     
-    /* Output content of each processed file */
+    /* Apply FileRank if we have files and a query and FileRank is enabled */
+    if (num_processed_files > 0 && user_instructions && enable_filerank) {
+        /* Allocate FileRank array */
+        ranks = arena_push_array_safe(&g_arena, FileRank, num_processed_files);
+        if (!ranks) {
+            fatal("Out of memory allocating FileRank array");
+        }
+        
+        /* Initialize FileRank structures */
+        for (int i = 0; i < num_processed_files; i++) {
+            ranks[i].path = processed_files[i];
+            ranks[i].score = 0.0;
+            ranks[i].bytes = 0;
+            ranks[i].tokens = 0;
+        }
+        
+        /* Call ranking function */
+        rank_files(user_instructions, ranks, num_processed_files);
+        
+        /* Sort files by score (for budget-based selection) */
+        qsort(ranks, num_processed_files, sizeof(FileRank), compare_filerank);
+        
+        /* Apply filerank cutoff if specified */
+        if (g_filerank_cutoff_spec) {
+            double threshold = compute_filerank_threshold(g_filerank_cutoff_spec, ranks, num_processed_files);
+            
+            /* Filter files based on threshold */
+            int kept = 0;
+            for (int i = 0; i < num_processed_files; i++) {
+                if (ranks[i].score >= threshold) {
+                    ranks[kept++] = ranks[i];
+                }
+            }
+            
+            if (kept < num_processed_files) {
+                fprintf(stderr, "FileRank cutoff (%s): threshold=%.2f, kept %d/%d files\n", 
+                        g_filerank_cutoff_spec, threshold, kept, num_processed_files);
+            }
+            
+            num_processed_files = kept;
+        }
+        
+        /* Debug output if requested - show sorted order */
+        if (g_filerank_debug) {
+            fprintf(stderr, "FileRank (query: \"%s\")\n", user_instructions);
+            
+            /* Show keyword boosts if any */
+            if (g_kw_boosts_len > 0) {
+                fprintf(stderr, "Keywords: ");
+                for (int i = 0; i < g_kw_boosts_len; i++) {
+                    if (i > 0) fprintf(stderr, ", ");
+                    double factor = g_kw_boosts[i].weight / KEYWORD_BASE_MULTIPLIER;
+                    fprintf(stderr, "%s:%.1fx(=%.0f)", g_kw_boosts[i].token, factor, g_kw_boosts[i].weight);
+                }
+                fprintf(stderr, "\n");
+            }
+            
+            for (int i = 0; i < num_processed_files; i++) {
+                fprintf(stderr, "  %.2f  %s\n", ranks[i].score, ranks[i].path);
+            }
+        }
+        
+        /* Update processed_files array to match sorted order */
+        for (int i = 0; i < num_processed_files; i++) {
+            processed_files[i] = (char *)ranks[i].path;
+        }
+    }
+    
+    /* First pass: try outputting all files */
     for (int i = 0; i < num_processed_files; i++) {
         output_file_content(processed_files[i], temp_file);
     }
@@ -2021,11 +3007,123 @@ int main(int argc, char *argv[]) {
         
         /* Check budget */
         if (total_tokens > g_token_budget) {
-            /* Budget exceeded */
-            fprintf(stderr, "error: context uses %zu tokens > budget %zu – output rejected\n", 
-                    total_tokens, g_token_budget);
-            unlink(temp_file_path);
-            return 3; /* Exit with status 3 for budget exceeded */
+            /* Budget exceeded - try FileRank-based selection if we have ranked files */
+            if (ranks && user_instructions) {
+                fprintf(stderr, "\nBudget exceeded (%zu > %zu) - using FileRank to select most relevant files\n", 
+                        total_tokens, g_token_budget);
+                fprintf(stderr, "Query: \"%s\"\n", user_instructions);
+                
+                /* Recreate temp file with only files that fit in budget */
+                fclose(fopen(temp_file_path, "w")); /* Truncate file */
+                temp_file = fopen(temp_file_path, "w");
+                if (!temp_file) {
+                    fatal("Failed to reopen temp file for FileRank selection");
+                }
+                
+                /* Write headers and user instructions again */
+                if (user_instructions) {
+                    fprintf(temp_file, "<user_instructions>\n%s\n</user_instructions>\n\n", user_instructions);
+                }
+                if (system_instructions) {
+                    add_system_instructions(system_instructions);
+                }
+                if (custom_response_guide) {
+                    fprintf(temp_file, "<response_guide>\n%s\n</response_guide>\n\n", custom_response_guide);
+                }
+                
+                /* Include file tree if it was generated */
+                if ((tree_only || global_tree_only) && strlen(tree_file_path) > 0) {
+                    FILE *tree_f = fopen(tree_file_path, "r");
+                    if (tree_f) {
+                        fprintf(temp_file, "<file_tree>\n");
+                        char buffer[4096];
+                        size_t bytes_read;
+                        while ((bytes_read = fread(buffer, 1, sizeof(buffer), tree_f)) > 0) {
+                            fwrite(buffer, 1, bytes_read, temp_file);
+                        }
+                        fprintf(temp_file, "</file_tree>\n\n");
+                        fclose(tree_f);
+                    }
+                }
+                
+                /* Accumulate files until we would exceed budget */
+                size_t running_tokens = 0;
+                size_t base_tokens = 0;
+                int files_included = 0;
+                
+                /* Count tokens for the base content (instructions, tree, etc) */
+                fflush(temp_file);
+                char *base_content = slurp_file(temp_file_path);
+                if (base_content) {
+                    base_tokens = llm_count_tokens(base_content, g_token_model);
+                    if (base_tokens == SIZE_MAX) base_tokens = 0;
+                    running_tokens = base_tokens;
+                }
+                
+                /* Open file context */
+                fprintf(temp_file, "<file_context>\n\n");
+                
+                /* Add files in ranked order until budget is exceeded */
+                for (int i = 0; i < num_processed_files; i++) {
+                    /* Create a temporary buffer to count tokens for this file */
+                    size_t mark = arena_get_mark(&g_arena);
+                    char *file_content = arena_push_array_safe(&g_arena, char, 1024*1024); /* 1MB buffer */
+                    if (!file_content) continue;
+                    
+                    /* Format file content to buffer */
+                    FILE *mem_file = fmemopen(file_content, 1024*1024, "w");
+                    if (mem_file) {
+                        output_file_content(processed_files[i], mem_file);
+                        fclose(mem_file);
+                        
+                        /* Count tokens for this file */
+                        size_t file_tokens = llm_count_tokens(file_content, g_token_model);
+                        if (file_tokens != SIZE_MAX) {
+                            /* Check if adding this file would exceed budget */
+                            if (running_tokens + file_tokens + 50 <= g_token_budget) { /* 50 token buffer for closing tags */
+                                /* File fits - add it */
+                                fprintf(temp_file, "%s", file_content);
+                                running_tokens += file_tokens;
+                                files_included++;
+                                ranks[i].tokens = file_tokens; /* Store for diagnostics */
+                            } else {
+                                /* Would exceed budget - stop here */
+                                fprintf(stderr, "Skipping remaining %d files - adding '%s' would exceed budget\n", 
+                                        num_processed_files - i, processed_files[i]);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    arena_set_mark(&g_arena, mark); /* Reset arena */
+                }
+                
+                /* Close file context */
+                fprintf(temp_file, "</file_context>\n");
+                fclose(temp_file);
+                
+                /* Re-read and count final content */
+                final_content = slurp_file(temp_file_path);
+                if (final_content) {
+                    total_tokens = llm_count_tokens(final_content, g_token_model);
+                    fprintf(stderr, "\nFileRank selection complete:\n");
+                    fprintf(stderr, "  - Selected %d most relevant files out of %d total\n", 
+                            files_included, num_processed_files);
+                    fprintf(stderr, "  - Token usage: %zu / %zu (%zu%% of budget)\n", 
+                            total_tokens, g_token_budget, (total_tokens * 100) / g_token_budget);
+                }
+            } else {
+                /* No FileRank available - show warning but continue */
+                fprintf(stderr, "WARNING: context uses %zu tokens > budget %zu\n", 
+                        total_tokens, g_token_budget);
+                if (user_instructions) {
+                    fprintf(stderr, "\nHint: Use -r flag to enable FileRank, which will select the most relevant files\n");
+                    fprintf(stderr, "      that fit within your token budget based on your search query.\n");
+                } else {
+                    fprintf(stderr, "\nHint: Use -c \"query terms\" with -r flag to enable FileRank file selection.\n");
+                }
+                /* Continue with output despite exceeding budget */
+            }
         }
         
         /* Generate diagnostics if requested */

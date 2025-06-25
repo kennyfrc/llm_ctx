@@ -1,0 +1,35 @@
+# Example configuration file for llm_ctx with FileRank weights
+# Place at ~/.config/llm_ctx/config.toml
+
+# Token budget for output
+token_budget = 48000
+
+# FileRank weight configuration
+# These control how files are scored when budget is exceeded
+# Values are multiplied by 100 since our minimal TOML parser only supports integers
+# Default values shown below:
+
+# Weight for query matches in file paths (default: 2.0)
+filerank_weight_path_x100 = 200
+
+# Weight for query matches in file content (default: 1.0) 
+filerank_weight_content_x100 = 100
+
+# Weight for file size penalty in MiB (default: 0.05)
+filerank_weight_size_x100 = 5
+
+# Weight for TF-IDF score (default: 10.0)
+filerank_weight_tfidf_x100 = 1000
+
+# Example custom weights for prioritizing small files with path matches:
+# filerank_weight_path_x100 = 500      # 5.0 - heavily favor path matches
+# filerank_weight_content_x100 = 100   # 1.0 - normal content weight
+# filerank_weight_size_x100 = 10       # 0.1 - stronger size penalty
+# filerank_weight_tfidf_x100 = 500     # 5.0 - moderate TF-IDF weight
+
+# Named templates (optional)
+[templates.specs]
+response_guide_file = "~/.claude/spec.md"
+
+[templates.engineer]
+system_prompt_file = "~/.claude/sys.md"

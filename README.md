@@ -38,7 +38,7 @@
     
     # Set a custom budget (diagnostics shown automatically)
     llm_ctx -f 'src/**/*.py' -b 100000 -c "Review this Python codebase"
-    # If over budget, exits with code 3 before copying
+    # If over budget, shows warning but still outputs content
     ```
     *(Token counting built with `make all` - see [Token Counting](#token-counting-and-budget-management))*
 
@@ -58,6 +58,15 @@
     ```bash
     llm_ctx -t -L 2 -f 'src/**/*.js' -c "Review this JavaScript project"
     # Shows only 2 levels deep in the tree, preventing overwhelming output
+    ```
+
+9.  **Use named templates** for consistent prompting (requires config setup):
+    ```bash
+    # Use concise template for quick reviews
+    llm_ctx -s:concise -e:detailed -f main.py
+    
+    # Use architect template for design discussions
+    llm_ctx -s:architect -c "How would you refactor this?" -f src/*.js
     ```
 
 *(To output to stdout instead of clipboard, use the `-o` flag)*
@@ -405,7 +414,10 @@ Options:
   -C             Shortcut for `-c @-`. Reads user instruction text from
                  standard input until EOF (Ctrl+D).
 
-  -s             (Bare flag) No system prompt is added by default.
+  -s             Enable system prompt from config file.
+
+  -s:TEMPLATE    Use named template for system prompt (no space after -s).
+                 Example: -s:concise
 
   -s TEXT        Add system prompt text wrapped in <system_instructions> tags.
                  Appears before user instructions.
@@ -419,9 +431,19 @@ Options:
   -s@-           Read system prompt text from stdin until EOF (no space after -s).
                  Example: echo "Be concise" | llm_ctx -s@- -f file.c
 
-  -e, --editor-comments
-                 Instruct the LLM to append PR-style review comments to its
-                 response. Adds specific instructions to the <response_guide>.
+  -e             Enable response guide from config file or default PR-style.
+
+  -e:TEMPLATE    Use named template for response guide (no space after -e).
+                 Example: -e:detailed
+
+  -e TEXT        Use TEXT as custom response guide (no space after -e).
+                 Example: -e"Provide a detailed analysis"
+
+  -e@FILE        Read custom response guide from FILE (no space after -e).
+                 Example: -e@/path/to/guide.txt
+
+  -e@-           Read custom response guide from stdin (no space after -e).
+                 Example: echo "Be thorough" | llm_ctx -e@- -f file.c
 
   -r             Raw mode. Omits system instructions and the response guide.
 
@@ -434,7 +456,7 @@ Options:
   -b N, --token-budget=N
                  Set a token budget limit (default: 96000). If the generated context
                  exceeds this token count (using OpenAI tokenization), the output is
-                 rejected and the program exits with code 3. Token usage and detailed
+                 rejected unless using -r flag for automatic file selection. Token usage and detailed
                  diagnostics are displayed automatically when the tokenizer is available.
                  Example: -b 128000 (for GPT-4's context limit)
 
@@ -474,6 +496,124 @@ Options:
 
   --no-gitignore Ignore .gitignore files. Process all files matched by
                  arguments or patterns, even if they are listed in .gitignore.
+
+  --ignore-config
+                 Skip loading the configuration file. Use this to ensure
+                 llm_ctx behaves exactly as if no config file exists.
+```
+
+### Configuration File
+
+`llm_ctx` supports an optional configuration file that allows you to set default values for various options without typing them on every run. This is particularly useful for persistent settings like system prompts, response guides, and token budgets.
+
+#### Configuration File Location
+
+The configuration file is loaded from the first location found in this order:
+
+1. `$LLM_CTX_CONFIG` (if set) - explicit path to config file
+2. `$XDG_CONFIG_HOME/llm_ctx/config.toml` (follows XDG Base Directory specification)
+3. `~/.config/llm_ctx/config.toml` (default location)
+
+#### Configuration File Format
+
+The configuration uses TOML format. All settings are optional:
+
+```toml
+# ~/.config/llm_ctx/config.toml
+
+# File paths for prompts (~ expansion supported)
+system_prompt_file = "~/prompts/sys_default.md"
+response_guide_file = "~/prompts/review_guide.md"
+
+# Copy to clipboard by default (true/false)
+copy_to_clipboard = true
+
+# Default token budget
+token_budget = 64000
+
+# Named templates
+[templates.concise]
+system_prompt_file = "~/prompts/concise_system.md"
+response_guide_file = "~/prompts/concise_guide.md"
+
+[templates.detailed]
+system_prompt_file = "~/prompts/detailed_system.md"  
+response_guide_file = "~/prompts/detailed_guide.md"
+
+[templates.architect]
+system_prompt_file = "~/prompts/architect_system.md"
+response_guide_file = "~/prompts/architect_guide.md"
+```
+
+#### Named Templates
+
+You can define named templates in your configuration file to quickly switch between different system prompts and response guides:
+
+```bash
+# Use the concise template
+llm_ctx -s:concise -f main.c
+
+# Use detailed response guide with architect system prompt
+llm_ctx -s:architect -e:detailed -f src/*.py
+
+# Mix templates with custom instructions
+llm_ctx -s:concise -c "Review for security issues" -f src/*.js
+```
+
+Templates are defined under `[templates.name]` sections in the config file. Each template can specify:
+- `system_prompt_file`: Path to the system prompt file
+- `response_guide_file`: Path to the response guide file
+
+#### How Configuration Works
+
+1. **CLI flags always override config values**: Command-line options take precedence over configuration file settings.
+
+2. **File path expansion**: Paths starting with `~` are automatically expanded to the home directory.
+
+3. **Error handling**: If a configured file doesn't exist, a warning is printed to stderr but execution continues:
+   ```
+   warning: config refers to ~/prompts/sys_default.md (not found)
+   ```
+
+4. **Disabling config**: Use `--ignore-config` flag or set `LLM_CTX_NO_CONFIG=1` environment variable to skip configuration loading entirely.
+
+#### Configuration Examples
+
+**Example 1: Default system prompt for all commands**
+```toml
+# ~/.config/llm_ctx/config.toml
+system_prompt_file = "~/prompts/concise_coder.md"
+```
+
+Now all commands will use this system prompt unless overridden:
+```bash
+# Uses configured system prompt
+llm_ctx -f main.c -c "Review this code"
+
+# Override with CLI flag
+llm_ctx -f main.c -c "Review this code" -s "You are a security expert"
+```
+
+**Example 2: Different configs for different projects**
+```bash
+# Project A uses one config
+LLM_CTX_CONFIG=~/projectA/.llm_ctx.toml llm_ctx -f src/*.py
+
+# Project B uses another
+LLM_CTX_CONFIG=~/projectB/.llm_ctx.toml llm_ctx -f src/*.js
+```
+
+**Example 3: Disable clipboard by default**
+```toml
+# ~/.config/llm_ctx/config.toml
+copy_to_clipboard = false  # Always output to stdout unless -o is used
+```
+
+#### Testing with Configuration
+
+The test suite runs with `LLM_CTX_NO_CONFIG=1` to ensure consistent behavior:
+```bash
+make test  # Automatically sets LLM_CTX_NO_CONFIG=1
 ```
 
 ### Clipboard Behavior
@@ -639,8 +779,9 @@ llm_ctx -f 'src/**/*.js' -b 128000
 # If the context exceeds the budget:
 # - Token usage shown with percentage over 100%
 # - Error message printed to stderr  
-# - Program exits with code 3
-# - No output is generated (clipboard/stdout/file)
+# - Program continues with warning (exit code 0)
+# - Output is still generated (clipboard/stdout/file)
+# - Use -r flag to enable FileRank for automatic file selection
 ```
 
 Exit codes:
@@ -723,6 +864,85 @@ llm_ctx -f file.txt --token-model=gpt-3.5-turbo
 - If the library is missing, token features are disabled with a warning
 - Token counts are exact, not estimates
 - Performance impact is minimal (< 100ms for most contexts)
+
+### FileRank: Intelligent File Selection
+
+FileRank is an opt-in feature that sorts files by relevance to your query. When enabled with the `-r` flag, FileRank scores files using:
+
+- **TF-IDF scoring**: Term frequency-inverse document frequency for query relevance
+- **Path matching**: Query terms found in file paths get higher weight
+- **Content matching**: Query terms found in file content
+- **Size penalty**: Larger files are slightly penalized to maximize file count
+
+#### Using FileRank
+
+Enable FileRank with the `-r` flag to sort files by relevance:
+
+```bash
+# Sort files by relevance to "search algorithm"
+llm_ctx -r -f 'src/**/*.js' -c "optimize the search algorithm"
+
+# FileRank also helps when exceeding token budget
+llm_ctx -r -f 'src/**/*.js' -c "search" -b 50000
+
+# Debug FileRank scoring to see why files were selected
+llm_ctx -r -f 'src/**/*.js' -c "search" --filerank-debug
+```
+
+#### Customizing FileRank Weights
+
+You can adjust how FileRank scores files using `--filerank-weight`:
+
+```bash
+# Heavily favor files with query terms in their path
+llm_ctx -r -f '**/*.py' -c "test" \
+  --filerank-weight path:10,content:1,size:0.01,tfidf:5
+
+# Focus on content matches over path matches  
+llm_ctx -f '**/*.py' -c "async" -b 30000 \
+  --filerank-weight path:0.5,content:5,size:0.05,tfidf:10
+```
+
+Weight parameters:
+- `path`: Weight for query matches in file paths (default: 2.0)
+- `content`: Weight for query matches in file content (default: 1.0)
+- `size`: Penalty per MiB of file size (default: 0.05)
+- `tfidf`: Weight for TF-IDF score (default: 10.0)
+
+#### Configuration File Support
+
+You can set default FileRank weights in your config file:
+
+```toml
+# ~/.config/llm_ctx/config.toml
+token_budget = 48000
+
+# FileRank weights (as integers x100 for precision)
+filerank_weight_path_x100 = 500      # 5.0 - favor path matches
+filerank_weight_content_x100 = 100   # 1.0
+filerank_weight_size_x100 = 10       # 0.1 - stronger size penalty
+filerank_weight_tfidf_x100 = 1000    # 10.0
+```
+
+#### FileRank Examples
+
+1. **Finding test files:**
+   ```bash
+   # FileRank will prioritize files with "test" in path/content
+   llm_ctx -r -f 'src/**/*' -c "analyze test coverage"
+   ```
+
+2. **Focusing on specific algorithms:**
+   ```bash
+   # FileRank prioritizes files mentioning "dijkstra"
+   llm_ctx -r -f '**/*.{c,h}' -c "optimize dijkstra implementation"
+   ```
+
+3. **Debugging file selection:**
+   ```bash
+   # See FileRank scores and understand selection
+   llm_ctx -r -f '**/*.py' -c "database queries" --filerank-debug
+   ```
 
 ## Limitations
 

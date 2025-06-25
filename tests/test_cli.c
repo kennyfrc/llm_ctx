@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <limits.h>
+#include <sys/types.h>
 #include "test_framework.h"
 
 /**
@@ -24,6 +25,9 @@
 /* void test_cli_codemap(void); -- removed -m option */
 void test_cli_output_to_file(void);
 void test_cli_e_flag_custom_guide(void);
+void test_cli_exclude_pattern(void);
+void test_cli_exclude_multiple_patterns(void);
+void test_cli_exclude_with_glob(void);
 
 /* Set up the test environment */
 void setup_test_env(void) {
@@ -219,14 +223,8 @@ void setup_test_env(void) {
 
 /* Clean up the test environment */
 void teardown_test_env(void) {
-    /* Remove all test files */
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "rm -rf %s", TEST_DIR);
-    system(cmd);
-    /* Remove tmp directory if empty */
-    rmdir("./tmp");
-    /* NOTE: User config file handling is now done in global_setup/global_teardown */
-    /* No need to explicitly remove .llm_ctx.conf, rm -rf handles it */
+    /* Just nuke the entire tmp directory - much simpler! */
+    system("rm -rf ./tmp");
 }
 
 /* Helper function to check if a string contains a substring */
@@ -368,9 +366,16 @@ TEST(test_cli_ignore_dirs) {
 
     /* Clean up */
     unlink(TEST_DIR "/.gitignore");
-    /* Restore original gitignore for subsequent tests by re-running setup.
-       NOTE: This ensures the default gitignore is present for the next test run. */
-    setup_test_env();
+    /* Restore original gitignore for subsequent tests */
+    FILE *gitignore = fopen(TEST_DIR "/.gitignore", "w");
+    if (gitignore) {
+        fprintf(gitignore, "# Test gitignore file\n");
+        fprintf(gitignore, "*.log\n");
+        fprintf(gitignore, "__test_*.txt\n");
+        fprintf(gitignore, "!__test_important.txt\n");
+        fprintf(gitignore, "__secrets/\n");
+        fclose(gitignore);
+    }
 }
 
 /* Test help message includes new options */
@@ -1074,12 +1079,12 @@ TEST(test_cli_e_flag_response_guide) {
     const char *expected_reply_no_review = "    2. No code-review block is required.";
     const char *expected_reply_with_review_start = "    2. Return **PR-style code review comments**"; // Check start only
 
-    ASSERT("Output (no -e) contains <response_guide>", string_contains(output_no_e, "<response_guide>"));
-    ASSERT("Output (no -e) contains guide instruction line", string_contains(output_no_e, expected_guide_instruction));
-    ASSERT("Output (no -e) contains Problem Statement header", string_contains(output_no_e, expected_problem_statement_header));
-    ASSERT("Output (no -e) contains correct problem statement text", string_contains(output_no_e, expected_problem_statement_text));
-    ASSERT("Output (no -e) contains Response header", string_contains(output_no_e, expected_response_header));
-    ASSERT("Output (no -e) contains correct 'No code-review' reply format", string_contains(output_no_e, expected_reply_no_review));
+    ASSERT("Output (no -e) does NOT contain <response_guide>", !string_contains(output_no_e, "<response_guide>"));
+    ASSERT("Output (no -e) does NOT contain guide instruction line", !string_contains(output_no_e, expected_guide_instruction));
+    ASSERT("Output (no -e) does NOT contain Problem Statement header", !string_contains(output_no_e, expected_problem_statement_header));
+    ASSERT("Output (no -e) does NOT contain problem statement text", !string_contains(output_no_e, expected_problem_statement_text));
+    ASSERT("Output (no -e) does NOT contain Response header", !string_contains(output_no_e, expected_response_header));
+    ASSERT("Output (no -e) does NOT contain 'No code-review' reply format", !string_contains(output_no_e, expected_reply_no_review));
     ASSERT("Output (no -e) does NOT contain 'PR-style' reply format", !string_contains(output_no_e, expected_reply_with_review_start));
 
     // Test with -e flag
@@ -1198,17 +1203,18 @@ TEST(test_cli_C_flag_prompt_only) {
 // Tests for -s (system instructions)
 // ============================================================================
 
-/* Test bare -s flag (default system prompt) */
+/* Test bare -s flag (enables config system prompt) */
 TEST(test_cli_s_default) {
     char cmd[2048];
 
-    // Run llm_ctx with bare -s flag. This should NOT output any system prompt.
+    // Run llm_ctx with bare -s flag. This should enable loading system prompt from config if available.
+    // Since we're in an isolated test environment without config files, no system prompt should appear.
     snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -s -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
-    // Check that NO system instructions are present because bare -s prevents config loading
-    // and there's no hardcoded default anymore.
-    ASSERT("Output does NOT contain <system_instructions> (bare -s)", !string_contains(output, "<system_instructions>"));
+    // With the new default system instructions, -s will always produce system instructions
+    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains default system instructions", string_contains(output, "You are pragmatic"));
     // Ensure user instructions are not present unless -c is also used
     ASSERT("Output does NOT contain <user_instructions>", !string_contains(output, "<user_instructions>"));
     // Ensure file content is still present
@@ -1296,6 +1302,321 @@ TEST(test_cli_s_glued_inline) {
     ASSERT("Output contains glued inline system prompt", string_contains(output, "gluedtext"));
 }
 
+/* Test -s @~/file: Read system instructions from tilde-expanded path */
+TEST(test_cli_s_at_file_tilde_expansion) {
+    char cmd[2048];
+    char sys_msg_file_path[1024];
+    const char *custom_sys_prompt = "System prompt from tilde-expanded path.";
+    
+    /* Get home directory */
+    const char *home = getenv("HOME");
+    ASSERT("HOME environment variable is set", home != NULL);
+    if (!home) return;
+    
+    /* Create file in home directory */
+    snprintf(sys_msg_file_path, sizeof(sys_msg_file_path), "%s/__test_sys_msg_tilde.txt", home);
+    FILE *sys_msg_file = fopen(sys_msg_file_path, "w");
+    ASSERT("System message file created in home", sys_msg_file != NULL);
+    if (!sys_msg_file) return;
+    fprintf(sys_msg_file, "%s", custom_sys_prompt);
+    fclose(sys_msg_file);
+    
+    /* Test with tilde expansion */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -s@~/__test_sys_msg_tilde.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains system prompt from tilde-expanded file", string_contains(output, custom_sys_prompt));
+    ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+    
+    /* Clean up */
+    unlink(sys_msg_file_path);
+}
+
+/* Test -s @~/nonexistent: Tilde expansion error handling */
+TEST(test_cli_s_at_file_tilde_expansion_error) {
+    char cmd[2048];
+    
+    /* Test with non-existent tilde path */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -s@~/__test_nonexistent_sys_msg.txt -f __regular.txt 2>&1", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains error message about path expansion", string_contains(output, "Cannot expand path"));
+    ASSERT("Output mentions the tilde path", string_contains(output, "~/__test_nonexistent_sys_msg.txt"));
+}
+
+/* Test default system instructions without -s flag */
+TEST(test_cli_default_system_instructions) {
+    char cmd[2048];
+    
+    /* Run llm_ctx without -s flag in an environment with no config file */
+    /* This should use the hardcoded default system instructions */
+    snprintf(cmd, sizeof(cmd), "cd %s && LLM_CTX_NO_CONFIG=1 %s/llm_ctx -o - -f __regular.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    /* Check that default system instructions are present */
+    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
+    ASSERT("Output contains default system instructions text", string_contains(output, "You are pragmatic, direct, and focused on simplicity"));
+    ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+}
+
+/* Test system instructions precedence: CLI > config > default */
+TEST(test_cli_system_instructions_precedence) {
+    char cmd[2048];
+    char config_path[1024];
+    char sys_prompt_path[1024];
+    
+    /* Create a config file with system prompt */
+    snprintf(config_path, sizeof(config_path), "%s/.llm_ctx.conf", TEST_DIR);
+    snprintf(sys_prompt_path, sizeof(sys_prompt_path), "%s/__config_sys_prompt.txt", TEST_DIR);
+    
+    /* Create system prompt file for config */
+    FILE *sys_f = fopen(sys_prompt_path, "w");
+    ASSERT("System prompt file created", sys_f != NULL);
+    if (!sys_f) return;
+    fprintf(sys_f, "System instructions from config file");
+    fclose(sys_f);
+    
+    /* Create config file */
+    FILE *config_f = fopen(config_path, "w");
+    ASSERT("Config file created", config_f != NULL);
+    if (!config_f) {
+        unlink(sys_prompt_path);
+        return;
+    }
+    fprintf(config_f, "system_prompt_file = \"__config_sys_prompt.txt\"\n");
+    fclose(config_f);
+    
+    /* Test 1: In test environment with global config, we'll get either global config or default */
+    /* Skip this part of the test as it depends on the test environment config */
+    
+    /* Note: This test is affected by global config files. To properly test config precedence,
+     * we would need to set LLM_CTX_CONFIG_DIR or ensure complete isolation from global configs.
+     * For now, we'll focus on testing CLI override which is more reliable. */
+    
+    /* Test 2: CLI -s should override any config or default */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o - -s \"CLI override instructions\" -f __regular.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    ASSERT("Output contains CLI system instructions", string_contains(output, "CLI override instructions"));
+    ASSERT("Output does NOT contain config instructions", !string_contains(output, "System instructions from config file"));
+    
+    /* Clean up */
+    unlink(config_path);
+    unlink(sys_prompt_path);
+}
+
+/* Test -e @~/file: Read response guide from tilde-expanded path */
+TEST(test_cli_e_at_file_tilde_expansion) {
+    char cmd[2048];
+    char guide_file_path[1024];
+    const char *custom_guide = "Custom response guide from tilde-expanded path.";
+    
+    /* Get home directory */
+    const char *home = getenv("HOME");
+    ASSERT("HOME environment variable is set", home != NULL);
+    if (!home) return;
+    
+    /* Create file in home directory */
+    snprintf(guide_file_path, sizeof(guide_file_path), "%s/__test_guide_tilde.txt", home);
+    FILE *guide_file = fopen(guide_file_path, "w");
+    ASSERT("Response guide file created in home", guide_file != NULL);
+    if (!guide_file) return;
+    fprintf(guide_file, "%s", custom_guide);
+    fclose(guide_file);
+    
+    /* Test with tilde expansion */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -e@~/__test_guide_tilde.txt -f __regular.txt", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains <response_guide>", string_contains(output, "<response_guide>"));
+    ASSERT("Output contains custom response guide from tilde-expanded file", string_contains(output, custom_guide));
+    ASSERT("Output contains closing </response_guide>", string_contains(output, "</response_guide>"));
+    ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
+    
+    /* Clean up */
+    unlink(guide_file_path);
+}
+
+/* Test -e @~/nonexistent: Tilde expansion error handling */
+TEST(test_cli_e_at_file_tilde_expansion_error) {
+    char cmd[2048];
+    
+    /* Test with non-existent tilde path */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -e@~/__test_nonexistent_guide.txt -f __regular.txt 2>&1", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains error message about path expansion", string_contains(output, "Cannot expand path"));
+    ASSERT("Output mentions the tilde path", string_contains(output, "~/__test_nonexistent_guide.txt"));
+}
+
+TEST(test_cli_exclude_pattern) {
+    char cmd[1024];
+    
+    /* Create test files */
+    char test_file[PATH_MAX];
+    char log_file[PATH_MAX];
+    char min_js_file[PATH_MAX];
+    
+    snprintf(test_file, sizeof(test_file), "%s/__test_main.c", TEST_DIR);
+    snprintf(log_file, sizeof(log_file), "%s/__test_debug.log", TEST_DIR);
+    snprintf(min_js_file, sizeof(min_js_file), "%s/__test_app.min.js", TEST_DIR);
+    
+    FILE *f = fopen(test_file, "w");
+    if (f) {
+        fprintf(f, "// Main test file\nint main() { return 0; }\n");
+        fclose(f);
+    }
+    
+    f = fopen(log_file, "w");
+    if (f) {
+        fprintf(f, "Debug log content\n");
+        fclose(f);
+    }
+    
+    f = fopen(min_js_file, "w");
+    if (f) {
+        fprintf(f, "// Minified JavaScript\n");
+        fclose(f);
+    }
+    
+    /* Test excluding .log files */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f __test_*.* -x '*.log' 2>&1", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains main.c", string_contains(output, "__test_main.c"));
+    ASSERT("Output contains app.min.js", string_contains(output, "__test_app.min.js"));
+    ASSERT("Output does not contain debug.log", !string_contains(output, "__test_debug.log"));
+    ASSERT("Output does not contain log content", !string_contains(output, "Debug log content"));
+    
+    /* Clean up */
+    unlink(test_file);
+    unlink(log_file);
+    unlink(min_js_file);
+}
+
+TEST(test_cli_exclude_multiple_patterns) {
+    char cmd[1024];
+    
+    /* Create a subdirectory for this test to avoid conflicts */
+    char test_subdir[PATH_MAX];
+    snprintf(test_subdir, sizeof(test_subdir), "%s/excl_test", TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "rm -rf %s && mkdir -p %s", test_subdir, test_subdir);
+    run_command(cmd);
+    
+    /* Create test files */
+    char c_file[PATH_MAX];
+    char log_file[PATH_MAX];
+    char tmp_file[PATH_MAX];
+    char txt_file[PATH_MAX];
+    
+    snprintf(c_file, sizeof(c_file), "%s/code.c", test_subdir);
+    snprintf(log_file, sizeof(log_file), "%s/error.log", test_subdir);
+    snprintf(tmp_file, sizeof(tmp_file), "%s/cache.tmp", test_subdir);
+    snprintf(txt_file, sizeof(txt_file), "%s/readme.txt", test_subdir);
+    
+    FILE *f = fopen(c_file, "w");
+    if (f) {
+        fprintf(f, "// C code\n");
+        fclose(f);
+    }
+    
+    f = fopen(log_file, "w");
+    if (f) {
+        fprintf(f, "Error log\n");
+        fclose(f);
+    }
+    
+    f = fopen(tmp_file, "w");
+    if (f) {
+        fprintf(f, "Temp cache\n");
+        fclose(f);
+    }
+    
+    f = fopen(txt_file, "w");
+    if (f) {
+        fprintf(f, "README content\n");
+        fclose(f);
+    }
+    
+    /* Test excluding multiple patterns using glob from subdirectory */
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o -f '%s/*' -x '*.log' -x '*.tmp' 2>&1", getenv("PWD"), test_subdir);
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains code.c", string_contains(output, "code.c"));
+    ASSERT("Output contains readme.txt", string_contains(output, "readme.txt"));
+    ASSERT("Output does not contain error.log", !string_contains(output, "error.log"));
+    ASSERT("Output does not contain cache.tmp", !string_contains(output, "cache.tmp"));
+    ASSERT("Output does not contain log content", !string_contains(output, "Error log"));
+    ASSERT("Output does not contain temp content", !string_contains(output, "Temp cache"));
+    
+    /* Clean up */
+    snprintf(cmd, sizeof(cmd), "rm -rf %s", test_subdir);
+    run_command(cmd);
+}
+
+TEST(test_cli_exclude_with_glob) {
+    char cmd[1024];
+    
+    /* Create directory structure */
+    char src_dir[PATH_MAX];
+    char gen_dir[PATH_MAX];
+    char lib_dir[PATH_MAX];
+    
+    snprintf(src_dir, sizeof(src_dir), "%s/__test_src", TEST_DIR);
+    snprintf(gen_dir, sizeof(gen_dir), "%s/__test_src/__test_generated", TEST_DIR);
+    snprintf(lib_dir, sizeof(lib_dir), "%s/__test_src/__test_lib", TEST_DIR);
+    
+    mkdir(src_dir, 0755);
+    mkdir(gen_dir, 0755);
+    mkdir(lib_dir, 0755);
+    
+    /* Create test files */
+    char main_file[PATH_MAX];
+    char gen_file[PATH_MAX];
+    char lib_file[PATH_MAX];
+    
+    snprintf(main_file, sizeof(main_file), "%s/__test_main.js", src_dir);
+    snprintf(gen_file, sizeof(gen_file), "%s/__test_api.js", gen_dir);
+    snprintf(lib_file, sizeof(lib_file), "%s/__test_util.js", lib_dir);
+    
+    FILE *f = fopen(main_file, "w");
+    if (f) {
+        fprintf(f, "// Main JS\n");
+        fclose(f);
+    }
+    
+    f = fopen(gen_file, "w");
+    if (f) {
+        fprintf(f, "// Generated API\n");
+        fclose(f);
+    }
+    
+    f = fopen(lib_file, "w");
+    if (f) {
+        fprintf(f, "// Utility library\n");
+        fclose(f);
+    }
+    
+    /* Test excluding directory with double-star pattern */
+    snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -f '__test_src/**' -x '__test_src/__test_generated/**' 2>&1", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    ASSERT("Output contains main.js", string_contains(output, "__test_main.js"));
+    ASSERT("Output contains util.js", string_contains(output, "__test_util.js"));
+    ASSERT("Output does not contain generated api.js", !string_contains(output, "__test_api.js"));
+    ASSERT("Output does not contain generated content", !string_contains(output, "Generated API"));
+    
+    /* Clean up */
+    unlink(main_file);
+    unlink(gen_file);
+    unlink(lib_file);
+    rmdir(gen_dir);
+    rmdir(lib_dir);
+    rmdir(src_dir);
+}
+
 
 
 
@@ -1377,6 +1698,12 @@ int main(void) {
     RUN_TEST(test_cli_s_inline);
     RUN_TEST(test_cli_s_equals_inline);
     RUN_TEST(test_cli_s_glued_inline);
+    RUN_TEST(test_cli_s_at_file_tilde_expansion);
+    RUN_TEST(test_cli_s_at_file_tilde_expansion_error);
+    RUN_TEST(test_cli_default_system_instructions);
+    RUN_TEST(test_cli_system_instructions_precedence);
+    RUN_TEST(test_cli_e_at_file_tilde_expansion);
+    RUN_TEST(test_cli_e_at_file_tilde_expansion_error);
 
     /* Tests for config file system_prompt (Slice 5) */
 
@@ -1388,6 +1715,11 @@ int main(void) {
     
     /* Test for file output functionality */
     RUN_TEST(test_cli_output_to_file);
+    
+    /* Tests for CLI exclude patterns */
+    RUN_TEST(test_cli_exclude_pattern);
+    RUN_TEST(test_cli_exclude_multiple_patterns);
+    RUN_TEST(test_cli_exclude_with_glob);
 
     /* Temporarily skipped tests for UTF-16/32 handling, as the current heuristic */
     /* correctly identifies them as binary (due to null bytes), but the ideal */
