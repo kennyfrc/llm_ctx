@@ -78,14 +78,14 @@ tests/test_gitignore: tests/test_gitignore.c gitignore.c
 # test_cli is an integration test, it runs the main llm_ctx executable.
 # test_cli is an integration test
 tests/test_cli: tests/test_cli.c
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -Wno-error=format-truncation -o $@ $<
 
 tests/test_stdin: tests/test_stdin.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 
 tests/test_tree_flags: tests/test_tree_flags.c
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -Wno-error=format-truncation -o $@ $^
 
 tests/test_arena: tests/test_arena.c
 	$(CC) $(CFLAGS) -o $@ $^
@@ -185,9 +185,13 @@ tokenizer:
 	@if [ -f "$(TOKENIZER_DIR)/tiktoken-c/tiktoken.h" ]; then \
 		cp $(TOKENIZER_DIR)/tiktoken-c/tiktoken.h $(TOKENIZER_DIR)/; \
 	else \
-		echo "Warning: Could not find tiktoken.h header"; \
-	fi
-	@echo "[PACK] tokenizer  ✔  $(TOKENIZER_LIB_NAME).$(DYNLIB_EXT) installed"
+	cd $(TOKENIZER_DIR)/tiktoken-c && \
+	cargo build --release || { echo "Failed to build tiktoken-c"; exit 1; }; \
+	echo "Copying library files..."; \
+	cp target/release/$(TOKENIZER_LIB_NAME).$(DYNLIB_EXT) ../../$(TOKENIZER_LIB) || { echo "Failed to copy library"; exit 1; }; \
+	if [ -f tiktoken.h ]; then cp tiktoken.h ..; else echo "Warning: Could not find tiktoken.h header"; fi; \
+	echo "[PACK] tokenizer  ✔  $(TOKENIZER_LIB_NAME).$(DYNLIB_EXT) installed"; \
+fi
 
 # Clean tokenizer build artifacts
 clean-tokenizer:
