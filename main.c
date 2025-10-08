@@ -1184,8 +1184,8 @@ void show_help(void) {
     printf("  -T             Generate file tree only for specified files (filtered tree)\n");
     printf("  -O             Generate tree only (no file content)\n");
     printf("  -L N           Limit tree depth to N levels (default: 4)\n");
-    printf("  -o             Output to stdout instead of clipboard\n");
-    printf("  -o@FILE        Write output to FILE (no space after -o)\n");
+    printf("  -o [FILE]      Output to stdout (default) or write to FILE\n");
+    printf("                 Accepts -oFILE, -o FILE, -o@FILE, --output=FILE\n");
     printf("  -d, --debug    Enable debug output (prefixed with [DEBUG])\n");
     printf("  -h             Show this help message\n");
     printf("  -b N           Set token budget limit (default: 96000)\n");
@@ -2037,17 +2037,22 @@ static void handle_output_arg(const char *arg) {
         return;
     }
     
-    /* Case 2: -o@filename -> Output to file */
-    if (arg[0] == '@') {
-        if (arg[1] == '\0') {
+    /* Case 2: -o with argument -> Output to file */
+    const char *path = arg;
+
+    if (path[0] == '@') {
+        path++; /* Support legacy -o@FILE form */
+        if (*path == '\0') {
             fatal("Error: -o@ requires a filename after @");
         }
-        g_output_file = arena_strdup_safe(&g_arena, arg + 1); /* skip '@' */
-        if (!g_output_file) fatal("Out of memory duplicating output filename");
-    } else {
-        /* Case 3: For backward compatibility, treat non-@ argument as error */
-        fatal("Error: -o requires @ prefix for files (e.g., -o@output.txt). Use -o alone for stdout.");
     }
+
+    if (*path == '\0') {
+        fatal("Error: -o/--output requires a non-empty filename");
+    }
+
+    g_output_file = arena_strdup_safe(&g_arena, path);
+    if (!g_output_file) fatal("Out of memory duplicating output filename");
 }
 
 /**
@@ -2818,24 +2823,29 @@ int main(int argc, char *argv[]) {
         /* Process files listed after options */
         if (file_args_start >= argc) {
             /* Check if stdin was already consumed by an @- option */
-            /* If stdin wasn't used for @- and no files given, it's an error/warning */
             bool used_stdin_for_args = g_stdin_consumed_for_option;
+            bool tree_requested = tree_only || global_tree_only || tree_only_output;
             if (!used_stdin_for_args) {
-                 /* -f flag likely provided but no files specified, or only options given */
-                 fprintf(stderr, "Warning: File mode specified (-f or via @-) but no file arguments provided.\n");
-                 /* Allow proceeding if stdin might have been intended but wasn't used for @- */
-                 /* If stdin is not a tty, process it. Otherwise, exit if prompt-only not allowed. */
-                 if (isatty(STDIN_FILENO)) {
-                     fprintf(stderr, "No input provided.\n");
-                     return 1; /* Exit if terminal and no files */
-                 } else {
-                     /* Fall through to process stdin if data is piped */
-                     if (!process_stdin_content()) {
-                         return 1; /* Exit on stdin processing error */
-                     }
-                 }
+                if (tree_requested) {
+                    /* Default tree modes without explicit paths to the current directory */
+                    process_pattern(".");
+                } else {
+                    /* -f flag likely provided but no files specified, or only options given */
+                    fprintf(stderr, "Warning: File mode specified (-f or via @-) but no file arguments provided.\n");
+                    /* Allow proceeding if stdin might have been intended but wasn't used for @- */
+                    /* If stdin is not a tty, process it. Otherwise, exit if prompt-only not allowed. */
+                    if (isatty(STDIN_FILENO)) {
+                        fprintf(stderr, "No input provided.\n");
+                        return 1; /* Exit if terminal and no files */
+                    } else {
+                        /* Fall through to process stdin if data is piped */
+                        if (!process_stdin_content()) {
+                            return 1; /* Exit on stdin processing error */
+                        }
+                    }
+                }
             }
-             /* If stdin *was* used for @-, proceed without file args is okay */
+            /* If stdin *was* used for @-, proceed without file args is okay */
 
         } else {
             /* Process each remaining argument as a file/pattern */

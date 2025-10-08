@@ -259,6 +259,19 @@ TEST(test_tree_flags_with_content) {
     cleanup_test_files();
 }
 
+/* Test tree flags operate without explicit -f arguments */
+TEST(test_tree_flags_without_file_args) {
+    setup_test_files();
+
+    char *output = run_command("../llm_ctx -O -t -o --no-gitignore --ignore-config");
+
+    ASSERT("Tree-only output should contain <file_tree>", string_contains(output, "<file_tree>"));
+    ASSERT("Tree-only output should NOT contain <file_context>", !string_contains(output, "<file_context>"));
+    ASSERT("Tree-only output should list test_tree_dir", string_contains(output, "test_tree_dir"));
+
+    cleanup_test_files();
+}
+
 int main(void) {
     printf("Running tree flags tests\n");
     printf("========================\n");
@@ -269,6 +282,7 @@ int main(void) {
     RUN_TEST(test_T_flag_with_patterns);
     RUN_TEST(test_tree_flags_no_content);
     RUN_TEST(test_tree_flags_with_content);
+    RUN_TEST(test_tree_flags_without_file_args);
     RUN_TEST(test_normal_mode_no_tree_by_default);
     
     printf("\n");

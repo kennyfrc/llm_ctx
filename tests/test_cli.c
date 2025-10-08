@@ -1904,9 +1904,38 @@ TEST(test_cli_output_to_file) {
     
     /* Check that this also works */
     ASSERT("--output=@ syntax confirms file was written", string_contains(output, "Content written to"));
+
+    /* Test with --output FILE syntax */
+    snprintf(output_file, sizeof(output_file), "%s/__output_result3.txt", TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx --output %s -f %s 2>&1", getenv("PWD"), output_file, test_file);
+    output = run_command(cmd);
+    ASSERT("--output FILE confirms file was written", string_contains(output, "Content written to"));
+    result = fopen(output_file, "r");
+    ASSERT("--output FILE created output file", result != NULL);
+    if (result) {
+        char buffer[4096] = {0};
+        size_t bytes_read = fread(buffer, 1, sizeof(buffer) - 1, result);
+        fclose(result);
+        ASSERT("--output FILE writes content", bytes_read > 0);
+    }
+
+    /* Test with -o FILE syntax */
+    snprintf(output_file, sizeof(output_file), "%s/__output_result4.txt", TEST_DIR);
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx -o %s -f %s 2>&1", getenv("PWD"), output_file, test_file);
+    output = run_command(cmd);
+    ASSERT("-o FILE confirms file was written", string_contains(output, "Content written to"));
+    result = fopen(output_file, "r");
+    ASSERT("-o FILE created output file", result != NULL);
+    if (result) {
+        char buffer[4096] = {0};
+        size_t bytes_read = fread(buffer, 1, sizeof(buffer) - 1, result);
+        fclose(result);
+        ASSERT("-o FILE writes content", bytes_read > 0);
+    }
     
     /* Cleanup */
-    snprintf(cmd, sizeof(cmd), "rm -f %s/__test_output.txt %s/__output_result.txt %s/__output_result2.txt", 
-             TEST_DIR, TEST_DIR, TEST_DIR);
+    snprintf(cmd, sizeof(cmd),
+             "rm -f %s/__test_output.txt %s/__output_result.txt %s/__output_result2.txt %s/__output_result3.txt %s/__output_result4.txt",
+             TEST_DIR, TEST_DIR, TEST_DIR, TEST_DIR, TEST_DIR);
     run_command(cmd);
 }
