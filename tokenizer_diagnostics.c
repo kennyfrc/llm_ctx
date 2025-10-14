@@ -111,13 +111,16 @@ static void save_section(ParserContext *ctx, const char *name, const char *start
     content[len] = '\0';
     
     size_t tokens = llm_count_tokens(content, model);
-    if (tokens != SIZE_MAX) {
-        char *name_copy = arena_strdup_safe(arena, name);
-        if (name_copy) {
-            ctx->sections[ctx->section_count].name = name_copy;
-            ctx->sections[ctx->section_count].tokens = tokens;
-            ctx->section_count++;
-        }
+    if (tokens == SIZE_MAX) {
+        fprintf(stderr, "fatal: tokenizer failed while counting section '%s'\n", name);
+        exit(EXIT_FAILURE);
+    }
+
+    char *name_copy = arena_strdup_safe(arena, name);
+    if (name_copy) {
+        ctx->sections[ctx->section_count].name = name_copy;
+        ctx->sections[ctx->section_count].tokens = tokens;
+        ctx->section_count++;
     }
 }
 
@@ -134,13 +137,16 @@ static void save_file(ParserContext *ctx, const char *filename, const char *star
     content[len] = '\0';
     
     size_t tokens = llm_count_tokens(content, model);
-    if (tokens != SIZE_MAX) {
-        char *name_copy = arena_strdup_safe(arena, filename);
-        if (name_copy) {
-            ctx->files[ctx->file_count].filename = name_copy;
-            ctx->files[ctx->file_count].tokens = tokens;
-            ctx->file_count++;
-        }
+    if (tokens == SIZE_MAX) {
+        fprintf(stderr, "fatal: tokenizer failed while counting file '%s'\n", filename);
+        exit(EXIT_FAILURE);
+    }
+
+    char *name_copy = arena_strdup_safe(arena, filename);
+    if (name_copy) {
+        ctx->files[ctx->file_count].filename = name_copy;
+        ctx->files[ctx->file_count].tokens = tokens;
+        ctx->file_count++;
     }
 }
 
@@ -195,8 +201,8 @@ void generate_token_diagnostics(const char *content, const char *model, FILE *ou
     /* First count total tokens */
     size_t total_tokens = llm_count_tokens(content, model);
     if (total_tokens == SIZE_MAX) {
-        fprintf(out, "Error: Token counting unavailable\n");
-        return;
+        fprintf(stderr, "fatal: tokenizer failed while generating diagnostics\n");
+        exit(EXIT_FAILURE);
     }
     
     /* Allocate storage for results */

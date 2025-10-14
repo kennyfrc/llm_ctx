@@ -9,17 +9,13 @@
 #include "test_framework.h"
 
 TEST(test_tokenizer_availability) {
-    /* Test might pass or fail depending on whether library is built */
     int available = llm_tokenizer_available();
     printf("Tokenizer available: %s\n", available ? "yes" : "no");
+    ASSERT("Tokenizer library must be available", available);
 }
 
 TEST(test_token_counting) {
-    /* Skip test if tokenizer not available */
-    if (!llm_tokenizer_available()) {
-        printf("Skipping: tokenizer library not available\n");
-        return;
-    }
+    ASSERT("Tokenizer should be available", llm_tokenizer_available());
     
     /* Test known token counts from OpenAI documentation */
     struct {
@@ -59,22 +55,10 @@ TEST(test_invalid_inputs) {
     
     tokens = llm_count_tokens("hello", NULL);
     ASSERT("NULL model should return SIZE_MAX", tokens == SIZE_MAX);
-    
-    /* Test invalid model (if tokenizer available) */
-    if (llm_tokenizer_available()) {
-        tokens = llm_count_tokens("hello", "invalid-model-xyz");
-        /* This might or might not fail depending on tiktoken implementation */
-        printf("Invalid model test: %s\n", 
-               tokens == SIZE_MAX ? "rejected as expected" : "accepted (implementation dependent)");
-    }
 }
 
 TEST(test_token_diagnostics) {
-    /* Skip test if tokenizer not available */
-    if (!llm_tokenizer_available()) {
-        printf("Skipping: tokenizer library not available\n");
-        return;
-    }
+    ASSERT("Tokenizer should be available", llm_tokenizer_available());
     
     Arena arena = arena_create(1024 * 1024); /* 1MB */
     

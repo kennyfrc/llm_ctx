@@ -3009,150 +3009,142 @@ int main(int argc, char *argv[]) {
     
     /* Always try to count tokens if tokenizer is available */
     size_t total_tokens = llm_count_tokens(final_content, g_token_model);
+    if (total_tokens == SIZE_MAX) {
+        fatal("Tokenizer failed to count tokens for assembled context");
+    }
     
-    if (total_tokens != SIZE_MAX) {
-        /* Token counting succeeded - always display usage */
-        fprintf(stderr, "Token usage: %zu / %zu (%zu%% of budget)\n", 
-                total_tokens, g_token_budget, (total_tokens * 100) / g_token_budget);
-        
-        /* Check budget */
-        if (total_tokens > g_token_budget) {
-            /* Budget exceeded - try FileRank-based selection if we have ranked files */
-            if (ranks && user_instructions) {
-                fprintf(stderr, "\nBudget exceeded (%zu > %zu) - using FileRank to select most relevant files\n", 
-                        total_tokens, g_token_budget);
-                fprintf(stderr, "Query: \"%s\"\n", user_instructions);
-                
-                /* Recreate temp file with only files that fit in budget */
-                fclose(fopen(temp_file_path, "w")); /* Truncate file */
-                temp_file = fopen(temp_file_path, "w");
-                if (!temp_file) {
-                    fatal("Failed to reopen temp file for FileRank selection");
+    /* Token counting succeeded - always display usage */
+    fprintf(stderr, "Token usage: %zu / %zu (%zu%% of budget)\n", 
+            total_tokens, g_token_budget, (total_tokens * 100) / g_token_budget);
+
+    /* Check budget */
+    if (total_tokens > g_token_budget) {
+        if (ranks && user_instructions) {
+            fprintf(stderr, "\nBudget exceeded (%zu > %zu) - using FileRank to select most relevant files\n", 
+                    total_tokens, g_token_budget);
+            fprintf(stderr, "Query: \"%s\"\n", user_instructions);
+
+            fclose(fopen(temp_file_path, "w"));
+            temp_file = fopen(temp_file_path, "w");
+            if (!temp_file) {
+                fatal("Failed to reopen temp file for FileRank selection");
+            }
+
+            if (user_instructions) {
+                fprintf(temp_file, "<user_instructions>\n%s\n</user_instructions>\n\n", user_instructions);
+            }
+            if (system_instructions) {
+                add_system_instructions(system_instructions);
+            }
+            if (custom_response_guide) {
+                fprintf(temp_file, "<response_guide>\n%s\n</response_guide>\n\n", custom_response_guide);
+            }
+
+            if ((tree_only || global_tree_only) && strlen(tree_file_path) > 0) {
+                FILE *tree_f = fopen(tree_file_path, "r");
+                if (tree_f) {
+                    fprintf(temp_file, "<file_tree>\n");
+                    char buffer[4096];
+                    size_t bytes_read;
+                    while ((bytes_read = fread(buffer, 1, sizeof(buffer), tree_f)) > 0) {
+                        fwrite(buffer, 1, bytes_read, temp_file);
+                    }
+                    fprintf(temp_file, "</file_tree>\n\n");
+                    fclose(tree_f);
                 }
-                
-                /* Write headers and user instructions again */
-                if (user_instructions) {
-                    fprintf(temp_file, "<user_instructions>\n%s\n</user_instructions>\n\n", user_instructions);
+            }
+
+            size_t running_tokens = 0;
+            size_t base_tokens = 0;
+            int files_included = 0;
+
+            fflush(temp_file);
+            char *base_content = slurp_file(temp_file_path);
+            if (base_content) {
+                base_tokens = llm_count_tokens(base_content, g_token_model);
+                if (base_tokens == SIZE_MAX) {
+                    fatal("Tokenizer failed while counting base context tokens");
                 }
-                if (system_instructions) {
-                    add_system_instructions(system_instructions);
+                running_tokens = base_tokens;
+            }
+
+            fprintf(temp_file, "<file_context>\n\n");
+
+            for (int i = 0; i < num_processed_files; i++) {
+                size_t mark = arena_get_mark(&g_arena);
+                char *file_content = arena_push_array_safe(&g_arena, char, 1024*1024);
+                if (!file_content) {
+                    arena_set_mark(&g_arena, mark);
+                    continue;
                 }
-                if (custom_response_guide) {
-                    fprintf(temp_file, "<response_guide>\n%s\n</response_guide>\n\n", custom_response_guide);
-                }
-                
-                /* Include file tree if it was generated */
-                if ((tree_only || global_tree_only) && strlen(tree_file_path) > 0) {
-                    FILE *tree_f = fopen(tree_file_path, "r");
-                    if (tree_f) {
-                        fprintf(temp_file, "<file_tree>\n");
-                        char buffer[4096];
-                        size_t bytes_read;
-                        while ((bytes_read = fread(buffer, 1, sizeof(buffer), tree_f)) > 0) {
-                            fwrite(buffer, 1, bytes_read, temp_file);
-                        }
-                        fprintf(temp_file, "</file_tree>\n\n");
-                        fclose(tree_f);
+
+                FILE *mem_file = fmemopen(file_content, 1024*1024, "w");
+                if (mem_file) {
+                    output_file_content(processed_files[i], mem_file);
+                    fclose(mem_file);
+
+                    size_t file_tokens = llm_count_tokens(file_content, g_token_model);
+                    if (file_tokens == SIZE_MAX) {
+                        fatal("Tokenizer failed while counting '%s'", processed_files[i]);
+                    }
+
+                    if (running_tokens + file_tokens + 50 <= g_token_budget) {
+                        fprintf(temp_file, "%s", file_content);
+                        running_tokens += file_tokens;
+                        files_included++;
+                        ranks[i].tokens = file_tokens;
+                    } else {
+                        fprintf(stderr, "Skipping remaining %d files - adding '%s' would exceed budget\n",
+                                num_processed_files - i, processed_files[i]);
+                        arena_set_mark(&g_arena, mark);
+                        break;
                     }
                 }
-                
-                /* Accumulate files until we would exceed budget */
-                size_t running_tokens = 0;
-                size_t base_tokens = 0;
-                int files_included = 0;
-                
-                /* Count tokens for the base content (instructions, tree, etc) */
-                fflush(temp_file);
-                char *base_content = slurp_file(temp_file_path);
-                if (base_content) {
-                    base_tokens = llm_count_tokens(base_content, g_token_model);
-                    if (base_tokens == SIZE_MAX) base_tokens = 0;
-                    running_tokens = base_tokens;
+
+                arena_set_mark(&g_arena, mark);
+            }
+
+            fprintf(temp_file, "</file_context>\n");
+            fclose(temp_file);
+
+            final_content = slurp_file(temp_file_path);
+            if (final_content) {
+                total_tokens = llm_count_tokens(final_content, g_token_model);
+                if (total_tokens == SIZE_MAX) {
+                    fatal("Tokenizer failed after FileRank selection");
                 }
-                
-                /* Open file context */
-                fprintf(temp_file, "<file_context>\n\n");
-                
-                /* Add files in ranked order until budget is exceeded */
-                for (int i = 0; i < num_processed_files; i++) {
-                    /* Create a temporary buffer to count tokens for this file */
-                    size_t mark = arena_get_mark(&g_arena);
-                    char *file_content = arena_push_array_safe(&g_arena, char, 1024*1024); /* 1MB buffer */
-                    if (!file_content) continue;
-                    
-                    /* Format file content to buffer */
-                    FILE *mem_file = fmemopen(file_content, 1024*1024, "w");
-                    if (mem_file) {
-                        output_file_content(processed_files[i], mem_file);
-                        fclose(mem_file);
-                        
-                        /* Count tokens for this file */
-                        size_t file_tokens = llm_count_tokens(file_content, g_token_model);
-                        if (file_tokens != SIZE_MAX) {
-                            /* Check if adding this file would exceed budget */
-                            if (running_tokens + file_tokens + 50 <= g_token_budget) { /* 50 token buffer for closing tags */
-                                /* File fits - add it */
-                                fprintf(temp_file, "%s", file_content);
-                                running_tokens += file_tokens;
-                                files_included++;
-                                ranks[i].tokens = file_tokens; /* Store for diagnostics */
-                            } else {
-                                /* Would exceed budget - stop here */
-                                fprintf(stderr, "Skipping remaining %d files - adding '%s' would exceed budget\n", 
-                                        num_processed_files - i, processed_files[i]);
-                                break;
-                            }
-                        }
-                    }
-                    
-                    arena_set_mark(&g_arena, mark); /* Reset arena */
-                }
-                
-                /* Close file context */
-                fprintf(temp_file, "</file_context>\n");
-                fclose(temp_file);
-                
-                /* Re-read and count final content */
-                final_content = slurp_file(temp_file_path);
-                if (final_content) {
-                    total_tokens = llm_count_tokens(final_content, g_token_model);
-                    fprintf(stderr, "\nFileRank selection complete:\n");
-                    fprintf(stderr, "  - Selected %d most relevant files out of %d total\n", 
-                            files_included, num_processed_files);
-                    fprintf(stderr, "  - Token usage: %zu / %zu (%zu%% of budget)\n", 
-                            total_tokens, g_token_budget, (total_tokens * 100) / g_token_budget);
-                }
+                fprintf(stderr, "\nFileRank selection complete:\n");
+                fprintf(stderr, "  - Selected %d most relevant files out of %d total\n", 
+                        files_included, num_processed_files);
+                fprintf(stderr, "  - Token usage: %zu / %zu (%zu%% of budget)\n", 
+                        total_tokens, g_token_budget, (total_tokens * 100) / g_token_budget);
+            }
+        } else {
+            fprintf(stderr, "WARNING: context uses %zu tokens > budget %zu\n", 
+                    total_tokens, g_token_budget);
+            if (user_instructions) {
+                fprintf(stderr, "\nHint: Use -r flag to enable FileRank, which will select the most relevant files\n");
+                fprintf(stderr, "      that fit within your token budget based on your search query.\n");
             } else {
-                /* No FileRank available - show warning but continue */
-                fprintf(stderr, "WARNING: context uses %zu tokens > budget %zu\n", 
-                        total_tokens, g_token_budget);
-                if (user_instructions) {
-                    fprintf(stderr, "\nHint: Use -r flag to enable FileRank, which will select the most relevant files\n");
-                    fprintf(stderr, "      that fit within your token budget based on your search query.\n");
-                } else {
-                    fprintf(stderr, "\nHint: Use -c \"query terms\" with -r flag to enable FileRank file selection.\n");
-                }
-                /* Continue with output despite exceeding budget */
+                fprintf(stderr, "\nHint: Use -c \"query terms\" with -r flag to enable FileRank file selection.\n");
             }
         }
-        
-        /* Generate diagnostics if requested */
-        if (g_token_diagnostics_requested) {
-                FILE *diag_out = stderr;
-                if (g_token_diagnostics_file) {
-                    diag_out = fopen(g_token_diagnostics_file, "w");
-                    if (!diag_out) {
-                        perror("Failed to open diagnostics file");
-                        diag_out = stderr;
-                    }
-                }
-                
-                /* Use the detailed diagnostics function */
-                generate_token_diagnostics(final_content, g_token_model, diag_out, &g_arena);
-                
-                if (diag_out != stderr) {
-                    fclose(diag_out);
-                }
+    }
+
+    if (g_token_diagnostics_requested) {
+        FILE *diag_out = stderr;
+        if (g_token_diagnostics_file) {
+            diag_out = fopen(g_token_diagnostics_file, "w");
+            if (!diag_out) {
+                perror("Failed to open diagnostics file");
+                diag_out = stderr;
+            }
+        }
+
+        generate_token_diagnostics(final_content, g_token_model, diag_out, &g_arena);
+
+        if (diag_out != stderr) {
+            fclose(diag_out);
         }
     }
 

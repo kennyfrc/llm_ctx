@@ -26,6 +26,13 @@ static version_fn g_version_fn = NULL;
 static int g_load_attempted = 0;
 static int g_load_failed = 0;
 static char *g_executable_dir = NULL;
+static char g_load_error[512];
+
+static void remember_dl_error(const char *err) {
+    if (err && *err) {
+        snprintf(g_load_error, sizeof(g_load_error), "%s", err);
+    }
+}
 
 /* Platform-specific library name */
 #ifdef __APPLE__
@@ -45,6 +52,7 @@ static void load_tokenizer_lib(void) {
     }
     
     g_load_attempted = 1;
+    g_load_error[0] = '\0';
     
     /* Try to load the library */
     g_tokenizer_lib = dlopen(TOKENIZER_LIB_NAME, RTLD_LAZY);
@@ -54,17 +62,22 @@ static void load_tokenizer_lib(void) {
         if (getenv("LLMCTX_DEBUG") && err) {
             fprintf(stderr, "debug: dlopen(%s) failed: %s\n", TOKENIZER_LIB_NAME, err);
         }
-        
+        remember_dl_error(err);
+
         /* Try with executable directory if set */
         if (!g_tokenizer_lib && g_executable_dir) {
             char exe_path[1024];
             snprintf(exe_path, sizeof(exe_path), "%s/%s", g_executable_dir, TOKENIZER_LIB_NAME);
             g_tokenizer_lib = dlopen(exe_path, RTLD_LAZY);
             if (!g_tokenizer_lib && getenv("LLMCTX_DEBUG")) {
-                fprintf(stderr, "debug: dlopen(%s) failed: %s\n", exe_path, dlerror());
+                const char *path_err = dlerror();
+                fprintf(stderr, "debug: dlopen(%s) failed: %s\n", exe_path, path_err);
+                remember_dl_error(path_err);
+            } else if (!g_tokenizer_lib) {
+                remember_dl_error(dlerror());
             }
         }
-        
+
         /* Try with absolute path from current directory */
         if (!g_tokenizer_lib) {
             char abs_path[1024];
@@ -72,14 +85,22 @@ static void load_tokenizer_lib(void) {
                 strcat(abs_path, "/");
                 strcat(abs_path, TOKENIZER_LIB_NAME);
                 g_tokenizer_lib = dlopen(abs_path, RTLD_LAZY);
+                if (!g_tokenizer_lib) {
+                    remember_dl_error(dlerror());
+                }
             }
         }
-        
+
         if (!g_tokenizer_lib) {
             /* Try without path prefix in case it's in LD_LIBRARY_PATH */
             g_tokenizer_lib = dlopen("libtiktoken_c.so", RTLD_LAZY);
             if (!g_tokenizer_lib) {
                 g_tokenizer_lib = dlopen("libtiktoken_c.dylib", RTLD_LAZY);
+                if (!g_tokenizer_lib) {
+                    remember_dl_error(dlerror());
+                }
+            } else {
+                g_load_error[0] = '\0';
             }
         }
     }
@@ -99,6 +120,21 @@ static void load_tokenizer_lib(void) {
         dlclose(g_tokenizer_lib);
         g_tokenizer_lib = NULL;
         g_load_failed = 1;
+        snprintf(g_load_error, sizeof(g_load_error), "missing required symbols in tokenizer library");
+        return;
+    }
+
+    g_load_failed = 0;
+    g_load_error[0] = '\0';
+}
+
+static void ensure_tokenizer_ready(void) {
+    load_tokenizer_lib();
+    if (g_load_failed || !g_tokenizer_lib || !g_get_bpe_from_model || !g_encode_ordinary || !g_destroy_corebpe) {
+        const char *detail = g_load_error[0] ? g_load_error : "tokenizer library not found";
+        fprintf(stderr, "fatal: tokenizer unavailable (%s)\n", detail);
+        fprintf(stderr, "hint: run `make tokenizer` to build the vendored tokenizer library\n");
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -107,30 +143,8 @@ size_t llm_count_tokens(const char *text, const char *model) {
         return SIZE_MAX;
     }
     
-    /* Check text length to avoid stack overflow in tokenizer */
-    size_t text_len = strlen(text);
-    if (text_len > 256 * 1024) { /* 256KB limit - be conservative */
-        /* For very large texts, estimate tokens instead of exact count */
-        /* Rough estimate: ~1 token per 4 characters for English text */
-        return text_len / 4;
-    }
-    
     /* Ensure library is loaded */
-    load_tokenizer_lib();
-    
-    if (g_load_failed || !g_get_bpe_from_model || !g_encode_ordinary || !g_destroy_corebpe) {
-        static int warning_shown = 0;
-        if (!warning_shown) {
-            if (getenv("LLMCTX_DEBUG")) {
-                fprintf(stderr, "debug: g_load_failed=%d, g_tokenizer_lib=%p\n", g_load_failed, g_tokenizer_lib);
-                fprintf(stderr, "debug: g_get_bpe_from_model=%p, g_encode_ordinary=%p, g_destroy_corebpe=%p\n", 
-                        g_get_bpe_from_model, g_encode_ordinary, g_destroy_corebpe);
-            }
-            fprintf(stderr, "warning: tokenizer library not found, token counting disabled\n");
-            warning_shown = 1;
-        }
-        return SIZE_MAX;
-    }
+    ensure_tokenizer_ready();
     
     /* Validate model string */
     assert(model != NULL);
@@ -140,13 +154,9 @@ size_t llm_count_tokens(const char *text, const char *model) {
     /* Get the BPE encoder for the model */
     CoreBPE *bpe = g_get_bpe_from_model(model);
     if (!bpe) {
-        /* Model not supported, show error once */
-        static int model_warning_shown = 0;
-        if (!model_warning_shown) {
-            fprintf(stderr, "warning: model '%s' not supported by tokenizer\n", model);
-            model_warning_shown = 1;
-        }
-        return SIZE_MAX;
+        fprintf(stderr, "fatal: tokenizer model '%s' not supported\n", model);
+        fprintf(stderr, "hint: choose a supported model or update the vendored tokenizer\n");
+        exit(EXIT_FAILURE);
     }
     
     /* Validate BPE encoder */
