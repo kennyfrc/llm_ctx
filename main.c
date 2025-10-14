@@ -1,13 +1,8 @@
 
 /**
- * llm_ctx - A utility for extracting file content with fenced blocks for LLM context
+ * llm_ctx - Extract file content with fenced blocks for LLM context
  * 
- * This utility allows developers to quickly extract contents from files
- * and format them with appropriate tags and fenced code blocks.
- * The output is designed for LLM interfaces for code analysis.
- * 
- * Follows Unix philosophy of small, focused tools that can be composed
- * with other programs using pipes.
+ * Follows Unix philosophy: small, focused tools that compose via pipes.
  */
 
 #include <stdio.h>
@@ -88,13 +83,10 @@ static void fatal(const char *fmt, ...) {
 
 
 /**
- * get_executable_dir() – return malloc-ed absolute directory that
- * contains the binary currently running.  Result is cached after the
- * first call (thread-unsafe but main() is single-threaded).
- *
- * WHY: permits a last-chance search for .llm_ctx.conf next to the
- * shipped binary, enabling “copy-anywhere” workflows without polluting
- * $HOME or /etc.  Falls back silently if platform support is missing.
+ * get_executable_dir() - Find binary directory for config search
+ * 
+ * WHY: enables copy-anywhere workflows by searching for .llm_ctx.conf
+ * next to the binary, avoiding $HOME/etc pollution.
  */
 char *get_executable_dir(void)
 {
@@ -379,11 +371,7 @@ static bool         g_keywords_flag_used = false; /* Track if --keywords was use
 static char *g_cli_exclude_patterns[MAX_CLI_EXCLUDE_PATTERNS];
 static int   g_cli_exclude_count = 0;
 
-/**
- * Parse keywords specification from string
- * Format: "token1:weight1,token2:weight2,..." or "token1,token2,..."
- * Returns true on success, false on error
- */
+/** Parse keywords specification from string */
 static bool parse_keywords(const char *spec) {
     if (!spec || !*spec) {
         return true; /* Empty spec is valid */
@@ -473,9 +461,7 @@ static bool parse_keywords(const char *spec) {
     return true;
 }
 
-/**
- * Get keyword weight for a token
- */
+/** Get keyword weight for a token */
 static inline double kw_weight_for(const char *tok)
 {
     /* Look up token in keywords array */
@@ -488,10 +474,7 @@ static inline double kw_weight_for(const char *tok)
     return 1.0; /* No boost */
 }
 
-/**
- * Parse FileRank weights from string format "path:2,content:1,size:0.05,tfidf:10"
- * Returns true on success, false on error
- */
+/** Parse FileRank weights from string */
 static bool parse_filerank_weights(const char *weight_str) {
     if (!weight_str || !*weight_str) return false;
     
@@ -540,9 +523,7 @@ static bool parse_filerank_weights(const char *weight_str) {
     return true;
 }
 
-/**
- * Add a CLI exclude pattern to the global list
- */
+/** Add CLI exclude pattern to global list */
 static void add_cli_exclude_pattern(const char *raw) {
     if (g_cli_exclude_count >= MAX_CLI_EXCLUDE_PATTERNS) {
         fprintf(stderr, "Warning: Maximum %d exclude patterns allowed, ignoring '%s'\n",
@@ -553,9 +534,9 @@ static void add_cli_exclude_pattern(const char *raw) {
         arena_strdup_safe(&g_arena, raw);
 }
 
-/**
- * Check if a path matches any CLI exclude pattern
- */
+/** Check if path matches CLI exclude pattern */
+/* WHY: Supports git-style globs with ** for recursive matching,
+ * combining fnmatch efficiency with custom ** handling */
 static bool matches_cli_exclude(const char *path) {
     const char *base = strrchr(path, '/');
     base = base ? base + 1 : path;
@@ -601,10 +582,7 @@ static bool matches_cli_exclude(const char *path) {
     return false;
 }
 
-/**
- * Open the file context block if it hasn't been opened yet.
- * Add system instructions to the output if provided
- */
+/** Add system instructions to output if provided */
 static void add_system_instructions(const char *msg) {
     if (!msg || !*msg) return;
     fprintf(temp_file, "<system_instructions>\n%s\n</system_instructions>\n\n", msg);
@@ -613,9 +591,7 @@ static void add_system_instructions(const char *msg) {
 /* Global flag to track if any file content has been written */
 static bool wrote_file_context = false;
 
-/**
- * Open the file context block lazily, only if needed.
- */
+/** Open file context block lazily if needed */
 static void open_file_context_if_needed(void) {
     if (!wrote_file_context) {
         fprintf(temp_file, "<file_context>\n\n");
@@ -623,9 +599,7 @@ static void open_file_context_if_needed(void) {
     }
 }
 
-/**
- * Add the response guide block to the output
- */
+/** Add response guide block to output */
 static void add_response_guide(const char *problem) {
     // Only add the guide if -e flag was explicitly used
     if (want_editor_comments) {
@@ -652,11 +626,7 @@ static void add_response_guide(const char *problem) {
         fprintf(temp_file, "</response_guide>\n\n");
     }
 }
-/**
- * Check if a file has already been processed to avoid duplicates
- * 
- * Returns true if the file has been processed, false otherwise
- */
+/** Check if file already processed to avoid duplicates */
 bool file_already_processed(const char *filepath) {
     /* Pre-condition: valid filepath parameter */
     assert(filepath != NULL);
@@ -679,9 +649,7 @@ bool file_already_processed(const char *filepath) {
     return false;
 }
 
-/**
- * Add a file to the processed files list
- */
+/** Add file to processed files list */
 void add_to_processed_files(const char *filepath) {
     /* Pre-condition: valid filepath */
     assert(filepath != NULL);
@@ -703,9 +671,7 @@ void add_to_processed_files(const char *filepath) {
     }
 }
 
-/**
- * Add a file to the file tree structure
- */
+/** Add file to file tree structure */
 void add_to_file_tree(const char *filepath) {
     /* Pre-condition: valid filepath */
     assert(filepath != NULL);
@@ -761,9 +727,7 @@ void add_to_file_tree(const char *filepath) {
     assert(file_tree_count > 0);
 }
 
-/**
- * Check if a path already exists in the file tree
- */
+/** Check if path already exists in file tree */
 bool file_already_in_tree(const char *filepath) {
     for (int i = 0; i < file_tree_count; i++) {
         if (strcmp(file_tree[i].path, filepath) == 0) {
@@ -773,16 +737,12 @@ bool file_already_in_tree(const char *filepath) {
     return false;
 }
 
-/**
- * Recursively add an entire directory tree to file_tree (wrapper)
- */
+/** Recursively add directory tree to file_tree */
 void add_directory_tree(const char *base_dir) {
     add_directory_tree_with_depth(base_dir, 0);
 }
 
-/**
- * Recursively add an entire directory tree to file_tree with depth tracking
- */
+/** Recursively add directory tree with depth tracking */
 void add_directory_tree_with_depth(const char *base_dir, int current_depth) {
     DIR *dir;
     struct dirent *entry;
@@ -819,19 +779,14 @@ void add_directory_tree_with_depth(const char *base_dir, int current_depth) {
 
     closedir(dir);
 }
-/**
- * Compare function for sorting file paths
- */
+/** Compare function for sorting file paths */
 int compare_file_paths(const void *a, const void *b) {
     const FileInfo *file_a = (const FileInfo *)a;
     const FileInfo *file_b = (const FileInfo *)b;
     return strcmp(file_a->path, file_b->path);
 }
 
-/**
- * Find the common prefix of all files in the tree
- * Returns a pointer to the common prefix string
- */
+/** Find common prefix of all files in tree */
 char *find_common_prefix(void) {
     if (file_tree_count == 0) {
         return arena_strdup_safe(&g_arena, ".");
@@ -883,9 +838,7 @@ char *find_common_prefix(void) {
     return prefix;
 }
 
-/**
- * Print a tree node with appropriate indentation
- */
+/** Print tree node with indentation */
 void print_tree_node(const char *path, int level, bool is_last, const char *prefix) {
     /* Print indentation */
     fprintf(tree_file, "%s", prefix);
@@ -904,9 +857,7 @@ void print_tree_node(const char *path, int level, bool is_last, const char *pref
     }
 }
 
-/**
- * Helper function to build directory structure recursively
- */
+/** Build directory structure recursively */
 void build_tree_recursive(char **paths, int count, int level, char *prefix, const char *path_prefix __attribute__((unused))) {
     if (count <= 0) return;
     
@@ -994,9 +945,7 @@ void build_tree_recursive(char **paths, int count, int level, char *prefix, cons
     }
 }
 
-/**
- * Generate and add a file tree to the output
- */
+/** Generate and add file tree to output */
 void generate_file_tree(void) {
     if (file_tree_count == 0) {
         return;
@@ -1089,12 +1038,9 @@ void generate_file_tree(void) {
     }
 }
 /**
- * Check if a file stream contains binary data.
- * Reads the first BINARY_CHECK_SIZE bytes and looks for null bytes
- * or a significant number of non-printable characters.
- * Rewinds the file stream before returning.
- *
- * Returns true if the file is likely binary, false otherwise.
+ * Check if file stream contains binary data
+ * 
+ * Detects null bytes and non-printable characters, rewinds stream.
  */
 bool is_binary(FILE *file) {
     /* Pre-condition: file must be non-NULL and opened in binary read mode */
@@ -1154,9 +1100,7 @@ bool is_binary(FILE *file) {
 
     return likely_binary;
 }
-/**
- * Display help message with usage instructions and examples
- */
+/** Display help message with usage instructions */
 void show_help(void) {
     printf("Usage: llm_ctx [OPTIONS] [FILE...]\n");
     printf("Format files for LLM code analysis with appropriate tags.\n\n");
@@ -1245,13 +1189,9 @@ void show_help(void) {
     exit(0);
 }
 
-/**
- * Process raw content from stdin
- * Any content piped in is treated as a single file
- * This handles commands like cat, git diff, git show, etc.
- * 
- * Returns true if successful, false on failure
- */
+/** Process raw content from stdin as single file */
+/* WHY: Handles piped input from commands like git/cat with proper
+ * binary detection and content type recognition for LLM formatting */
 bool process_stdin_content(void) {
     char buffer[4096];
     size_t bytes_read;
@@ -1454,16 +1394,7 @@ void output_file_callback(const char *name, const char *type, const char *conten
     }
 }
 
-/**
- * Collect a file to be processed but don't output its content yet
- * 
- * Only adds the file to our tracking lists if it hasn't been processed yet
- * Only adds regular, readable files to the processed_files list for content output.
- * Assumes ignore checks and path validation happened before calling.
- * Increments files_found for files added.
- * 
- * Returns true if the file was processed (added or skipped), false on error (e.g., memory).
- */
+/** Collect file for processing without outputting content */
 bool collect_file(const char *filepath) {
     // Avoid duplicates in content output
     if (file_already_processed(filepath)) {
@@ -1497,14 +1428,7 @@ bool collect_file(const char *filepath) {
     return true;
 }
 
-/**
- * Output a file's content to the specified output file
- * 
- * Reads the file content and formats it with fenced code blocks
- * and file headers for better LLM understanding
- * 
- * Returns true on success, false on failure
- */
+/** Output file content with fenced code blocks for LLM */
 bool output_file_content(const char *filepath, FILE *output) {
     /* Ensure the file context block is opened before writing file content */
     open_file_context_if_needed();
@@ -1576,9 +1500,7 @@ bool output_file_content(const char *filepath, FILE *output) {
     return true;
 }
 
-/**
- * Add user instructions to the output if provided
- */
+/** Add user instructions to output if provided */
 void add_user_instructions(const char *instructions) {
     if (!instructions || !instructions[0]) {
         return;
@@ -1589,9 +1511,7 @@ void add_user_instructions(const char *instructions) {
     fprintf(temp_file, "</user_instructions>\n\n");
 }
 
-/**
- * Recursively search directories for files matching a pattern
- */
+/** Recursively search directories for pattern matches */
 void find_recursive(const char *base_dir, const char *pattern) {
     DIR *dir;
     struct dirent *entry;
@@ -1656,9 +1576,7 @@ void find_recursive(const char *base_dir, const char *pattern) {
     closedir(dir);
 }
 
-/**
- * Process a glob pattern to find matching files
- */
+/** Process glob pattern to find matching files */
 bool process_pattern(const char *pattern) {
     int initial_files_found = files_found;
     
@@ -1764,10 +1682,7 @@ bool process_pattern(const char *pattern) {
     return (files_found > initial_files_found);
 }
 
-/**
- * Copy the given buffer content to the system clipboard.
- * Uses platform-specific commands.
- */
+/** Copy buffer content to system clipboard */
 bool copy_to_clipboard(const char *buffer) {
     const char *cmd = NULL;
     #ifdef __APPLE__
@@ -1799,7 +1714,6 @@ bool copy_to_clipboard(const char *buffer) {
         return false;
     }
 
-    /* Write buffer to the command's stdin */
     fwrite(buffer, 1, strlen(buffer), pipe);
 
     /* Close the pipe and check status */
@@ -1811,9 +1725,7 @@ bool copy_to_clipboard(const char *buffer) {
     return true;
 }
 
-/**
- * Cleanup function to free memory before exit
- */
+/** Cleanup function to free memory before exit */
 void cleanup(void) {
     /* Arena cleanup will release system_instructions */
     /* Free dynamically allocated user instructions */
@@ -2055,17 +1967,12 @@ static void handle_output_arg(const char *arg) {
     if (!g_output_file) fatal("Out of memory duplicating output filename");
 }
 
-/**
- * Check if character is a word boundary
- */
+/** Check if character is word boundary */
 static bool is_word_boundary(char c) {
     return !isalnum(c) && c != '_';
 }
 
-/**
- * Case-insensitive word boundary search
- * Returns number of times needle appears as a whole word in haystack
- */
+/** Case-insensitive word boundary search */
 static int count_word_hits(const char *haystack, const char *needle) {
     int count = 0;
     size_t needle_len = strlen(needle);
@@ -2085,10 +1992,7 @@ static int count_word_hits(const char *haystack, const char *needle) {
     return count;
 }
 
-/**
- * Tokenize query into lowercase words
- * Returns array of tokens allocated from arena
- */
+/** Tokenize query into lowercase words */
 static char **tokenize_query(const char *query, int *num_tokens) {
     if (!query || !num_tokens) {
         *num_tokens = 0;
@@ -2148,10 +2052,7 @@ static char **tokenize_query(const char *query, int *num_tokens) {
     return tokens;
 }
 
-/**
- * Compute threshold based on cutoff specification
- * Returns the minimum score required to keep a file
- */
+/** Compute threshold based on cutoff specification */
 static double compute_filerank_threshold(const char *spec, FileRank *ranks, int num_files) {
     double threshold = -DBL_MAX;
     
@@ -2204,9 +2105,7 @@ static double compute_filerank_threshold(const char *spec, FileRank *ranks, int 
     return threshold;
 }
 
-/**
- * Compare FileRank entries by score (descending)
- */
+/** Compare FileRank entries by score (descending) */
 static int compare_filerank(const void *a, const void *b) {
     const FileRank *ra = (const FileRank *)a;
     const FileRank *rb = (const FileRank *)b;
@@ -2219,11 +2118,9 @@ static int compare_filerank(const void *a, const void *b) {
     return 0;
 }
 
-/**
- * Implementation of rank_files for Slice 3
- * Uses TF-IDF scoring with path/content hits and size penalty
- * TF-IDF helps prioritize files with unique/rare terms
- */
+/** Rank files using TF-IDF scoring with path/content hits */
+/* WHY: Prioritizes files with unique terms (TF-IDF) while considering
+ * path relevance and penalizing large files for better context selection */
 void rank_files(const char *query, FileRank *ranks, int num_files) {
     /* Parse query into tokens */
     int num_tokens;
@@ -2420,9 +2317,9 @@ basic_scoring:
     }
 }
 
-/**
- * Main function - program entry point
- */
+/** Main function - program entry point */
+/* INVARIANTS: Arena allocated once, cleanup registered early,
+ * config loaded before file processing, stdin consumed only once */
 int main(int argc, char *argv[]) {
     g_argv0 = argv[0]; /* Store for get_executable_dir fallback */
     bool allow_empty_context = false; /* Can we finish with no file content? */

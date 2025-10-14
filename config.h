@@ -28,20 +28,19 @@ typedef struct {
     char *filerank_cutoff;            // NULL → unset
 } ConfigSettings;
 
-// Load configuration from default locations
-// Returns true if config was loaded successfully, false otherwise
+// Load config from standard locations
 bool config_load(ConfigSettings *settings, struct Arena *arena);
 
-// Check if configuration loading should be skipped
+// Skip config loading if environment variable is set
 bool config_should_skip(void);
 
-// Expand tilde (~) in file paths using arena allocation
+// Expand ~ in paths for home directory resolution
 char *config_expand_path(const char *path, struct Arena *arena);
 
-// Debug helper to print loaded config
+// Print config for debugging
 void config_debug_print(const ConfigSettings *settings);
 
-// Find a template by name
+// Find template by name
 ConfigTemplate *config_find_template(const ConfigSettings *settings, const char *name);
 
 #endif // CONFIG_H

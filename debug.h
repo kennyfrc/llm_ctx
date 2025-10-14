@@ -6,25 +6,17 @@
 #include <string.h>
 #include <stdbool.h>
 
-/* Global debug mode flag */
 extern bool debug_mode;
 
-/**
- * Debug print function that only prints if debug mode is enabled.
- * Prefixes all output with "[DEBUG] " in debug mode.
- * In all modes, certain repetitive initialization messages are suppressed.
- */
+// Debug print with suppression of repetitive messages
 static inline void debug_printf(const char *fmt, ...) {
-    /* Messages to always suppress regardless of debug mode */
     const char *always_suppress[] = {
         "[DEBUG] Initializing language pack: ",
         "[DEBUG] Cleaning up language pack: ",
         "[DEBUG] Parsing file with language pack: "
     };
     
-    /* Messages to suppress only in non-debug mode */
     const char *non_debug_suppress[] = {
-        /* Don't suppress [PACK] messages - we want to see them in normal mode */
         "Successfully extracted",
         "Codemap option enabled",
         "Generating codemap",

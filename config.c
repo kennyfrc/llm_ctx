@@ -12,23 +12,20 @@
 #include "arena.h"
 #include "debug.h"
 
-// Forward declaration for TOML parsing (will be implemented in slice 1)
 static bool parse_toml_file(const char *path, ConfigSettings *settings, Arena *arena);
 
-// Check if configuration loading should be skipped
+// Skip config loading if environment variable is set
 bool config_should_skip(void) {
-    // Check environment variable
     const char *no_config = getenv("LLM_CTX_NO_CONFIG");
     if (no_config && strcmp(no_config, "1") == 0) {
         debug_printf("Config loading disabled by LLM_CTX_NO_CONFIG=1");
         return true;
     }
     
-    // Note: --ignore-config flag check will be done in main.c
     return false;
 }
 
-// Expand tilde (~) in file paths using arena allocation
+// Expand ~ in paths for home directory resolution
 char *config_expand_path(const char *path, Arena *arena) {
     if (!path || path[0] != '~') {
         // No tilde to expand, return a copy
@@ -68,61 +65,52 @@ char *config_expand_path(const char *path, Arena *arena) {
     }
 }
 
-// Try to load config from a specific path
+// Attempt to load config from a single path
 static bool try_load_config(const char *path, ConfigSettings *settings, Arena *arena) {
     struct stat st;
     if (stat(path, &st) != 0) {
-        // File doesn't exist
         return false;
     }
     
     if (!S_ISREG(st.st_mode)) {
-        // Not a regular file
         fprintf(stderr, "Warning: %s is not a regular file\n", path);
         return false;
     }
     
     debug_printf("Found config file: %s", path);
     
-    // Parse the TOML file
     return parse_toml_file(path, settings, arena);
 }
 
-// Load configuration from default locations
+// Load config from standard locations in priority order
 bool config_load(ConfigSettings *settings, Arena *arena) {
     if (!settings || !arena) {
         return false;
     }
     
-    // Initialize settings to defaults
     memset(settings, 0, sizeof(ConfigSettings));
-    settings->copy_to_clipboard = -1; // unset
-    settings->token_budget = 0; // unset
+    settings->copy_to_clipboard = -1;
+    settings->token_budget = 0;
     settings->templates = NULL;
     settings->template_count = 0;
-    // Initialize FileRank weights to -1.0 (unset)
     settings->filerank_weight_path = -1.0;
     settings->filerank_weight_content = -1.0;
     settings->filerank_weight_size = -1.0;
     settings->filerank_weight_tfidf = -1.0;
     settings->filerank_cutoff = NULL;
     
-    // Check if we should skip config loading
     if (config_should_skip()) {
         return false;
     }
     
-    // Try paths in order
     const char *paths_to_try[3] = {NULL, NULL, NULL};
     int path_count = 0;
     
-    // 1. $LLM_CTX_CONFIG (explicit path)
     const char *explicit_path = getenv("LLM_CTX_CONFIG");
     if (explicit_path) {
         paths_to_try[path_count++] = explicit_path;
     }
     
-    // 2. $XDG_CONFIG_HOME/llm_ctx/config.toml
     const char *xdg_config = getenv("XDG_CONFIG_HOME");
     char xdg_path[PATH_MAX];
     if (xdg_config) {
@@ -130,7 +118,6 @@ bool config_load(ConfigSettings *settings, Arena *arena) {
         paths_to_try[path_count++] = xdg_path;
     }
     
-    // 3. ~/.config/llm_ctx/config.toml
     const char *home = getenv("HOME");
     char home_path[PATH_MAX];
     if (home) {
@@ -138,19 +125,17 @@ bool config_load(ConfigSettings *settings, Arena *arena) {
         paths_to_try[path_count++] = home_path;
     }
     
-    // Try each path
     for (int i = 0; i < path_count; i++) {
         if (try_load_config(paths_to_try[i], settings, arena)) {
             return true;
         }
     }
     
-    // No config found
     debug_printf("No config file found");
     return false;
 }
 
-// Debug helper to print loaded config
+// Print config for debugging
 void config_debug_print(const ConfigSettings *settings) {
     if (!settings) return;
     
@@ -178,44 +163,37 @@ void config_debug_print(const ConfigSettings *settings) {
     }
 }
 
-// Parse templates from TOML file using a stack-based state machine
+// Parse templates using state machine for [templates.name] sections
 static void parse_templates(FILE *fp, ConfigSettings *settings, Arena *arena) {
-    // State machine states
     enum {
-        STATE_TOP,              // Top level
-        STATE_IN_TEMPLATES,     // Inside [templates]
-        STATE_IN_TEMPLATE       // Inside [templates.name]
+        STATE_TOP,
+        STATE_IN_TEMPLATES,
+        STATE_IN_TEMPLATE
     } state = STATE_TOP;
     
     char line[1024];
     char current_template[256] = {0};
     ConfigTemplate *current_tmpl = NULL;
     
-    // Pre-scan to count templates
     size_t template_count = 0;
     long start_pos = ftell(fp);
     
     while (fgets(line, sizeof(line), fp)) {
-        // Skip whitespace
         char *p = line;
         while (*p && isspace(*p)) p++;
         
-        // Skip comments and empty lines
         if (*p == '#' || *p == '\0') continue;
         
-        // Check for [templates.name] pattern
         if (*p == '[' && strncmp(p, "[templates.", 11) == 0) {
             template_count++;
         }
     }
     
-    // Allocate templates array
     if (template_count > 0) {
         settings->templates = arena_push_array_safe(arena, ConfigTemplate, template_count);
         settings->template_count = 0;
     }
     
-    // Reset to start and parse
     fseek(fp, start_pos, SEEK_SET);
     
     while (fgets(line, sizeof(line), fp)) {
@@ -288,18 +266,15 @@ static void parse_templates(FILE *fp, ConfigSettings *settings, Arena *arena) {
     }
 }
 
-// Parse TOML configuration file
 static bool parse_toml_file(const char *path, ConfigSettings *settings, Arena *arena) {
     FILE *fp = fopen(path, "r");
     if (!fp) {
         return false;
     }
     
-    // Parse templates first using our custom parser
     parse_templates(fp, settings, arena);
     rewind(fp);
     
-    // Create a temporary file without template sections for TOML parser
     char temp_path[PATH_MAX];
     snprintf(temp_path, sizeof(temp_path), "%s.tmp", path);
     FILE *temp_fp = fopen(temp_path, "w");
@@ -308,7 +283,6 @@ static bool parse_toml_file(const char *path, ConfigSettings *settings, Arena *a
         return false;
     }
     
-    // Copy config file excluding template sections
     char line[1024];
     int skip_until_next_section = 0;
     while (fgets(line, sizeof(line), fp)) {
@@ -326,7 +300,6 @@ static bool parse_toml_file(const char *path, ConfigSettings *settings, Arena *a
     }
     fclose(temp_fp);
     
-    // Parse the temp file with TOML library
     temp_fp = fopen(temp_path, "r");
     if (!temp_fp) {
         fclose(fp);
@@ -345,35 +318,28 @@ static bool parse_toml_file(const char *path, ConfigSettings *settings, Arena *a
         return false;
     }
     
-    // Parse system_prompt_file
     toml_datum_t system_prompt = toml_string_in(conf, "system_prompt_file");
     if (system_prompt.ok) {
         settings->system_prompt_file = arena_strdup_safe(arena, system_prompt.u.s);
         free(system_prompt.u.s);
     }
     
-    // Parse response_guide_file
     toml_datum_t response_guide = toml_string_in(conf, "response_guide_file");
     if (response_guide.ok) {
         settings->response_guide_file = arena_strdup_safe(arena, response_guide.u.s);
         free(response_guide.u.s);
     }
     
-    // Parse copy_to_clipboard
     toml_datum_t copy_clipboard = toml_bool_in(conf, "copy_to_clipboard");
     if (copy_clipboard.ok) {
         settings->copy_to_clipboard = copy_clipboard.u.b ? 1 : 0;
     }
     
-    // Parse token_budget
     toml_datum_t token_budget = toml_int_in(conf, "token_budget");
     if (token_budget.ok) {
         settings->token_budget = (size_t)token_budget.u.i;
     }
     
-    // Parse FileRank weights as integers (multiplied by 100 for precision)
-    // Since our minimal TOML parser doesn't support nested tables or doubles,
-    // we use flat integer values: filerank_weight_path_x100, etc.
     toml_datum_t weight_path = toml_int_in(conf, "filerank_weight_path_x100");
     if (weight_path.ok) {
         settings->filerank_weight_path = weight_path.u.i / 100.0;
@@ -394,7 +360,6 @@ static bool parse_toml_file(const char *path, ConfigSettings *settings, Arena *a
         settings->filerank_weight_tfidf = weight_tfidf.u.i / 100.0;
     }
     
-    // Parse filerank_cutoff as a string
     toml_datum_t cutoff = toml_string_in(conf, "filerank_cutoff");
     if (cutoff.ok) {
         settings->filerank_cutoff = arena_strdup_safe(arena, cutoff.u.s);
@@ -406,7 +371,7 @@ static bool parse_toml_file(const char *path, ConfigSettings *settings, Arena *a
     return true;
 }
 
-// Find a template by name
+// Find template by name
 ConfigTemplate *config_find_template(const ConfigSettings *settings, const char *name) {
     if (!settings || !name || !settings->templates) {
         return NULL;

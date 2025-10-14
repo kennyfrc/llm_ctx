@@ -1,103 +1,77 @@
 #include "gitignore.h"
 
-/* Global variables for gitignore patterns */
 IgnorePattern ignore_patterns[MAX_IGNORE_PATTERNS];
 int num_ignore_patterns = 0;
-bool respect_gitignore = true;  /* Flag to control whether gitignore is respected */
+bool respect_gitignore = true;
 
-/**
- * Reset all gitignore patterns (for testing)
- */
+// Reset patterns for testing
 void reset_gitignore_patterns(void) {
     num_ignore_patterns = 0;
     respect_gitignore = true;
-    
-    /* Post-condition: patterns have been reset */
     assert(num_ignore_patterns == 0);
     assert(respect_gitignore == true);
 }
 
-/**
- * Checks if a path should be ignored based on gitignore patterns
- * 
- * Returns 1 if the path should be ignored, 0 otherwise
- */
+// Check if path matches gitignore patterns (later patterns override earlier ones)
 int should_ignore_path(const char *path) {
     assert(path != NULL);
     
     if (!respect_gitignore || num_ignore_patterns == 0) {
-        return 0;  /* Nothing to ignore */
+        return 0;
     }
     
-    /* Extract just the filename part for matching against patterns like *.txt */
     const char *basename = strrchr(path, '/');
     if (basename) {
-        basename++; /* Skip the slash */
-        /* Post-condition: basename points after slash */
+        basename++;
         assert(*(basename-1) == '/');
     } else {
-        basename = path; /* No slash in the path */
+        basename = path;
     }
     
-    /* Invariant: basename is always valid and points to a string */
     assert(basename != NULL);
     
-    /* Get file status to determine if it's a directory */
     struct stat path_stat;
     bool is_dir = false;
     if (lstat(path, &path_stat) == 0) {
         is_dir = S_ISDIR(path_stat.st_mode);
     }
     
-    /* Track if this path is matched by a negation pattern */
     bool negated = false;
     
-    /* Start with the last pattern and work backwards
-     * This gives precedence to later patterns which is the correct behavior */
     for (int i = num_ignore_patterns - 1; i >= 0; i--) {
-        /* Skip directory-only patterns if this is not a directory */
         if (ignore_patterns[i].match_only_dir && !is_dir) {
             continue;
         }
         
-        /* Match the pattern against the path and the basename */
         int path_match = fnmatch(ignore_patterns[i].pattern, path, FNM_PATHNAME) == 0;
         int basename_match = fnmatch(ignore_patterns[i].pattern, basename, 0) == 0;
         
-        /* Verify that pattern matching is consistent */
         assert(path_match == (fnmatch(ignore_patterns[i].pattern, path, FNM_PATHNAME) == 0));
         assert(basename_match == (fnmatch(ignore_patterns[i].pattern, basename, 0) == 0));
         
         if (path_match || basename_match) {
-            /* If this is a negation pattern, we don't ignore the file */
             if (ignore_patterns[i].is_negation) {
-                /* Postcondition: negation patterns override previous matches */
                 return 0;
             }
             
-            /* Otherwise, ignore the file unless a later negation pattern matches */
             if (!negated) {
-                /* Postcondition: path matches non-negated pattern and no negation overrides */
                 return 1;
             }
         }
     }
     
-    return 0;  /* Not ignored by default */
+    return 0;
 }
 
-/**
- * Add a pattern to the ignore list
- */
+// Add pattern to ignore list with whitespace trimming and negation support
 void add_ignore_pattern(char *pattern) {
     assert(pattern != NULL);
     assert(num_ignore_patterns < MAX_IGNORE_PATTERNS);
     
     if (num_ignore_patterns >= MAX_IGNORE_PATTERNS) {
-        return;  /* Ignore list is full */
+        return;
     }
     
-    /* Trim leading and trailing whitespace */
     while (*pattern && isspace(*pattern)) {
         pattern++;
     }
@@ -107,27 +81,23 @@ void add_ignore_pattern(char *pattern) {
         *end-- = '\0';
     }
     
-    /* Skip empty lines and comment lines */
     if (*pattern == '\0' || *pattern == '#') {
         return;
     }
     
-    /* Check if this is a negation pattern */
     bool is_negation = false;
     if (*pattern == '!') {
         is_negation = true;
-        pattern++;  /* Skip the negation character */
+        pattern++;
     }
     
-    /* Check if this pattern matches only directories */
     bool match_only_dir = false;
     size_t len = strlen(pattern);
     if (len > 0 && pattern[len - 1] == '/') {
         match_only_dir = true;
-        pattern[len - 1] = '\0';  /* Remove the trailing slash */
+        pattern[len - 1] = '\0';
     }
     
-    /* Store the pattern using designated initializers (C99) */
     IgnorePattern new_pattern = {
         .pattern = "",
         .is_negation = is_negation,

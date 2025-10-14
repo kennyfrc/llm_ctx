@@ -5,22 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-/**
- * Minimalist test framework
- * - Simple assertions
- * - Clear error messages
- * - Minimal dependencies
- */
-
-/* Test directory for creating test files (prefixed) */
 #define TEST_DIR "./tmp/__llm_ctx_test"
 
-/* Test state */
 static int tests_run __attribute__((unused)) = 0;
 static int tests_failed = 0;
 static char last_failure[8192] = "";
 
-/* Macros for test assertions */
 #define ASSERT(message, test) do { if (!(test)) { \
     snprintf(last_failure, sizeof(last_failure), "%s (line %d): %s", __FILE__, __LINE__, message); \
     tests_failed++; \
@@ -43,7 +33,6 @@ static char last_failure[8192] = "";
         return; } \
 } while (0)
 
-/* Macros for test definition and running */
 #define TEST(test_name) void test_name(void)
 #define RUN_TEST(test_name) do { \
     printf("- %-40s", #test_name); \
@@ -65,7 +54,6 @@ static char last_failure[8192] = "";
     } \
 } while (0)
 
-/* Test suite summary */
 #define PRINT_TEST_SUMMARY() do { \
     printf("\n%d test%s run, %d failed\n", \
         tests_run, tests_run == 1 ? "" : "s", tests_failed); \
