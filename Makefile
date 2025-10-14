@@ -78,9 +78,28 @@ toml.o: toml.c toml.h
 debug.o: debug.c debug.h
 	$(CC) $(CFLAGS) -c $<
 
-format:
+# Check if clang-format is available
+CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
+
+format-deps:
+	@if [ -z "$(CLANG_FORMAT)" ]; then \
+		if command -v brew >/dev/null 2>&1; then \
+			echo "Installing clang-format via Homebrew..."; \
+			brew install clang-format; \
+		else \
+			echo "Error: clang-format not found and no package manager available."; \
+			echo "Please install clang-format manually:"; \
+			echo "  macOS: brew install clang-format"; \
+			echo "  Ubuntu: sudo apt-get install clang-format"; \
+			echo "  Fedora: sudo dnf install clang-tools-extra"; \
+			echo "  Arch: sudo pacman -S clang"; \
+			exit 1; \
+		fi \
+	fi
+
+format: format-deps
 	clang-format -i $(FORMAT_FILES)
-	
+
 # New target for release build
 release: $(OBJS)
 	@echo "Building release version ($(TARGET))..."

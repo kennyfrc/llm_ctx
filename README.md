@@ -136,6 +136,14 @@ repository root. Run the formatter before sending patches:
 make format
 ```
 
+**Prerequisites:**
+- **macOS:** `brew install clang-format` (or let `make format` install it automatically)
+- **Ubuntu/Debian:** `sudo apt-get install clang-format`
+- **Fedora:** `sudo dnf install clang-tools-extra`
+- **Arch Linux:** `sudo pacman -S clang`
+
+The `make format` target will automatically install clang-format if needed on macOS with Homebrew. On other platforms, please install clang-format manually before running the formatter.
+
 This target applies the preferred style to the primary C sources and headers so code stays aligned with
 the established baseline.
 
