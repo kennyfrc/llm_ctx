@@ -10,6 +10,22 @@ RELEASE_CFLAGS = -std=c99 -Wall -Wextra -O2 -DNDEBUG # -O2 optimization, NDEBUG 
 TARGET = llm_ctx
 TEST_JS_PARSER = test_js_parser
 SRC = main.c gitignore.c arena.c tokenizer.c tokenizer_diagnostics.c config.c toml.c debug.c
+FORMAT_FILES = \
+        main.c \
+        gitignore.c \
+        arena.c \
+        tokenizer.c \
+        tokenizer_diagnostics.c \
+        config.c \
+        toml.c \
+        debug.c \
+        config.h \
+        debug.h \
+        tokenizer.h \
+        gitignore.h \
+        toml.h \
+        arena.h \
+        tokenizer/tiktoken.h
 TEST_SRC = tests/test_gitignore.c tests/test_cli.c tests/test_stdin.c
 TEST_TARGETS = tests/test_gitignore tests/test_cli tests/test_stdin tests/test_tree_flags tests/test_tokenizer tests/test_tokenizer_cli tests/test_arena tests/test_config tests/test_filerank tests/test_keywords tests/test_filerank_cutoff tests/test_cli_exclude
 PREFIX ?= /usr/local
@@ -61,6 +77,9 @@ toml.o: toml.c toml.h
 
 debug.o: debug.c debug.h
 	$(CC) $(CFLAGS) -c $<
+
+format:
+	clang-format -i $(FORMAT_FILES)
 	
 # New target for release build
 release: $(OBJS)
