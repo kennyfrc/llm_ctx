@@ -7,17 +7,20 @@
 #include "tokenizer.h"
 #include "arena.h"
 
-typedef struct {
-    const char *filename;
+typedef struct
+{
+    const char* filename;
     size_t tokens;
 } FileTokenCount;
 
-typedef struct {
-    const char *name;
+typedef struct
+{
+    const char* name;
     size_t tokens;
 } SectionTokenCount;
 
-typedef enum {
+typedef enum
+{
     STATE_TOP_LEVEL,
     STATE_IN_FILE_TREE,
     STATE_IN_FILE_CONTEXT,
@@ -29,29 +32,32 @@ typedef enum {
     STATE_IN_OTHER_SECTION
 } ParserState;
 
-typedef struct {
+typedef struct
+{
     ParserState state;
-    const char *section_name;
-    const char *start_pos;
+    const char* section_name;
+    const char* start_pos;
 } StateStackEntry;
 
-typedef struct {
+typedef struct
+{
     StateStackEntry stack[32];
     int stack_depth;
-    const char *current_file_name;
-    const char *current_file_start;
+    const char* current_file_name;
+    const char* current_file_start;
     bool in_code_fence;
     int code_fence_backticks;
-    FileTokenCount *files;
-    SectionTokenCount *sections;
+    FileTokenCount* files;
+    SectionTokenCount* sections;
     size_t file_count;
     size_t section_count;
     size_t max_files;
     size_t max_sections;
 } ParserContext;
 
-static void parser_init(ParserContext *ctx, FileTokenCount *files, size_t max_files,
-                       SectionTokenCount *sections, size_t max_sections) {
+static void parser_init(ParserContext* ctx, FileTokenCount* files, size_t max_files,
+                        SectionTokenCount* sections, size_t max_sections)
+{
     memset(ctx, 0, sizeof(*ctx));
     ctx->files = files;
     ctx->sections = sections;
@@ -63,9 +69,11 @@ static void parser_init(ParserContext *ctx, FileTokenCount *files, size_t max_fi
     ctx->stack_depth = 1;
 }
 
-static void parser_push_state(ParserContext *ctx, ParserState state, 
-                             const char *section_name, const char *start_pos) {
-    if (ctx->stack_depth < 32) {
+static void parser_push_state(ParserContext* ctx, ParserState state, const char* section_name,
+                              const char* start_pos)
+{
+    if (ctx->stack_depth < 32)
+    {
         ctx->stack[ctx->stack_depth].state = state;
         ctx->stack[ctx->stack_depth].section_name = section_name;
         ctx->stack[ctx->stack_depth].start_pos = start_pos;
@@ -73,36 +81,44 @@ static void parser_push_state(ParserContext *ctx, ParserState state,
     }
 }
 
-static void parser_pop_state(ParserContext *ctx) {
-    if (ctx->stack_depth > 1) {
+static void parser_pop_state(ParserContext* ctx)
+{
+    if (ctx->stack_depth > 1)
+    {
         ctx->stack_depth--;
     }
 }
 
-static ParserState parser_current_state(ParserContext *ctx) {
+static ParserState parser_current_state(ParserContext* ctx)
+{
     return ctx->stack[ctx->stack_depth - 1].state;
 }
 
 /* Save a section with its token count */
-static void save_section(ParserContext *ctx, const char *name, const char *start, 
-                        const char *end, const char *model, Arena *arena) {
-    if (ctx->section_count >= ctx->max_sections) return;
-    
+static void save_section(ParserContext* ctx, const char* name, const char* start, const char* end,
+                         const char* model, Arena* arena)
+{
+    if (ctx->section_count >= ctx->max_sections)
+        return;
+
     size_t len = end - start;
-    char *content = arena_push_array_safe(arena, char, len + 1);
-    if (!content) return;
-    
+    char* content = arena_push_array_safe(arena, char, len + 1);
+    if (!content)
+        return;
+
     memcpy(content, start, len);
     content[len] = '\0';
-    
+
     size_t tokens = llm_count_tokens(content, model);
-    if (tokens == SIZE_MAX) {
+    if (tokens == SIZE_MAX)
+    {
         fprintf(stderr, "fatal: tokenizer failed while counting section '%s'\n", name);
         exit(EXIT_FAILURE);
     }
 
-    char *name_copy = arena_strdup_safe(arena, name);
-    if (name_copy) {
+    char* name_copy = arena_strdup_safe(arena, name);
+    if (name_copy)
+    {
         ctx->sections[ctx->section_count].name = name_copy;
         ctx->sections[ctx->section_count].tokens = tokens;
         ctx->section_count++;
@@ -110,25 +126,30 @@ static void save_section(ParserContext *ctx, const char *name, const char *start
 }
 
 /* Save a file with its token count */
-static void save_file(ParserContext *ctx, const char *filename, const char *start,
-                     const char *end, const char *model, Arena *arena) {
-    if (ctx->file_count >= ctx->max_files) return;
-    
+static void save_file(ParserContext* ctx, const char* filename, const char* start, const char* end,
+                      const char* model, Arena* arena)
+{
+    if (ctx->file_count >= ctx->max_files)
+        return;
+
     size_t len = end - start;
-    char *content = arena_push_array_safe(arena, char, len + 1);
-    if (!content) return;
-    
+    char* content = arena_push_array_safe(arena, char, len + 1);
+    if (!content)
+        return;
+
     memcpy(content, start, len);
     content[len] = '\0';
-    
+
     size_t tokens = llm_count_tokens(content, model);
-    if (tokens == SIZE_MAX) {
+    if (tokens == SIZE_MAX)
+    {
         fprintf(stderr, "fatal: tokenizer failed while counting file '%s'\n", filename);
         exit(EXIT_FAILURE);
     }
 
-    char *name_copy = arena_strdup_safe(arena, filename);
-    if (name_copy) {
+    char* name_copy = arena_strdup_safe(arena, filename);
+    if (name_copy)
+    {
         ctx->files[ctx->file_count].filename = name_copy;
         ctx->files[ctx->file_count].tokens = tokens;
         ctx->file_count++;
@@ -136,43 +157,55 @@ static void save_file(ParserContext *ctx, const char *filename, const char *star
 }
 
 /* Check if a line starts with a tag */
-static bool line_starts_with_tag(const char *line, const char *tag) {
+static bool line_starts_with_tag(const char* line, const char* tag)
+{
     /* Skip leading whitespace */
-    while (*line && isspace(*line)) line++;
+    while (*line && isspace(*line))
+        line++;
     return strncmp(line, tag, strlen(tag)) == 0;
 }
 
 /* Extract filename from "File: filename" line */
-static char *extract_filename(const char *line, Arena *arena) {
+static char* extract_filename(const char* line, Arena* arena)
+{
     /* Skip leading whitespace */
-    while (*line && isspace(*line)) line++;
-    
-    if (strncmp(line, "File:", 5) != 0) return NULL;
-    
+    while (*line && isspace(*line))
+        line++;
+
+    if (strncmp(line, "File:", 5) != 0)
+        return NULL;
+
     line += 5;
-    while (*line && isspace(*line)) line++;
-    
+    while (*line && isspace(*line))
+        line++;
+
     /* Find end of line */
-    const char *end = line;
-    while (*end && *end != '\n' && *end != '\r') end++;
-    
+    const char* end = line;
+    while (*end && *end != '\n' && *end != '\r')
+        end++;
+
     size_t len = end - line;
-    if (len == 0) return NULL;
-    
-    char *filename = arena_push_array_safe(arena, char, len + 1);
-    if (!filename) return NULL;
-    
+    if (len == 0)
+        return NULL;
+
+    char* filename = arena_push_array_safe(arena, char, len + 1);
+    if (!filename)
+        return NULL;
+
     memcpy(filename, line, len);
     filename[len] = '\0';
-    
+
     return filename;
 }
 
 /* Count backticks at start of line */
-static int count_backticks(const char *line) {
+static int count_backticks(const char* line)
+{
     int count = 0;
-    while (*line && isspace(*line)) line++;
-    while (*line == '`') {
+    while (*line && isspace(*line))
+        line++;
+    while (*line == '`')
+    {
         count++;
         line++;
     }
@@ -180,166 +213,200 @@ static int count_backticks(const char *line) {
 }
 
 // Generate token breakdown by file and section
-void generate_token_diagnostics(const char *content, const char *model, FILE *out, Arena *arena) {
-    if (!content || !model || !out) return;
-    
+void generate_token_diagnostics(const char* content, const char* model, FILE* out, Arena* arena)
+{
+    if (!content || !model || !out)
+        return;
+
     size_t total_tokens = llm_count_tokens(content, model);
-    if (total_tokens == SIZE_MAX) {
+    if (total_tokens == SIZE_MAX)
+    {
         fprintf(stderr, "fatal: tokenizer failed while generating diagnostics\n");
         exit(EXIT_FAILURE);
     }
-    
-    FileTokenCount *files = arena_push_array_safe(arena, FileTokenCount, 1000);
-    SectionTokenCount *sections = arena_push_array_safe(arena, SectionTokenCount, 20);
-    if (!files || !sections) return;
-    
+
+    FileTokenCount* files = arena_push_array_safe(arena, FileTokenCount, 1000);
+    SectionTokenCount* sections = arena_push_array_safe(arena, SectionTokenCount, 20);
+    if (!files || !sections)
+        return;
+
     ParserContext ctx;
     parser_init(&ctx, files, 1000, sections, 20);
-    
-    const char *pos = content;
-    const char *line_start = content;
-    
-    while (*pos) {
-        const char *line_end = pos;
-        while (*line_end && *line_end != '\n') line_end++;
-        
+
+    const char* pos = content;
+    const char* line_start = content;
+
+    while (*pos)
+    {
+        const char* line_end = pos;
+        while (*line_end && *line_end != '\n')
+            line_end++;
+
         size_t line_len = line_end - line_start;
-        char *line = arena_push_array_safe(arena, char, line_len + 1);
-        if (!line) break;
-        
+        char* line = arena_push_array_safe(arena, char, line_len + 1);
+        if (!line)
+            break;
+
         memcpy(line, line_start, line_len);
         line[line_len] = '\0';
-        
+
         ParserState state = parser_current_state(&ctx);
-        
-        switch (state) {
-            case STATE_TOP_LEVEL:
-                if (line_starts_with_tag(line, "<file_tree>")) {
-                    parser_push_state(&ctx, STATE_IN_FILE_TREE, "file_tree", line_end + 1);
+
+        switch (state)
+        {
+        case STATE_TOP_LEVEL:
+            if (line_starts_with_tag(line, "<file_tree>"))
+            {
+                parser_push_state(&ctx, STATE_IN_FILE_TREE, "file_tree", line_end + 1);
+            }
+            else if (line_starts_with_tag(line, "<file_context>"))
+            {
+                parser_push_state(&ctx, STATE_IN_FILE_CONTEXT, "file_context", line_end + 1);
+            }
+            else if (line_starts_with_tag(line, "<user_instructions>"))
+            {
+                parser_push_state(&ctx, STATE_IN_USER_INSTRUCTIONS, "user_instructions",
+                                  line_end + 1);
+            }
+            else if (line_starts_with_tag(line, "<system_instructions>"))
+            {
+                parser_push_state(&ctx, STATE_IN_SYSTEM_INSTRUCTIONS, "system_instructions",
+                                  line_end + 1);
+            }
+            else if (line_starts_with_tag(line, "<response_guide>"))
+            {
+                parser_push_state(&ctx, STATE_IN_RESPONSE_GUIDE, "response_guide", line_end + 1);
+            }
+            break;
+
+        case STATE_IN_FILE_TREE:
+            if (line_starts_with_tag(line, "</file_tree>"))
+            {
+                StateStackEntry* entry = &ctx.stack[ctx.stack_depth - 1];
+                save_section(&ctx, entry->section_name, entry->start_pos, line_start, model, arena);
+                parser_pop_state(&ctx);
+            }
+            break;
+
+        case STATE_IN_FILE_CONTEXT:
+            if (line_starts_with_tag(line, "</file_context>"))
+            {
+                if (ctx.current_file_name && ctx.current_file_start)
+                {
+                    save_file(&ctx, ctx.current_file_name, ctx.current_file_start, line_start,
+                              model, arena);
+                    ctx.current_file_name = NULL;
+                    ctx.current_file_start = NULL;
                 }
-                else if (line_starts_with_tag(line, "<file_context>")) {
-                    parser_push_state(&ctx, STATE_IN_FILE_CONTEXT, "file_context", line_end + 1);
+                parser_pop_state(&ctx);
+            }
+            else if (line_starts_with_tag(line, "File:"))
+            {
+                if (ctx.current_file_name && ctx.current_file_start)
+                {
+                    save_file(&ctx, ctx.current_file_name, ctx.current_file_start, line_start,
+                              model, arena);
                 }
-                else if (line_starts_with_tag(line, "<user_instructions>")) {
-                    parser_push_state(&ctx, STATE_IN_USER_INSTRUCTIONS, "user_instructions", line_end + 1);
-                }
-                else if (line_starts_with_tag(line, "<system_instructions>")) {
-                    parser_push_state(&ctx, STATE_IN_SYSTEM_INSTRUCTIONS, "system_instructions", line_end + 1);
-                }
-                else if (line_starts_with_tag(line, "<response_guide>")) {
-                    parser_push_state(&ctx, STATE_IN_RESPONSE_GUIDE, "response_guide", line_end + 1);
-                }
-                break;
-                
-            case STATE_IN_FILE_TREE:
-                if (line_starts_with_tag(line, "</file_tree>")) {
-                    StateStackEntry *entry = &ctx.stack[ctx.stack_depth - 1];
-                    save_section(&ctx, entry->section_name, entry->start_pos, line_start, model, arena);
-                    parser_pop_state(&ctx);
-                }
-                break;
-                
-            case STATE_IN_FILE_CONTEXT:
-                if (line_starts_with_tag(line, "</file_context>")) {
-                    if (ctx.current_file_name && ctx.current_file_start) {
-                        save_file(&ctx, ctx.current_file_name, ctx.current_file_start, 
-                                 line_start, model, arena);
-                        ctx.current_file_name = NULL;
-                        ctx.current_file_start = NULL;
+
+                ctx.current_file_name = extract_filename(line, arena);
+                ctx.current_file_start = line_end + 1;
+
+                const char* next_line = line_end + 1;
+                if (*next_line)
+                {
+                    int backticks = count_backticks(next_line);
+                    if (backticks >= 3)
+                    {
+                        ctx.in_code_fence = true;
+                        ctx.code_fence_backticks = backticks;
                     }
-                    parser_pop_state(&ctx);
                 }
-                else if (line_starts_with_tag(line, "File:")) {
-                    if (ctx.current_file_name && ctx.current_file_start) {
-                        save_file(&ctx, ctx.current_file_name, ctx.current_file_start, 
-                                 line_start, model, arena);
-                    }
-                    
-                    ctx.current_file_name = extract_filename(line, arena);
-                    ctx.current_file_start = line_end + 1;
-                    
-                    const char *next_line = line_end + 1;
-                    if (*next_line) {
-                        int backticks = count_backticks(next_line);
-                        if (backticks >= 3) {
-                            ctx.in_code_fence = true;
-                            ctx.code_fence_backticks = backticks;
-                        }
-                    }
+            }
+            else if (ctx.in_code_fence)
+            {
+                int backticks = count_backticks(line);
+                if (backticks >= ctx.code_fence_backticks)
+                {
+                    ctx.in_code_fence = false;
+                    ctx.code_fence_backticks = 0;
                 }
-                else if (ctx.in_code_fence) {
-                    int backticks = count_backticks(line);
-                    if (backticks >= ctx.code_fence_backticks) {
-                        ctx.in_code_fence = false;
-                        ctx.code_fence_backticks = 0;
-                    }
-                }
-                break;
-                
-            case STATE_IN_USER_INSTRUCTIONS:
-                if (line_starts_with_tag(line, "</user_instructions>")) {
-                    StateStackEntry *entry = &ctx.stack[ctx.stack_depth - 1];
-                    save_section(&ctx, entry->section_name, entry->start_pos, line_start, model, arena);
-                    parser_pop_state(&ctx);
-                }
-                break;
-                
-            case STATE_IN_SYSTEM_INSTRUCTIONS:
-                if (line_starts_with_tag(line, "</system_instructions>")) {
-                    StateStackEntry *entry = &ctx.stack[ctx.stack_depth - 1];
-                    save_section(&ctx, entry->section_name, entry->start_pos, line_start, model, arena);
-                    parser_pop_state(&ctx);
-                }
-                break;
-                
-            case STATE_IN_RESPONSE_GUIDE:
-                if (line_starts_with_tag(line, "</response_guide>")) {
-                    StateStackEntry *entry = &ctx.stack[ctx.stack_depth - 1];
-                    save_section(&ctx, entry->section_name, entry->start_pos, line_start, model, arena);
-                    parser_pop_state(&ctx);
-                }
-                break;
-                
-            default:
-                break;
+            }
+            break;
+
+        case STATE_IN_USER_INSTRUCTIONS:
+            if (line_starts_with_tag(line, "</user_instructions>"))
+            {
+                StateStackEntry* entry = &ctx.stack[ctx.stack_depth - 1];
+                save_section(&ctx, entry->section_name, entry->start_pos, line_start, model, arena);
+                parser_pop_state(&ctx);
+            }
+            break;
+
+        case STATE_IN_SYSTEM_INSTRUCTIONS:
+            if (line_starts_with_tag(line, "</system_instructions>"))
+            {
+                StateStackEntry* entry = &ctx.stack[ctx.stack_depth - 1];
+                save_section(&ctx, entry->section_name, entry->start_pos, line_start, model, arena);
+                parser_pop_state(&ctx);
+            }
+            break;
+
+        case STATE_IN_RESPONSE_GUIDE:
+            if (line_starts_with_tag(line, "</response_guide>"))
+            {
+                StateStackEntry* entry = &ctx.stack[ctx.stack_depth - 1];
+                save_section(&ctx, entry->section_name, entry->start_pos, line_start, model, arena);
+                parser_pop_state(&ctx);
+            }
+            break;
+
+        default:
+            break;
         }
-        
+
         pos = (*line_end) ? line_end + 1 : line_end;
         line_start = pos;
     }
-    
-    while (ctx.stack_depth > 1) {
+
+    while (ctx.stack_depth > 1)
+    {
         ParserState state = parser_current_state(&ctx);
-        StateStackEntry *entry = &ctx.stack[ctx.stack_depth - 1];
-        
-        if (state == STATE_IN_FILE_CONTEXT && ctx.current_file_name && ctx.current_file_start) {
+        StateStackEntry* entry = &ctx.stack[ctx.stack_depth - 1];
+
+        if (state == STATE_IN_FILE_CONTEXT && ctx.current_file_name && ctx.current_file_start)
+        {
             save_file(&ctx, ctx.current_file_name, ctx.current_file_start, pos, model, arena);
-        } else if (entry->start_pos) {
+        }
+        else if (entry->start_pos)
+        {
             save_section(&ctx, entry->section_name, entry->start_pos, pos, model, arena);
         }
-        
+
         parser_pop_state(&ctx);
     }
-    
+
     fprintf(out, "  Tokens   File\n");
     fprintf(out, "  -------  ------------------------\n");
-    
+
     size_t accounted_tokens = 0;
-    for (size_t i = 0; i < ctx.section_count; i++) {
+    for (size_t i = 0; i < ctx.section_count; i++)
+    {
         fprintf(out, "  %7zu  <%s>\n", ctx.sections[i].tokens, ctx.sections[i].name);
         accounted_tokens += ctx.sections[i].tokens;
     }
-    
-    for (size_t i = 0; i < ctx.file_count; i++) {
+
+    for (size_t i = 0; i < ctx.file_count; i++)
+    {
         fprintf(out, "  %7zu  %s\n", ctx.files[i].tokens, ctx.files[i].filename);
         accounted_tokens += ctx.files[i].tokens;
     }
-    
+
     size_t unaccounted = total_tokens - accounted_tokens;
-    if (unaccounted > 0) {
+    if (unaccounted > 0)
+    {
         fprintf(out, "  %7zu  <other>\n", unaccounted);
     }
-    
+
     fprintf(out, "  -------  ------------------------\n");
     fprintf(out, "  %7zu  Total\n", total_tokens);
 }
