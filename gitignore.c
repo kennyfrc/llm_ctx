@@ -137,7 +137,7 @@ void load_gitignore_file(const char *filepath) {
         add_ignore_pattern(line);
     }
     
-    fclose(file);
+    (void)fclose(file);
 }
 
 /**
@@ -157,8 +157,10 @@ void load_all_gitignore_files(void) {
     assert(current_dir[0] != '\0');
     
     /* First, try to load .gitignore from the current directory */
-    snprintf(gitignore_path, sizeof(gitignore_path), "%s/.gitignore", current_dir);
-    load_gitignore_file(gitignore_path);
+    int written = snprintf(gitignore_path, sizeof(gitignore_path), "%s/.gitignore", current_dir);
+    if (written >= 0 && (size_t)written < sizeof(gitignore_path)) {
+        load_gitignore_file(gitignore_path);
+    }
     
     /* Then, try to load from parent directories */
     char *dir = current_dir;
@@ -169,8 +171,10 @@ void load_all_gitignore_files(void) {
         *last_slash = '\0';
         
         /* Try to load .gitignore from this directory */
-        snprintf(gitignore_path, sizeof(gitignore_path), "%s/.gitignore", dir);
-        load_gitignore_file(gitignore_path);
+        written = snprintf(gitignore_path, sizeof(gitignore_path), "%s/.gitignore", dir);
+        if (written >= 0 && (size_t)written < sizeof(gitignore_path)) {
+            load_gitignore_file(gitignore_path);
+        }
         
         /* Stop if we've reached the root directory */
         if (last_slash == dir) {

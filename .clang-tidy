@@ -1,0 +1,11 @@
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  cert-*,
+  modernize-deprecated-headers,
+  modernize-redundant-void-arg
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*'
+FormatStyle: none

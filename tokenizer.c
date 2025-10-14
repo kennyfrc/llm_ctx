@@ -30,7 +30,7 @@ static char g_load_error[512];
 
 static void remember_dl_error(const char *err) {
     if (err && *err) {
-        snprintf(g_load_error, sizeof(g_load_error), "%s", err);
+        (void)snprintf(g_load_error, sizeof(g_load_error), "%s", err);
     }
 }
 
@@ -60,18 +60,20 @@ static void load_tokenizer_lib(void) {
         /* Get error for debug */
         const char *err = dlerror();
         if (getenv("LLMCTX_DEBUG") && err) {
-            fprintf(stderr, "debug: dlopen(%s) failed: %s\n", TOKENIZER_LIB_NAME, err);
+            (void)fprintf(stderr, "debug: dlopen(%s) failed: %s\n", TOKENIZER_LIB_NAME, err);
         }
         remember_dl_error(err);
 
         /* Try with executable directory if set */
         if (!g_tokenizer_lib && g_executable_dir) {
             char exe_path[1024];
-            snprintf(exe_path, sizeof(exe_path), "%s/%s", g_executable_dir, TOKENIZER_LIB_NAME);
-            g_tokenizer_lib = dlopen(exe_path, RTLD_LAZY);
+            int written = snprintf(exe_path, sizeof(exe_path), "%s/%s", g_executable_dir, TOKENIZER_LIB_NAME);
+            if (written >= 0 && (size_t)written < sizeof(exe_path)) {
+                g_tokenizer_lib = dlopen(exe_path, RTLD_LAZY);
+            }
             if (!g_tokenizer_lib && getenv("LLMCTX_DEBUG")) {
                 const char *path_err = dlerror();
-                fprintf(stderr, "debug: dlopen(%s) failed: %s\n", exe_path, path_err);
+                (void)fprintf(stderr, "debug: dlopen(%s) failed: %s\n", exe_path, path_err);
                 remember_dl_error(path_err);
             } else if (!g_tokenizer_lib) {
                 remember_dl_error(dlerror());
@@ -80,11 +82,13 @@ static void load_tokenizer_lib(void) {
 
         /* Try with absolute path from current directory */
         if (!g_tokenizer_lib) {
+            char cwd[1024];
             char abs_path[1024];
-            if (getcwd(abs_path, sizeof(abs_path))) {
-                strcat(abs_path, "/");
-                strcat(abs_path, TOKENIZER_LIB_NAME);
-                g_tokenizer_lib = dlopen(abs_path, RTLD_LAZY);
+            if (getcwd(cwd, sizeof(cwd))) {
+                int written = snprintf(abs_path, sizeof(abs_path), "%s/%s", cwd, TOKENIZER_LIB_NAME);
+                if (written >= 0 && (size_t)written < sizeof(abs_path)) {
+                    g_tokenizer_lib = dlopen(abs_path, RTLD_LAZY);
+                }
                 if (!g_tokenizer_lib) {
                     remember_dl_error(dlerror());
                 }
@@ -120,7 +124,7 @@ static void load_tokenizer_lib(void) {
         dlclose(g_tokenizer_lib);
         g_tokenizer_lib = NULL;
         g_load_failed = 1;
-        snprintf(g_load_error, sizeof(g_load_error), "missing required symbols in tokenizer library");
+        (void)snprintf(g_load_error, sizeof(g_load_error), "missing required symbols in tokenizer library");
         return;
     }
 
@@ -132,8 +136,8 @@ static void ensure_tokenizer_ready(void) {
     load_tokenizer_lib();
     if (g_load_failed || !g_tokenizer_lib || !g_get_bpe_from_model || !g_encode_ordinary || !g_destroy_corebpe) {
         const char *detail = g_load_error[0] ? g_load_error : "tokenizer library not found";
-        fprintf(stderr, "fatal: tokenizer unavailable (%s)\n", detail);
-        fprintf(stderr, "hint: run `make tokenizer` to build the vendored tokenizer library\n");
+        (void)fprintf(stderr, "fatal: tokenizer unavailable (%s)\n", detail);
+        (void)fprintf(stderr, "hint: run `make tokenizer` to build the vendored tokenizer library\n");
         exit(EXIT_FAILURE);
     }
 }
@@ -154,8 +158,8 @@ size_t llm_count_tokens(const char *text, const char *model) {
     /* Get the BPE encoder for the model */
     CoreBPE *bpe = g_get_bpe_from_model(model);
     if (!bpe) {
-        fprintf(stderr, "fatal: tokenizer model '%s' not supported\n", model);
-        fprintf(stderr, "hint: choose a supported model or update the vendored tokenizer\n");
+        (void)fprintf(stderr, "fatal: tokenizer model '%s' not supported\n", model);
+        (void)fprintf(stderr, "hint: choose a supported model or update the vendored tokenizer\n");
         exit(EXIT_FAILURE);
     }
     
@@ -172,7 +176,7 @@ size_t llm_count_tokens(const char *text, const char *model) {
         size_t text_len = strlen(text);
         /* Most text has between 1 token per 6 chars to 1 token per 2 chars */
         if (num_tokens > text_len) {
-            fprintf(stderr, "warning: suspicious token count %zu for text length %zu\n", num_tokens, text_len);
+            (void)fprintf(stderr, "warning: suspicious token count %zu for text length %zu\n", num_tokens, text_len);
         }
     }
     

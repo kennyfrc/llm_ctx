@@ -8,11 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// Custom max_align_t for systems without it
-#if !defined(__STDC_VERSION_STDDEF_H__) && !defined(_MSC_VER) && !defined(_MAX_ALIGN_T_DEFINED) && !defined(__APPLE__)
-typedef union { long long i; long double d; void *p; } max_align_t;
-#define _MAX_ALIGN_T_DEFINED
-#endif
+// Rely on the standard definition of max_align_t when available.
 
 #ifdef __cplusplus
 extern "C" {

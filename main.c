@@ -2216,10 +2216,11 @@ void rank_files(const char *query, FileRank *ranks, int num_files) {
                     /* Read content and count term frequencies */
                     char buffer[4096];
                     char buffer_copy[4096];
-                    rewind(f);
                     while (fgets(buffer, sizeof(buffer), f)) {
                         /* Make a copy for word counting since strtok modifies the buffer */
-                        strcpy(buffer_copy, buffer);
+                        size_t len = strnlen(buffer, sizeof(buffer_copy) - 1);
+                        memcpy(buffer_copy, buffer, len);
+                        buffer_copy[len] = '\0';
                         
                         /* Simple word count - count space-separated tokens */
                         char *word = strtok(buffer_copy, " \t\n\r");
@@ -2236,7 +2237,7 @@ void rank_files(const char *query, FileRank *ranks, int num_files) {
                             content_hits += w * hits;
                         }
                     }
-                    
+
                     /* Calculate TF-IDF score */
                     if (total_words > 0) {
                         for (int j = 0; j < num_tokens; j++) {
@@ -2248,21 +2249,22 @@ void rank_files(const char *query, FileRank *ranks, int num_files) {
                             }
                         }
                     }
-                    
+
                     free(term_freq);
                 } else {
                     /* Fallback to simple counting */
                     char buffer[4096];
-                    rewind(f);
-                    while (fgets(buffer, sizeof(buffer), f)) {
-                        for (int j = 0; j < num_tokens; j++) {
-                            double w = kw_weight_for(tokens[j]);
-                            content_hits += w * count_word_hits(buffer, tokens[j]);
+                    if (fseek(f, 0, SEEK_SET) == 0) {
+                        while (fgets(buffer, sizeof(buffer), f)) {
+                            for (int j = 0; j < num_tokens; j++) {
+                                double w = kw_weight_for(tokens[j]);
+                                content_hits += w * count_word_hits(buffer, tokens[j]);
+                            }
                         }
                     }
                 }
             }
-            fclose(f);
+            (void)fclose(f);
         }
         
         /* Calculate score: TF-IDF weight + content_hits + path_weight*path_hits - size_weight*(bytes/1MiB) */
@@ -2299,16 +2301,17 @@ basic_scoring:
             /* Check if binary */
             if (!is_binary(f)) {
                 /* Read content and count hits */
-                char buffer[4096];
-                rewind(f);
-                while (fgets(buffer, sizeof(buffer), f)) {
-                    for (int j = 0; j < num_tokens; j++) {
-                        double w = kw_weight_for(tokens[j]);
-                        content_hits += w * count_word_hits(buffer, tokens[j]);
+                    char buffer[4096];
+                    if (fseek(f, 0, SEEK_SET) == 0) {
+                        while (fgets(buffer, sizeof(buffer), f)) {
+                            for (int j = 0; j < num_tokens; j++) {
+                                double w = kw_weight_for(tokens[j]);
+                                content_hits += w * count_word_hits(buffer, tokens[j]);
+                            }
+                        }
                     }
-                }
             }
-            fclose(f);
+            (void)fclose(f);
         }
         
         /* Calculate score: content_hits + path_weight*path_hits - size_weight*(bytes/1MiB) */
@@ -3041,7 +3044,7 @@ int main(int argc, char *argv[]) {
         generate_token_diagnostics(final_content, g_token_model, diag_out, &g_arena);
 
         if (diag_out != stderr) {
-            fclose(diag_out);
+            (void)fclose(diag_out);
         }
     }
 
@@ -3052,19 +3055,20 @@ int main(int argc, char *argv[]) {
             size_t final_len = strlen(final_content);
             /* Check if content exceeds clipboard limit */
             if (final_len > CLIPBOARD_SOFT_MAX) {
-                fprintf(stderr, "Warning: output (%zu bytes) exceeds clipboard limit (%d MB); "
-                    "writing to stdout instead.\n", final_len, CLIPBOARD_SOFT_MAX / (1024 * 1024));
+                (void)fprintf(stderr, "Warning: output (%zu bytes) exceeds clipboard limit (%d MB); "
+                               "writing to stdout instead.\n", final_len,
+                               CLIPBOARD_SOFT_MAX / (1024 * 1024));
                 printf("%s", final_content);
             } else if (!copy_to_clipboard(final_content)) {
                 /* Clipboard copy failed, fall back to stdout */
-                fprintf(stderr, "Clipboard copy failed; falling back to stdout.\n");
+                (void)fprintf(stderr, "Clipboard copy failed; falling back to stdout.\n");
                 printf("%s", final_content);
             } else {
                 /* Print confirmation message to stderr */
                 if (tree_only || global_tree_only) {
-                    fprintf(stderr, "File tree printed using depth %d.\n", tree_max_depth);
+                    (void)fprintf(stderr, "File tree printed using depth %d.\n", tree_max_depth);
                 }
-                fprintf(stderr, "Content copied to clipboard.\n");
+                (void)fprintf(stderr, "Content copied to clipboard.\n");
             }
         }
         /* Do NOT print to stdout when copying succeeded */
@@ -3080,7 +3084,7 @@ int main(int argc, char *argv[]) {
                     return 1;
                 }
                 fclose(output_file);
-                fprintf(stderr, "Content written to %s\n", g_output_file);
+                (void)fprintf(stderr, "Content written to %s\n", g_output_file);
             } else {
                 perror("Failed to open output file");
                 return 1;

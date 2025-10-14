@@ -1,0 +1,102 @@
+[
+  {
+    "directory": "/workspace/llm_ctx",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c arena.c -o arena.o",
+    "file": "/workspace/llm_ctx/arena.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c config.c -o config.o",
+    "file": "/workspace/llm_ctx/config.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c debug.c -o debug.o",
+    "file": "/workspace/llm_ctx/debug.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c gitignore.c -o gitignore.o",
+    "file": "/workspace/llm_ctx/gitignore.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c main.c -o main.o",
+    "file": "/workspace/llm_ctx/main.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx/tests",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tests/test_arena.c -o test_arena.o",
+    "file": "/workspace/llm_ctx/tests/test_arena.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx/tests",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tests/test_cli.c -o test_cli.o",
+    "file": "/workspace/llm_ctx/tests/test_cli.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx/tests",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tests/test_cli_exclude.c -o test_cli_exclude.o",
+    "file": "/workspace/llm_ctx/tests/test_cli_exclude.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx/tests",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tests/test_config.c -o test_config.o",
+    "file": "/workspace/llm_ctx/tests/test_config.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx/tests",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tests/test_filerank.c -o test_filerank.o",
+    "file": "/workspace/llm_ctx/tests/test_filerank.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx/tests",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tests/test_filerank_cutoff.c -o test_filerank_cutoff.o",
+    "file": "/workspace/llm_ctx/tests/test_filerank_cutoff.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx/tests",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tests/test_gitignore.c -o test_gitignore.o",
+    "file": "/workspace/llm_ctx/tests/test_gitignore.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx/tests",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tests/test_keywords.c -o test_keywords.o",
+    "file": "/workspace/llm_ctx/tests/test_keywords.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx/tests",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tests/test_stdin.c -o test_stdin.o",
+    "file": "/workspace/llm_ctx/tests/test_stdin.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx/tests",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tests/test_tokenizer.c -o test_tokenizer.o",
+    "file": "/workspace/llm_ctx/tests/test_tokenizer.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx/tests",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tests/test_tokenizer_cli.c -o test_tokenizer_cli.o",
+    "file": "/workspace/llm_ctx/tests/test_tokenizer_cli.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx/tests",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tests/test_tree_flags.c -o test_tree_flags.o",
+    "file": "/workspace/llm_ctx/tests/test_tree_flags.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tokenizer.c -o tokenizer.o",
+    "file": "/workspace/llm_ctx/tokenizer.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c tokenizer_diagnostics.c -o tokenizer_diagnostics.o",
+    "file": "/workspace/llm_ctx/tokenizer_diagnostics.c"
+  },
+  {
+    "directory": "/workspace/llm_ctx",
+    "command": "gcc -std=c99 -Wall -Wextra -Werror -Wstrict-prototypes -D_GNU_SOURCE -g -I. -c toml.c -o toml.o",
+    "file": "/workspace/llm_ctx/toml.c"
+  }
+]

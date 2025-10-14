@@ -52,12 +52,17 @@ char *config_expand_path(const char *path, Arena *arena) {
         // Construct expanded path
         size_t home_len = strlen(home_dir);
         size_t path_len = strlen(path);
-        size_t total_len = home_len + path_len; // -1 for ~, +1 for \0
-        
+        size_t total_len = home_len + path_len;
         char *expanded = arena_push_array_safe(arena, char, total_len);
-        strcpy(expanded, home_dir);
-        strcat(expanded, path + 1); // Skip the ~
-        
+        if (!expanded) {
+            return arena_strdup_safe(arena, path);
+        }
+
+        int written = snprintf(expanded, total_len, "%s%s", home_dir, path + 1);
+        if (written < 0 || (size_t)written >= total_len) {
+            return arena_strdup_safe(arena, path);
+        }
+
         return expanded;
     } else {
         // ~username/... format - not supported for now
@@ -73,7 +78,7 @@ static bool try_load_config(const char *path, ConfigSettings *settings, Arena *a
     }
     
     if (!S_ISREG(st.st_mode)) {
-        fprintf(stderr, "Warning: %s is not a regular file\n", path);
+        (void)fprintf(stderr, "Warning: %s is not a regular file\n", path);
         return false;
     }
     
@@ -114,15 +119,23 @@ bool config_load(ConfigSettings *settings, Arena *arena) {
     const char *xdg_config = getenv("XDG_CONFIG_HOME");
     char xdg_path[PATH_MAX];
     if (xdg_config) {
-        snprintf(xdg_path, sizeof(xdg_path), "%s/llm_ctx/config.toml", xdg_config);
-        paths_to_try[path_count++] = xdg_path;
+        int written = snprintf(xdg_path, sizeof(xdg_path), "%s/llm_ctx/config.toml", xdg_config);
+        if (written >= 0 && (size_t)written < sizeof(xdg_path)) {
+            paths_to_try[path_count++] = xdg_path;
+        } else {
+            debug_printf("Skipping truncated XDG config path");
+        }
     }
     
     const char *home = getenv("HOME");
     char home_path[PATH_MAX];
     if (home) {
-        snprintf(home_path, sizeof(home_path), "%s/.config/llm_ctx/config.toml", home);
-        paths_to_try[path_count++] = home_path;
+        int written = snprintf(home_path, sizeof(home_path), "%s/.config/llm_ctx/config.toml", home);
+        if (written >= 0 && (size_t)written < sizeof(home_path)) {
+            paths_to_try[path_count++] = home_path;
+        } else {
+            debug_printf("Skipping truncated HOME config path");
+        }
     }
     
     for (int i = 0; i < path_count; i++) {
@@ -139,27 +152,28 @@ bool config_load(ConfigSettings *settings, Arena *arena) {
 void config_debug_print(const ConfigSettings *settings) {
     if (!settings) return;
     
-    fprintf(stderr, "[DEBUG] ConfigSettings:\n");
-    fprintf(stderr, "[DEBUG]   system_prompt_file: %s\n", 
-            settings->system_prompt_file ? settings->system_prompt_file : "(null)");
-    fprintf(stderr, "[DEBUG]   response_guide_file: %s\n", 
-            settings->response_guide_file ? settings->response_guide_file : "(null)");
-    fprintf(stderr, "[DEBUG]   copy_to_clipboard: %d\n", settings->copy_to_clipboard);
-    fprintf(stderr, "[DEBUG]   token_budget: %zu\n", settings->token_budget);
-    fprintf(stderr, "[DEBUG]   filerank_weight_path: %.2f\n", settings->filerank_weight_path);
-    fprintf(stderr, "[DEBUG]   filerank_weight_content: %.2f\n", settings->filerank_weight_content);
-    fprintf(stderr, "[DEBUG]   filerank_weight_size: %.2f\n", settings->filerank_weight_size);
-    fprintf(stderr, "[DEBUG]   filerank_weight_tfidf: %.2f\n", settings->filerank_weight_tfidf);
-    fprintf(stderr, "[DEBUG]   filerank_cutoff: %s\n", settings->filerank_cutoff ? settings->filerank_cutoff : "(unset)");
-    fprintf(stderr, "[DEBUG]   template_count: %zu\n", settings->template_count);
+    (void)fprintf(stderr, "[DEBUG] ConfigSettings:\n");
+    (void)fprintf(stderr, "[DEBUG]   system_prompt_file: %s\n",
+                  settings->system_prompt_file ? settings->system_prompt_file : "(null)");
+    (void)fprintf(stderr, "[DEBUG]   response_guide_file: %s\n",
+                  settings->response_guide_file ? settings->response_guide_file : "(null)");
+    (void)fprintf(stderr, "[DEBUG]   copy_to_clipboard: %d\n", settings->copy_to_clipboard);
+    (void)fprintf(stderr, "[DEBUG]   token_budget: %zu\n", settings->token_budget);
+    (void)fprintf(stderr, "[DEBUG]   filerank_weight_path: %.2f\n", settings->filerank_weight_path);
+    (void)fprintf(stderr, "[DEBUG]   filerank_weight_content: %.2f\n", settings->filerank_weight_content);
+    (void)fprintf(stderr, "[DEBUG]   filerank_weight_size: %.2f\n", settings->filerank_weight_size);
+    (void)fprintf(stderr, "[DEBUG]   filerank_weight_tfidf: %.2f\n", settings->filerank_weight_tfidf);
+    (void)fprintf(stderr, "[DEBUG]   filerank_cutoff: %s\n",
+                  settings->filerank_cutoff ? settings->filerank_cutoff : "(unset)");
+    (void)fprintf(stderr, "[DEBUG]   template_count: %zu\n", settings->template_count);
     
     for (size_t i = 0; i < settings->template_count; i++) {
         ConfigTemplate *tmpl = &settings->templates[i];
-        fprintf(stderr, "[DEBUG]   Template '%s':\n", tmpl->name);
-        fprintf(stderr, "[DEBUG]     system_prompt_file: %s\n", 
-                tmpl->system_prompt_file ? tmpl->system_prompt_file : "(null)");
-        fprintf(stderr, "[DEBUG]     response_guide_file: %s\n", 
-                tmpl->response_guide_file ? tmpl->response_guide_file : "(null)");
+        (void)fprintf(stderr, "[DEBUG]   Template '%s':\n", tmpl->name);
+        (void)fprintf(stderr, "[DEBUG]     system_prompt_file: %s\n",
+                      tmpl->system_prompt_file ? tmpl->system_prompt_file : "(null)");
+        (void)fprintf(stderr, "[DEBUG]     response_guide_file: %s\n",
+                      tmpl->response_guide_file ? tmpl->response_guide_file : "(null)");
     }
 }
 
@@ -177,6 +191,9 @@ static void parse_templates(FILE *fp, ConfigSettings *settings, Arena *arena) {
     
     size_t template_count = 0;
     long start_pos = ftell(fp);
+    if (start_pos < 0) {
+        return;
+    }
     
     while (fgets(line, sizeof(line), fp)) {
         char *p = line;
@@ -191,10 +208,16 @@ static void parse_templates(FILE *fp, ConfigSettings *settings, Arena *arena) {
     
     if (template_count > 0) {
         settings->templates = arena_push_array_safe(arena, ConfigTemplate, template_count);
+        if (!settings->templates) {
+            settings->template_count = 0;
+            return;
+        }
         settings->template_count = 0;
     }
     
-    fseek(fp, start_pos, SEEK_SET);
+    if (fseek(fp, start_pos, SEEK_SET) != 0) {
+        return;
+    }
     
     while (fgets(line, sizeof(line), fp)) {
         // Remove trailing newline
@@ -219,9 +242,22 @@ static void parse_templates(FILE *fp, ConfigSettings *settings, Arena *arena) {
                 state = STATE_IN_TEMPLATES;
             } else if (strncmp(p, "templates.", 10) == 0) {
                 state = STATE_IN_TEMPLATE;
-                strcpy(current_template, p + 10);
-                
+                int written = snprintf(current_template, sizeof(current_template), "%s", p + 10);
+                if (written < 0 || (size_t)written >= sizeof(current_template)) {
+                    debug_printf("Skipping oversize template name");
+                    current_template[0] = '\0';
+                    current_tmpl = NULL;
+                    state = STATE_IN_TEMPLATES;
+                    continue;
+                }
+
                 // Create new template
+                if (!settings->templates) {
+                    state = STATE_IN_TEMPLATES;
+                    current_tmpl = NULL;
+                    continue;
+                }
+
                 current_tmpl = &settings->templates[settings->template_count++];
                 current_tmpl->name = arena_strdup_safe(arena, current_template);
                 current_tmpl->system_prompt_file = NULL;
@@ -273,13 +309,20 @@ static bool parse_toml_file(const char *path, ConfigSettings *settings, Arena *a
     }
     
     parse_templates(fp, settings, arena);
-    rewind(fp);
+    if (fseek(fp, 0, SEEK_SET) != 0) {
+        (void)fclose(fp);
+        return false;
+    }
     
     char temp_path[PATH_MAX];
-    snprintf(temp_path, sizeof(temp_path), "%s.tmp", path);
+    int written = snprintf(temp_path, sizeof(temp_path), "%s.tmp", path);
+    if (written < 0 || (size_t)written >= sizeof(temp_path)) {
+        (void)fclose(fp);
+        return false;
+    }
     FILE *temp_fp = fopen(temp_path, "w");
     if (!temp_fp) {
-        fclose(fp);
+        (void)fclose(fp);
         return false;
     }
     
@@ -295,26 +338,39 @@ static bool parse_toml_file(const char *path, ConfigSettings *settings, Arena *a
             }
         }
         if (!skip_until_next_section) {
-            fputs(line, temp_fp);
+            if (fputs(line, temp_fp) == EOF) {
+                (void)fclose(fp);
+                (void)fclose(temp_fp);
+                unlink(temp_path);
+                return false;
+            }
         }
     }
-    fclose(temp_fp);
-    
-    temp_fp = fopen(temp_path, "r");
-    if (!temp_fp) {
-        fclose(fp);
+    if (fclose(temp_fp) != 0) {
+        (void)fclose(fp);
         unlink(temp_path);
         return false;
     }
-    
+
+    temp_fp = fopen(temp_path, "r");
+    if (!temp_fp) {
+        (void)fclose(fp);
+        unlink(temp_path);
+        return false;
+    }
+
     char errbuf[200];
     toml_table_t *conf = toml_parse_file(temp_fp, errbuf, sizeof(errbuf));
-    fclose(temp_fp);
+    if (fclose(temp_fp) != 0) {
+        (void)fclose(fp);
+        unlink(temp_path);
+        return false;
+    }
     unlink(temp_path);
-    
+
     if (!conf) {
-        fprintf(stderr, "Error parsing config file %s: %s\n", path, errbuf);
-        fclose(fp);
+        (void)fprintf(stderr, "Error parsing config file %s: %s\n", path, errbuf);
+        (void)fclose(fp);
         return false;
     }
     
@@ -342,22 +398,22 @@ static bool parse_toml_file(const char *path, ConfigSettings *settings, Arena *a
     
     toml_datum_t weight_path = toml_int_in(conf, "filerank_weight_path_x100");
     if (weight_path.ok) {
-        settings->filerank_weight_path = weight_path.u.i / 100.0;
+        settings->filerank_weight_path = (double)weight_path.u.i / 100.0;
     }
     
     toml_datum_t weight_content = toml_int_in(conf, "filerank_weight_content_x100");
     if (weight_content.ok) {
-        settings->filerank_weight_content = weight_content.u.i / 100.0;
+        settings->filerank_weight_content = (double)weight_content.u.i / 100.0;
     }
     
     toml_datum_t weight_size = toml_int_in(conf, "filerank_weight_size_x100");
     if (weight_size.ok) {
-        settings->filerank_weight_size = weight_size.u.i / 100.0;
+        settings->filerank_weight_size = (double)weight_size.u.i / 100.0;
     }
     
     toml_datum_t weight_tfidf = toml_int_in(conf, "filerank_weight_tfidf_x100");
     if (weight_tfidf.ok) {
-        settings->filerank_weight_tfidf = weight_tfidf.u.i / 100.0;
+        settings->filerank_weight_tfidf = (double)weight_tfidf.u.i / 100.0;
     }
     
     toml_datum_t cutoff = toml_string_in(conf, "filerank_cutoff");
@@ -367,7 +423,9 @@ static bool parse_toml_file(const char *path, ConfigSettings *settings, Arena *a
     }
     
     toml_free(conf);
-    fclose(fp);
+    if (fclose(fp) != 0) {
+        return false;
+    }
     return true;
 }
 
