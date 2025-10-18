@@ -1,6 +1,15 @@
 # llm_ctx
 
-`llm_ctx` is a command-line utility that formats code or text from files and standard input (stdin) into structured context for LLMs (such as Claude.ai, ChatGPT, Gemini AI Studio). It supports Unix-style composition, allowing integration with tools like `grep`, `find`, and `git diff` via pipes (`|`). Key features include file tree generation, respecting `.gitignore` rules, skipping binary files (see Limitations), and automatic clipboard copying by default.
+`llm_ctx` is a command-line utility for shaping code or text into clean, structured context blocks that are effortless to paste into premium LLM front-ends (Claude.ai, ChatGPT, Gemini Advanced, Gemini AI Studio, Grok, etc.). Many of these models—GPT-5 Pro, Gemini Deep Think, Grok 4 Heavy, Claude Opus—are either unavailable through public APIs or financially impractical to call at scale. `llm_ctx` embraces the pragmatic workflow of preparing context locally and pasting it into the browser sessions that ship with those subscriptions.
+
+The tool speaks fluent Unix: it reads from files or stdin, composes with `grep`, `find`, or `git diff`, and automatically copies the result to your clipboard. It builds file trees, respects `.gitignore`, skips binary files (see [Limitations](#limitations)), and emits diagnostics about token usage so you can stay within the generous—but still finite—context windows of frontier models.
+
+### When `llm_ctx` shines
+
+* **You have access to premium web-only models.** Prepare rich context locally, then paste it straight into GPT-5 Pro, Gemini Deep Think, Grok 4 Heavy, Claude Opus, or other UI-only tiers without paying per-token API fees.
+* **You want reproducible context blocks.** The structured `<file_tree>` / `<file_context>` layout makes it clear what the model is seeing, eliminating messy copy/paste sessions.
+* **You live in the terminal.** Compose command pipelines to curate exactly the context you need, then let `llm_ctx` handle deduping, ignoring, and clipboard delivery.
+* **You must fit inside a context window.** Built-in token accounting (via `make all`) tells you when you're near the limit so you can prune files before the model truncates them.
 
 **Quick Examples:**
 
@@ -78,7 +87,7 @@
 *   [How-To Guides](#how-to-guides)
 *   [Reference](#reference)
 *   [Limitations](#limitations)
-*   [Design Decisions](#design-decisions)
+*   [Explanation](#explanation)
 *   [Testing](#testing)
 *   [License](#license)
 
@@ -989,9 +998,9 @@ iconv -f UTF-16LE -t UTF-8 important_log.txt | llm_ctx -c "Analyze this log file
 
 File inclusion is solely based on the files/patterns provided via `-f` or stdin. Exclusion is handled only via `.gitignore` rules (or the lack thereof if `--no-gitignore` is used). There are no separate `--include` or `--exclude` flags.
 
-## Design Decisions
+## Explanation
 
-This section provides context and clarifies design choices.
+This section explains the rationale behind `llm_ctx` so you can adapt it to your own workflows.
 
 ### Project Philosophy
 
