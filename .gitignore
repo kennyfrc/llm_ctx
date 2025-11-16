@@ -58,3 +58,4 @@ tokenizer/tiktoken-c/target/
 
 tmp/
 testfile*
+.opencode/
