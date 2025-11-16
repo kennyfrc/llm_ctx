@@ -4,7 +4,6 @@ IgnorePattern ignore_patterns[MAX_IGNORE_PATTERNS];
 int num_ignore_patterns = 0;
 bool respect_gitignore = true;
 
-// Reset patterns for testing
 void reset_gitignore_patterns(void)
 {
     num_ignore_patterns = 0;
@@ -13,7 +12,6 @@ void reset_gitignore_patterns(void)
     assert(respect_gitignore == true);
 }
 
-// Check if path matches gitignore patterns (later patterns override earlier ones)
 int should_ignore_path(const char* path)
 {
     assert(path != NULL);

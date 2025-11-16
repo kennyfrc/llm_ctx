@@ -14,7 +14,6 @@
 
 static bool parse_toml_file(const char* path, ConfigSettings* settings, Arena* arena);
 
-// Skip config loading if environment variable is set
 bool config_should_skip(void)
 {
     const char* no_config = getenv("LLM_CTX_NO_CONFIG");
@@ -27,12 +26,10 @@ bool config_should_skip(void)
     return false;
 }
 
-// Expand ~ in paths for home directory resolution
 char* config_expand_path(const char* path, Arena* arena)
 {
     if (!path || path[0] != '~')
     {
-        // No tilde to expand, return a copy
         return arena_strdup_safe(arena, path);
     }
 
@@ -40,7 +37,6 @@ char* config_expand_path(const char* path, Arena* arena)
 
     if (path[1] == '/' || path[1] == '\0')
     {
-        // Simple ~ or ~/...
         home_dir = getenv("HOME");
         if (!home_dir)
         {
@@ -53,29 +49,25 @@ char* config_expand_path(const char* path, Arena* arena)
 
         if (!home_dir)
         {
-            // Can't expand, return as-is
             return arena_strdup_safe(arena, path);
         }
 
-        // Construct expanded path
         size_t home_len = strlen(home_dir);
         size_t path_len = strlen(path);
-        size_t total_len = home_len + path_len; // -1 for ~, +1 for \0
+        size_t total_len = home_len + path_len;
 
         char* expanded = arena_push_array_safe(arena, char, total_len);
         strcpy(expanded, home_dir);
-        strcat(expanded, path + 1); // Skip the ~
+        strcat(expanded, path + 1);
 
         return expanded;
     }
     else
     {
-        // ~username/... format - not supported for now
         return arena_strdup_safe(arena, path);
     }
 }
 
-// Attempt to load config from a single path
 static bool try_load_config(const char* path, ConfigSettings* settings, Arena* arena)
 {
     struct stat st;
@@ -95,7 +87,6 @@ static bool try_load_config(const char* path, ConfigSettings* settings, Arena* a
     return parse_toml_file(path, settings, arena);
 }
 
-// Load config from standard locations in priority order
 bool config_load(ConfigSettings* settings, Arena* arena)
 {
     if (!settings || !arena)
@@ -156,7 +147,6 @@ bool config_load(ConfigSettings* settings, Arena* arena)
     return false;
 }
 
-// Print config for debugging
 void config_debug_print(const ConfigSettings* settings)
 {
     if (!settings)
@@ -188,7 +178,6 @@ void config_debug_print(const ConfigSettings* settings)
     }
 }
 
-// Parse templates using state machine for [templates.name] sections
 static void parse_templates(FILE* fp, ConfigSettings* settings, Arena* arena)
 {
     enum

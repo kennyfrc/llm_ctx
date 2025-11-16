@@ -56,12 +56,10 @@ extern "C"
 #define arena_push_array(arena, T, count)                                                          \
     ((T*)arena_push_size((arena), sizeof(T) * (count), __alignof__(T)))
 
-/* Safe versions that exit on failure */
 #define arena_push_safe(arena, T) ((T*)arena_push_size_safe((arena), sizeof(T), __alignof__(T)))
 #define arena_push_array_safe(arena, T, count)                                                     \
     ((T*)arena_push_size_safe((arena), sizeof(T) * (count), __alignof__(T)))
 
-    /* String duplication and error handling */
     ARENA_API char* arena_strdup(Arena* a, const char* s);
     ARENA_API char* arena_strdup_safe(Arena* a, const char* s);
     ARENA_API void* arena_push_size_safe(Arena* a, size_t size, size_t align);
@@ -81,7 +79,7 @@ extern "C"
     ARENA_API size_t arena_align_forward(size_t p, size_t a)
     {
         if (a == 0)
-            a = sizeof(void*); // Use pointer size as default alignment
+            a = sizeof(void*);
         return (p + (a - 1)) & ~(a - 1);
     }
 

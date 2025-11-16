@@ -1,9 +1,5 @@
 
-/**
- * llm_ctx - Extract file content with fenced blocks for LLM context
- *
- * Follows Unix philosophy: small, focused tools that compose via pipes.
- */
+/* Extract file content with fenced blocks for LLM context */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,17 +10,17 @@
 #include <glob.h>
 #include <libgen.h>
 #include <errno.h>
-#include <fnmatch.h> /* For pattern matching */
-#include <ctype.h>   /* For isspace() */
-#include <stdbool.h> /* For bool type */
-#include <stdint.h>  /* For fixed-width integer types */
-#include <stdarg.h>  /* For va_list, va_start, va_end */
-#include <limits.h>  /* For PATH_MAX */
-#include <getopt.h>  /* For getopt_long */
-#include <math.h>    /* For log() in TF-IDF calculation */
-#include <float.h>   /* For DBL_MAX */
+#include <fnmatch.h>
+#include <ctype.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdarg.h>
+#include <limits.h>
+#include <getopt.h>
+#include <math.h>
+#include <float.h>
 #ifdef __APPLE__
-#include <mach-o/dyld.h> /* _NSGetExecutablePath */
+#include <mach-o/dyld.h>
 #endif
 #include "gitignore.h"
 #include "arena.h"
@@ -34,64 +30,34 @@
 
 static Arena g_arena;
 
-/* Token counting globals */
-static size_t g_token_budget = 96000;        /* Default budget: 96k tokens */
-static const char* g_token_model = "gpt-4o"; /* Default model */
+static size_t g_token_budget = 96000;
+static const char* g_token_model = "gpt-4o";
 static char* g_token_diagnostics_file = NULL;
-static bool g_token_diagnostics_requested = true; /* Diagnostics shown by default */
+static bool g_token_diagnostics_requested = true;
 
 void cleanup(void);
 
-/* Structure to hold settings parsed directly from the config file */
-/* Global flag for effective copy_to_clipboard setting - default is true (clipboard) */
 static bool g_effective_copy_to_clipboard = true;
-/* Store argv[0] for fallback executable path resolution */
 static const char* g_argv0 = NULL;
-/* Output file path when using -o with argument */
 static char* g_output_file = NULL;
 
-/* Global arena allocator */
-/* Reserve 64 MiB for all allocations used by the application */
-/* This avoids frequent malloc/free calls and simplifies cleanup. */
-
-/* Initialized in main() */
-/* Freed in cleanup() */
- /* ========================= NEW HELPERS ========================= */
-
-/* Include time.h for UUID generation */
 #include <time.h>
-#include <sys/time.h> /* For gettimeofday() */
-#include <sys/types.h> /* For getpwuid/struct passwd */
-#include <pwd.h> /* For getpwuid/struct passwd */
+#include <sys/time.h>
+#include <sys/types.h>
+#include <pwd.h>
 
-/* Fatal error helper: prints message to stderr, performs cleanup, and exits. */
-/* Marked __attribute__((noreturn)) to inform the compiler this function never returns, */
-/* potentially enabling optimizations and improving static analysis. */
 __attribute__((noreturn)) static void fatal(const char* fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
-    /* Use vfprintf directly to stderr for error messages. */
     vfprintf(stderr, fmt, ap);
-    /* Ensure a newline terminates the error message. */
     fputc('\n', stderr);
     va_end(ap);
-    /* Explicitly call cleanup before exiting to ensure resources are released, */
-    /* normalizing the failure path as per the pragmatic principles. */
     cleanup();
-    /* Use _Exit to terminate immediately without invoking further atexit handlers */
-    /* or flushing stdio buffers, which can be important for robustness, */
-    /* especially if the error occurred within complex signal handlers or */
-    /* if stdio state is corrupted. */
     _Exit(EXIT_FAILURE);
 }
 
-/**
- * generate_prompt_uuid() - Generate a timestamp-based UUID for prompt storage
- * 
- * Format: YYYYMMDD-HHMMSS-XXXXXX where XXXXXX is a random 6-character suffix
- * Returns: UUID string allocated from arena, or NULL on failure
- */
+
 static char* generate_prompt_uuid(Arena* arena)
 {
     struct timeval tv;
@@ -108,7 +74,6 @@ static char* generate_prompt_uuid(Arena* arena)
         return NULL;
     }
     
-    /* Format: YYYYMMDD-HHMMSS-XXXXXX (22 chars + null terminator) */
     size_t uuid_len = 23;
     char* uuid = arena_push_array_safe(arena, char, uuid_len);
     if (!uuid)
@@ -116,31 +81,24 @@ static char* generate_prompt_uuid(Arena* arena)
         return NULL;
     }
     
-    /* Generate date/time portion (16 chars: YYYYMMDD-HHMMSS-) */
     strftime(uuid, uuid_len, "%Y%m%d-%H%M%S-", tm_info);
     
-    /* Generate random 6-character suffix using tv_usec for better randomness */
     unsigned int seed = (unsigned int)(tv.tv_usec ^ getpid() ^ tv.tv_sec);
     const char* chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     
     for (int i = 0; i < 6; i++)
     {
-        seed = seed * 1103515245 + 12345; /* Simple LCG */
+        seed = seed * 1103515245 + 12345;
         uuid[16 + i] = chars[seed % 62];
     }
-    uuid[22] = '\0'; /* Ensure null termination */
+    uuid[22] = '\0';
     
     return uuid;
 }
 
-/**
- * ensure_prompts_dir() - Create the prompts storage directory if it doesn't exist
- *
- * Returns: Path to prompts directory (from arena), or NULL on failure
- */
+
 static char* ensure_prompts_dir(Arena* arena)
 {
-    /* Get the config base directory */
     char config_base[MAX_PATH];
     const char* home = getenv("HOME");
     const char* xdg_config = getenv("XDG_CONFIG_HOME");
@@ -163,18 +121,14 @@ static char* ensure_prompts_dir(Arena* arena)
         snprintf(config_base, sizeof(config_base), "%s/.config/llm_ctx", pw->pw_dir);
     }
     
-    /* Construct prompts directory path */
     char prompts_dir[MAX_PATH];
     snprintf(prompts_dir, sizeof(prompts_dir), "%s/prompts", config_base);
     
-    /* Create directory recursively if it doesn't exist */
     struct stat st;
     if (stat(prompts_dir, &st) != 0)
     {
-        /* Directory doesn't exist, create it */
         if (mkdir(prompts_dir, 0755) != 0)
         {
-            /* Try creating parent directory first */
             if (mkdir(config_base, 0755) != 0 && errno != EEXIST)
             {
                 fprintf(stderr, "Warning: Could not create config directory %s: %s\n", 
@@ -196,18 +150,12 @@ static char* ensure_prompts_dir(Arena* arena)
         return NULL;
     }
     
-    /* Return the path from arena */
     return arena_strdup_safe(arena, prompts_dir);
 }
 
-/* Forward declaration for slurp_stream used in load_prompt */
 static char* slurp_stream(FILE* fp);
 
-/**
- * save_prompt() - Save a generated prompt to disk with metadata
- *
- * Returns: UUID string on success, NULL on failure. UUID is from arena.
- */
+
 static char* save_prompt(const char* content, int argc, char* argv[], 
                         char** processed_files, int num_processed_files,
                         Arena* arena)
@@ -217,25 +165,21 @@ static char* save_prompt(const char* content, int argc, char* argv[],
         return NULL;
     }
 
-    /* Get prompts directory */
     char* prompts_dir = ensure_prompts_dir(arena);
     if (!prompts_dir)
     {
         return NULL;
     }
 
-    /* Generate UUID */
     char* uuid = generate_prompt_uuid(arena);
     if (!uuid)
     {
         return NULL;
     }
 
-    /* Construct file path */
     char prompt_path[MAX_PATH];
     snprintf(prompt_path, sizeof(prompt_path), "%s/%s", prompts_dir, uuid);
     
-    /* Open file for writing */
     FILE* fp = fopen(prompt_path, "w");
     if (!fp)
     {
@@ -244,17 +188,14 @@ static char* save_prompt(const char* content, int argc, char* argv[],
         return NULL;
     }
 
-    /* Get current time for timestamp */
     time_t now = time(NULL);
     char timestamp[32];
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S UTC", gmtime(&now));
 
-    /* Write metadata header */
     fprintf(fp, "# llm_ctx saved prompt\n");
     fprintf(fp, "# UUID: %s\n", uuid);
     fprintf(fp, "# Saved: %s\n", timestamp);
     
-    /* Write CLI arguments */
     fprintf(fp, "# CLI:");
     for (int i = 0; i < argc; i++)
     {
@@ -262,11 +203,9 @@ static char* save_prompt(const char* content, int argc, char* argv[],
     }
     fprintf(fp, "\n");
     
-    /* Write processed files info */
     fprintf(fp, "# Files: %d files processed\n", num_processed_files);
     fprintf(fp, "#\n");
     
-    /* Add file list if any files were processed */
     if (num_processed_files > 0 && processed_files)
     {
         fprintf(fp, "<file_list>\n");
@@ -278,7 +217,6 @@ static char* save_prompt(const char* content, int argc, char* argv[],
         fprintf(fp, "\n");
     }
     
-    /* Write the actual content */
     if (fprintf(fp, "%s", content) < 0)
     {
         fprintf(stderr, "Warning: Failed to write prompt content to %s: %s\n", 
@@ -297,11 +235,7 @@ static char* save_prompt(const char* content, int argc, char* argv[],
     return uuid;
 }
 
-/**
- * load_prompt() - Load a saved prompt by UUID
- *
- * Returns: Content string on success, NULL on failure. Content is from arena.
- */
+
 static char* load_prompt(const char* uuid, Arena* arena)
 {
     if (!uuid || !arena)
@@ -309,14 +243,12 @@ static char* load_prompt(const char* uuid, Arena* arena)
         return NULL;
     }
 
-    /* Validate UUID format (basic check for valid characters and length) */
     size_t uuid_len = strlen(uuid);
     if (uuid_len < 16 || uuid_len > 64)
     {
         return NULL;
     }
     
-    /* Check for valid characters: alphanumeric and dash */
     for (size_t i = 0; i < uuid_len; i++)
     {
         char c = uuid[i];
@@ -326,32 +258,27 @@ static char* load_prompt(const char* uuid, Arena* arena)
         }
     }
 
-    /* Get prompts directory */
     char* prompts_dir = ensure_prompts_dir(arena);
     if (!prompts_dir)
     {
         return NULL;
     }
 
-    /* Construct file path */
     char prompt_path[MAX_PATH];
     snprintf(prompt_path, sizeof(prompt_path), "%s/%s", prompts_dir, uuid);
 
-    /* Check if file exists and is readable */
     struct stat st;
     if (stat(prompt_path, &st) != 0 || !S_ISREG(st.st_mode))
     {
-        return NULL; /* File doesn't exist or is not a regular file */
+        return NULL;
     }
 
-    /* Read the prompt file */
     FILE* fp = fopen(prompt_path, "r");
     if (!fp)
     {
         return NULL;
     }
 
-    /* Skip metadata lines (lines starting with #) */
     char line[MAX_PATH];
     long content_start = 0;
     
@@ -359,7 +286,6 @@ static char* load_prompt(const char* uuid, Arena* arena)
     {
         if (line[0] != '#')
         {
-            /* Found the start of content */
             content_start = ftell(fp) - strlen(line);
             break;
         }
@@ -367,27 +293,20 @@ static char* load_prompt(const char* uuid, Arena* arena)
 
     if (content_start == 0)
     {
-        /* No content found or file is all metadata */
         fclose(fp);
         return NULL;
     }
 
-    /* Seek to content start */
     fseek(fp, content_start, SEEK_SET);
 
-    /* Read rest of file into memory using slurp_stream */
     char* content = slurp_stream(fp);
     fclose(fp);
 
     return content;
 }
 
-/**
- * get_executable_dir() - Find binary directory for config search
- *
- * WHY: enables copy-anywhere workflows by searching for .llm_ctx.conf
- * next to the binary, avoiding $HOME/etc pollution.
- */
+/* WHY: enables copy-anywhere workflows by searching for .llm_ctx.conf
+   next to the binary, avoiding $HOME/etc pollution. */
 char* get_executable_dir(void)
 {
     static char* cached = NULL;
@@ -400,18 +319,16 @@ char* get_executable_dir(void)
 #ifdef __linux__
     ssize_t len = readlink("/proc/self/exe", pathbuf, sizeof(pathbuf) - 1);
     if (len <= 0)
-        return NULL; /* Error or empty path */
+        return NULL;
     pathbuf[len] = '\0';
 #elif defined(__APPLE__)
     uint32_t size = sizeof(pathbuf);
     if (_NSGetExecutablePath(pathbuf, &size) != 0)
-        return NULL; /* buffer too small – very unlikely */
+        return NULL;
 #else
-    /* POSIX fallback: Use argv[0] */
     if (!g_argv0)
         return NULL;
 
-    /* If argv[0] contains a slash, use it directly */
     if (strchr(g_argv0, '/'))
     {
         strncpy(pathbuf, g_argv0, sizeof(pathbuf) - 1);
@@ -419,13 +336,11 @@ char* get_executable_dir(void)
     }
     else
     {
-        /* Otherwise, search in PATH */
         fprintf(stderr, "Debug: No absolute path in argv[0], using fallback\n");
         return NULL;
     }
 #endif
 
-    /* Resolve symlinks, ., and .. components to get the actual binary location */
     if (!realpath(pathbuf, resolved_path))
     {
         fprintf(stderr, "Debug: Failed to resolve real path for '%s': %s\n", pathbuf,
@@ -433,10 +348,8 @@ char* get_executable_dir(void)
         return NULL;
     }
 
-    /* Get the directory component */
-    char* dir = dirname(resolved_path); /* modifies in-place */
+    char* dir = dirname(resolved_path);
 
-    /* Use arena.h functions to allocate memory from the arena */
     size_t dir_len = strlen(dir) + 1;
     cached = arena_push_array(&g_arena, char, dir_len);
     if (cached)
@@ -447,19 +360,16 @@ char* get_executable_dir(void)
     return cached;
 }
 
-/* ========================= EXISTING CODE ======================= */
+
 
 #define MAX_PATH 4096
-#define BINARY_CHECK_SIZE 1024 /* Bytes to check for binary detection */
+#define BINARY_CHECK_SIZE 1024
 #define TEMP_FILE_TEMPLATE "/tmp/llm_ctx_XXXXXX"
-#define MAX_PATTERNS 64 /* Maximum number of patterns to support */
-#define MAX_FILES 4096  /* Maximum number of files to process */
-/* Increased buffer size to 80MB to support larger contexts (10x increase from 8MB) */
-#define STDIN_BUFFER_SIZE (80 * 1024 * 1024) /* 80MB buffer for stdin content */
-/* Clipboard size limit - most clipboard helpers fail or block beyond 8MB */
-#define CLIPBOARD_SOFT_MAX (8 * 1024 * 1024) /* 8MB known safe bound for clipboard */
+#define MAX_PATTERNS 64
+#define MAX_FILES 4096
+#define STDIN_BUFFER_SIZE (80 * 1024 * 1024)
+#define CLIPBOARD_SOFT_MAX (8 * 1024 * 1024)
 
-/* Structure to hold file information for the tree */
 typedef struct
 {
     char path[MAX_PATH];
@@ -467,16 +377,15 @@ typedef struct
     bool is_dir;
 } FileInfo;
 
-/* FileRank structure for relevance scoring */
 typedef struct
 {
-    const char* path; /* shares memory with processed_files[i] */
-    double score;     /* relevance score */
-    size_t bytes;     /* cached to avoid stat() twice */
-    size_t tokens;    /* set later by tokenizer */
+    const char* path;
+    double score;
+    size_t bytes;
+    size_t tokens;
 } FileRank;
 
-/* Function declarations with proper prototypes */
+
 void show_help(void);
 bool collect_file(const char* filepath);
 bool output_file_content(const char* filepath, FILE* output);
@@ -493,8 +402,7 @@ void build_tree_recursive(char** paths, int count, int level, char* prefix,
                           const char* path_prefix);
 void rank_files(const char* query, FileRank* ranks, int num_files);
 
-/* Read entire FILE* into a NUL-terminated buffer.
- * Uses arena allocation. Returns NULL on OOM or read error. */
+
 static char* slurp_stream(FILE* fp)
 {
     size_t mark = arena_get_mark(&g_arena);
@@ -506,25 +414,20 @@ static char* slurp_stream(FILE* fp)
     while ((c = fgetc(fp)) != EOF)
     {
         if (len + 1 >= cap)
-        { /* +1 for the potential NUL terminator */
-            /* Check for potential size_t overflow before doubling. */
+        {
             if (cap > SIZE_MAX / 2)
             {
-                errno = ENOMEM; /* Indicate memory exhaustion due to overflow */
+                errno = ENOMEM;
                 return NULL;
             }
             size_t new_cap = cap * 2;
-            /* Create a new larger buffer */
             char* tmp = arena_push_array_safe(&g_arena, char, new_cap);
-            /* Copy existing content */
             memcpy(tmp, buf, len);
-            /* Use the new buffer */
             buf = tmp;
             cap = new_cap;
         }
         buf[len++] = (char)c;
 
-        /* Warn once when input exceeds STDIN_BUFFER_SIZE */
         if (!warning_issued && len > STDIN_BUFFER_SIZE)
         {
             fprintf(stderr,
@@ -534,90 +437,77 @@ static char* slurp_stream(FILE* fp)
             warning_issued = true;
         }
     }
-    /* Ensure buffer is null-terminated *before* checking ferror. */
     buf[len] = '\0';
 
-    /* Check for read errors *after* attempting to read the whole stream. */
     if (ferror(fp))
     {
-        int saved_errno = errno;        /* Preserve errno from the failed I/O operation. */
-        arena_set_mark(&g_arena, mark); /* discard */
-        errno = saved_errno;            /* Restore errno. */
+        int saved_errno = errno;
+        arena_set_mark(&g_arena, mark);
+        errno = saved_errno;
         return NULL;
     }
     return buf;
 }
 
-/* Convenience: slurp a *file*.  Returns NULL (and sets errno) on error. */
+
 static char* slurp_file(const char* path)
 {
     FILE* fp = fopen(path, "r");
     if (!fp)
     {
-        /* errno is set by fopen */
         return NULL;
     }
     size_t mark = arena_get_mark(&g_arena);
     char* txt = slurp_stream(fp);
-    int slurp_errno = errno; /* Capture errno *after* slurp_stream */
+    int slurp_errno = errno;
 
     if (fclose(fp) != 0)
     {
-        /* If fclose fails, prioritize its errno, unless slurp_stream already failed. */
         if (txt != NULL)
         {
             arena_set_mark(&g_arena, mark);
-            /* errno is now set by fclose */
             return NULL;
         }
-        /* If slurp failed AND fclose failed, keep the slurp_errno */
         errno = slurp_errno;
-        /* txt is already NULL, buffer already freed by slurp_stream */
         return NULL;
     }
 
-    /* If fclose succeeded, return the result of slurp_stream, restoring its errno */
     errno = slurp_errno;
     return txt;
 }
 
-/* Helper function to expand tilde (~) in file paths */
+
 static char* expand_tilde_path(const char* path)
 {
     if (!path || path[0] != '~')
     {
-        /* No tilde to expand, return a copy of the original path */
         return arena_strdup_safe(&g_arena, path);
     }
 
     glob_t glob_result;
     int glob_flags = GLOB_TILDE;
 
-    /* Use glob to expand the tilde */
     int glob_status = glob(path, glob_flags, NULL, &glob_result);
     if (glob_status != 0)
     {
-        /* glob failed - return NULL and preserve errno */
         if (glob_status == GLOB_NOMATCH)
         {
-            errno = ENOENT; /* File not found */
+            errno = ENOENT;
         }
         else
         {
-            errno = EINVAL; /* Invalid path */
+            errno = EINVAL;
         }
         return NULL;
     }
 
-    /* Check that we got exactly one match */
     if (glob_result.gl_pathc != 1)
     {
         globfree(&glob_result);
-        errno = EINVAL; /* Ambiguous path */
+        errno = EINVAL;
         return NULL;
     }
 
-    /* Copy the expanded path */
     char* expanded_path = arena_strdup_safe(&g_arena, glob_result.gl_pathv[0]);
     globfree(&glob_result);
 
@@ -637,7 +527,6 @@ bool file_already_in_tree(const char* filepath);
 void add_directory_tree(const char* base_dir);
 void add_directory_tree_with_depth(const char* base_dir, int current_depth);
 
-/* Special file structure for stdin content */
 typedef struct
 {
     char filename[MAX_PATH];
@@ -645,21 +534,20 @@ typedef struct
     char* content;
 } SpecialFile;
 
-/* Global variables - used to track state across functions */
 char temp_file_path[MAX_PATH];
 FILE* temp_file = NULL;
 int files_found = 0;
-char* processed_files[MAX_FILES]; /* Track processed files to avoid duplicates */
+char* processed_files[MAX_FILES];
 int num_processed_files = 0;
 FileInfo file_tree[MAX_FILES];
 int file_tree_count = 0;
-FILE* tree_file = NULL;        /* For the file tree output */
-char tree_file_path[MAX_PATH]; /* Path to the tree file */
-SpecialFile special_files[10]; /* Support up to 10 special files */
+FILE* tree_file = NULL;
+char tree_file_path[MAX_PATH];
+SpecialFile special_files[10];
 int num_special_files = 0;
-static int file_mode = 0;                /* 0 = stdin mode, 1 = file mode (-f or @-) */
-char* user_instructions = NULL;          /* Allocated from arena */
-static char* system_instructions = NULL; /* Allocated from arena */
+static int file_mode = 0;
+char* user_instructions = NULL;
+static char* system_instructions = NULL;
 
 /* Default system instructions based on traits of pragmatic developers */
 static const char* DEFAULT_SYSTEM_INSTRUCTIONS =
@@ -704,29 +592,24 @@ static bool g_keywords_flag_used = false; /* Track if --keywords was used */
 static char* g_cli_exclude_patterns[MAX_CLI_EXCLUDE_PATTERNS];
 static int g_cli_exclude_count = 0;
 
-/** Parse keywords specification from string */
 static bool parse_keywords(const char* spec)
 {
     if (!spec || !*spec)
     {
-        return true; /* Empty spec is valid */
+        return true;
     }
 
-    /* Reset keywords */
     g_kw_boosts_len = 0;
 
-    /* Make a copy to tokenize */
     char* str_copy = arena_strdup_safe(&g_arena, spec);
     if (!str_copy)
         return false;
 
-    /* Split by comma or space */
     char* saveptr;
     char* token_spec = strtok_r(str_copy, ", ", &saveptr);
 
     while (token_spec)
     {
-        /* Check limit */
         if (g_kw_boosts_len >= MAX_KEYWORDS)
         {
             fprintf(stderr,
@@ -734,9 +617,8 @@ static bool parse_keywords(const char* spec)
                     MAX_KEYWORDS, token_spec);
             break;
         }
-        /* Check for colon separator for weight */
         char* colon = strchr(token_spec, ':');
-        double factor = 2.0; /* Default factor */
+        double factor = 2.0;
 
         if (colon)
         {
@@ -745,7 +627,6 @@ static bool parse_keywords(const char* spec)
             char* endptr;
             factor = strtod(weight_str, &endptr);
 
-            /* Validate factor */
             if (*endptr != '\0')
             {
                 fprintf(stderr, "Warning: Invalid factor '%s' for keyword '%s', using default 2\n",
@@ -761,28 +642,23 @@ static bool parse_keywords(const char* spec)
             }
         }
 
-        /* Apply base multiplier to get actual weight */
         double weight = factor * KEYWORD_BASE_MULTIPLIER;
 
-        /* Skip empty tokens */
         if (!*token_spec)
         {
             token_spec = strtok_r(NULL, ", ", &saveptr);
             continue;
         }
 
-        /* Tokenize and store */
         char* lowercase_token = arena_strdup_safe(&g_arena, token_spec);
         if (!lowercase_token)
             return false;
 
-        /* Convert to lowercase */
         for (char* p = lowercase_token; *p; p++)
         {
             *p = tolower((unsigned char)*p);
         }
 
-        /* Check for duplicates */
         bool is_duplicate = false;
         for (int i = 0; i < g_kw_boosts_len; i++)
         {
@@ -800,7 +676,6 @@ static bool parse_keywords(const char* spec)
 
         if (!is_duplicate)
         {
-            /* Store the keyword */
             g_kw_boosts[g_kw_boosts_len].token = lowercase_token;
             g_kw_boosts[g_kw_boosts_len].weight = weight;
             g_kw_boosts_len++;

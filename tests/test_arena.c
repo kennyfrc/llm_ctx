@@ -8,7 +8,6 @@
 TEST(test_arena_create_destroy) {
     Arena a = arena_create(MiB(1));
     
-    // Check if arena was created successfully
     ASSERT("Arena base allocated", a.base != NULL);
     ASSERT("Arena size correct", a.size == MiB(1));
     ASSERT("Arena pos initialized", a.pos == 0);
@@ -23,7 +22,6 @@ TEST(test_arena_allocations) {
     Arena a = arena_create(KiB(4));
     ASSERT("Arena created", a.base != NULL);
     
-    // Allocate a single int
     int *i = arena_push(&a, int);
     ASSERT("Single int allocated", i != NULL);
     *i = 42;
