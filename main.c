@@ -56,7 +56,13 @@ static char* g_output_file = NULL;
 
 /* Initialized in main() */
 /* Freed in cleanup() */
-/* ========================= NEW HELPERS ========================= */
+ /* ========================= NEW HELPERS ========================= */
+
+/* Include time.h for UUID generation */
+#include <time.h>
+#include <sys/time.h> /* For gettimeofday() */
+#include <sys/types.h> /* For getpwuid/struct passwd */
+#include <pwd.h> /* For getpwuid/struct passwd */
 
 /* Fatal error helper: prints message to stderr, performs cleanup, and exits. */
 /* Marked __attribute__((noreturn)) to inform the compiler this function never returns, */
@@ -78,6 +84,302 @@ __attribute__((noreturn)) static void fatal(const char* fmt, ...)
     /* especially if the error occurred within complex signal handlers or */
     /* if stdio state is corrupted. */
     _Exit(EXIT_FAILURE);
+}
+
+/**
+ * generate_prompt_uuid() - Generate a timestamp-based UUID for prompt storage
+ * 
+ * Format: YYYYMMDD-HHMMSS-XXXXXX where XXXXXX is a random 6-character suffix
+ * Returns: UUID string allocated from arena, or NULL on failure
+ */
+static char* generate_prompt_uuid(Arena* arena)
+{
+    struct timeval tv;
+    struct tm* tm_info;
+    
+    if (gettimeofday(&tv, NULL) != 0)
+    {
+        return NULL;
+    }
+    
+    tm_info = localtime(&tv.tv_sec);
+    if (!tm_info)
+    {
+        return NULL;
+    }
+    
+    /* Format: YYYYMMDD-HHMMSS-XXXXXX (22 chars + null terminator) */
+    size_t uuid_len = 23;
+    char* uuid = arena_push_array_safe(arena, char, uuid_len);
+    if (!uuid)
+    {
+        return NULL;
+    }
+    
+    /* Generate date/time portion (16 chars: YYYYMMDD-HHMMSS-) */
+    strftime(uuid, uuid_len, "%Y%m%d-%H%M%S-", tm_info);
+    
+    /* Generate random 6-character suffix using tv_usec for better randomness */
+    unsigned int seed = (unsigned int)(tv.tv_usec ^ getpid() ^ tv.tv_sec);
+    const char* chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    
+    for (int i = 0; i < 6; i++)
+    {
+        seed = seed * 1103515245 + 12345; /* Simple LCG */
+        uuid[16 + i] = chars[seed % 62];
+    }
+    uuid[22] = '\0'; /* Ensure null termination */
+    
+    return uuid;
+}
+
+/**
+ * ensure_prompts_dir() - Create the prompts storage directory if it doesn't exist
+ *
+ * Returns: Path to prompts directory (from arena), or NULL on failure
+ */
+static char* ensure_prompts_dir(Arena* arena)
+{
+    /* Get the config base directory */
+    char config_base[MAX_PATH];
+    const char* home = getenv("HOME");
+    const char* xdg_config = getenv("XDG_CONFIG_HOME");
+    
+    if (xdg_config)
+    {
+        snprintf(config_base, sizeof(config_base), "%s/llm_ctx", xdg_config);
+    }
+    else if (home)
+    {
+        snprintf(config_base, sizeof(config_base), "%s/.config/llm_ctx", home);
+    }
+    else
+    {
+        struct passwd* pw = getpwuid(getuid());
+        if (!pw || !pw->pw_dir)
+        {
+            return NULL;
+        }
+        snprintf(config_base, sizeof(config_base), "%s/.config/llm_ctx", pw->pw_dir);
+    }
+    
+    /* Construct prompts directory path */
+    char prompts_dir[MAX_PATH];
+    snprintf(prompts_dir, sizeof(prompts_dir), "%s/prompts", config_base);
+    
+    /* Create directory recursively if it doesn't exist */
+    struct stat st;
+    if (stat(prompts_dir, &st) != 0)
+    {
+        /* Directory doesn't exist, create it */
+        if (mkdir(prompts_dir, 0755) != 0)
+        {
+            /* Try creating parent directory first */
+            if (mkdir(config_base, 0755) != 0 && errno != EEXIST)
+            {
+                fprintf(stderr, "Warning: Could not create config directory %s: %s\n", 
+                        config_base, strerror(errno));
+                return NULL;
+            }
+            
+            if (mkdir(prompts_dir, 0755) != 0)
+            {
+                fprintf(stderr, "Warning: Could not create prompts directory %s: %s\n", 
+                        prompts_dir, strerror(errno));
+                return NULL;
+            }
+        }
+    }
+    else if (!S_ISDIR(st.st_mode))
+    {
+        fprintf(stderr, "Warning: %s exists but is not a directory\n", prompts_dir);
+        return NULL;
+    }
+    
+    /* Return the path from arena */
+    return arena_strdup_safe(arena, prompts_dir);
+}
+
+/* Forward declaration for slurp_stream used in load_prompt */
+static char* slurp_stream(FILE* fp);
+
+/**
+ * save_prompt() - Save a generated prompt to disk with metadata
+ *
+ * Returns: UUID string on success, NULL on failure. UUID is from arena.
+ */
+static char* save_prompt(const char* content, int argc, char* argv[], 
+                        char** processed_files, int num_processed_files,
+                        Arena* arena)
+{
+    if (!content || !arena)
+    {
+        return NULL;
+    }
+
+    /* Get prompts directory */
+    char* prompts_dir = ensure_prompts_dir(arena);
+    if (!prompts_dir)
+    {
+        return NULL;
+    }
+
+    /* Generate UUID */
+    char* uuid = generate_prompt_uuid(arena);
+    if (!uuid)
+    {
+        return NULL;
+    }
+
+    /* Construct file path */
+    char prompt_path[MAX_PATH];
+    snprintf(prompt_path, sizeof(prompt_path), "%s/%s", prompts_dir, uuid);
+    
+    /* Open file for writing */
+    FILE* fp = fopen(prompt_path, "w");
+    if (!fp)
+    {
+        fprintf(stderr, "Warning: Could not save prompt to %s: %s\n", 
+                prompt_path, strerror(errno));
+        return NULL;
+    }
+
+    /* Get current time for timestamp */
+    time_t now = time(NULL);
+    char timestamp[32];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S UTC", gmtime(&now));
+
+    /* Write metadata header */
+    fprintf(fp, "# llm_ctx saved prompt\n");
+    fprintf(fp, "# UUID: %s\n", uuid);
+    fprintf(fp, "# Saved: %s\n", timestamp);
+    
+    /* Write CLI arguments */
+    fprintf(fp, "# CLI:");
+    for (int i = 0; i < argc; i++)
+    {
+        fprintf(fp, " %s", argv[i]);
+    }
+    fprintf(fp, "\n");
+    
+    /* Write processed files info */
+    fprintf(fp, "# Files: %d files processed\n", num_processed_files);
+    fprintf(fp, "#\n");
+    
+    /* Add file list if any files were processed */
+    if (num_processed_files > 0 && processed_files)
+    {
+        fprintf(fp, "<file_list>\n");
+        for (int i = 0; i < num_processed_files; i++)
+        {
+            fprintf(fp, "%s\n", processed_files[i]);
+        }
+        fprintf(fp, "</file_list>\n");
+        fprintf(fp, "\n");
+    }
+    
+    /* Write the actual content */
+    if (fprintf(fp, "%s", content) < 0)
+    {
+        fprintf(stderr, "Warning: Failed to write prompt content to %s: %s\n", 
+                prompt_path, strerror(errno));
+        fclose(fp);
+        return NULL;
+    }
+    
+    if (fclose(fp) != 0)
+    {
+        fprintf(stderr, "Warning: Error closing prompt file %s: %s\n", 
+                prompt_path, strerror(errno));
+        return NULL;
+    }
+
+    return uuid;
+}
+
+/**
+ * load_prompt() - Load a saved prompt by UUID
+ *
+ * Returns: Content string on success, NULL on failure. Content is from arena.
+ */
+static char* load_prompt(const char* uuid, Arena* arena)
+{
+    if (!uuid || !arena)
+    {
+        return NULL;
+    }
+
+    /* Validate UUID format (basic check for valid characters and length) */
+    size_t uuid_len = strlen(uuid);
+    if (uuid_len < 16 || uuid_len > 64)
+    {
+        return NULL;
+    }
+    
+    /* Check for valid characters: alphanumeric and dash */
+    for (size_t i = 0; i < uuid_len; i++)
+    {
+        char c = uuid[i];
+        if (!(isalnum(c) || c == '-'))
+        {
+            return NULL;
+        }
+    }
+
+    /* Get prompts directory */
+    char* prompts_dir = ensure_prompts_dir(arena);
+    if (!prompts_dir)
+    {
+        return NULL;
+    }
+
+    /* Construct file path */
+    char prompt_path[MAX_PATH];
+    snprintf(prompt_path, sizeof(prompt_path), "%s/%s", prompts_dir, uuid);
+
+    /* Check if file exists and is readable */
+    struct stat st;
+    if (stat(prompt_path, &st) != 0 || !S_ISREG(st.st_mode))
+    {
+        return NULL; /* File doesn't exist or is not a regular file */
+    }
+
+    /* Read the prompt file */
+    FILE* fp = fopen(prompt_path, "r");
+    if (!fp)
+    {
+        return NULL;
+    }
+
+    /* Skip metadata lines (lines starting with #) */
+    char line[MAX_PATH];
+    long content_start = 0;
+    
+    while (fgets(line, sizeof(line), fp) != NULL)
+    {
+        if (line[0] != '#')
+        {
+            /* Found the start of content */
+            content_start = ftell(fp) - strlen(line);
+            break;
+        }
+    }
+
+    if (content_start == 0)
+    {
+        /* No content found or file is all metadata */
+        fclose(fp);
+        return NULL;
+    }
+
+    /* Seek to content start */
+    fseek(fp, content_start, SEEK_SET);
+
+    /* Read rest of file into memory using slurp_stream */
+    char* content = slurp_stream(fp);
+    fclose(fp);
+
+    return content;
 }
 
 /**
@@ -1270,6 +1572,7 @@ bool is_binary(FILE* file)
 void show_help(void)
 {
     printf("Usage: llm_ctx [OPTIONS] [FILE...]\n");
+    printf("       llm_ctx get <UUID>\n");
     printf("Format files for LLM code analysis with appropriate tags.\n\n");
     printf("Options:\n");
     printf("  -c TEXT        Add user instruction text wrapped in <user_instructions> tags\n");
@@ -1353,6 +1656,12 @@ void show_help(void)
     printf("  llm_ctx -f src/** -x 'src/generated/**' -x '*.min.js'\n\n");
     printf("  # Include directory but exclude subdirectory\n");
     printf("  llm_ctx -f javascripts/ -x 'javascripts/lib/cami/**'\n\n");
+    printf("  # Generate and save a prompt (automatically copied to clipboard)\n");
+    printf("  git diff | llm_ctx -c \"Review changes\"\n");
+    printf("  # Output will include: saved as 20241117-192834-XXXXXX\n\n");
+    printf("  # Retrieve a saved prompt by UUID\n");
+    printf("  llm_ctx get 20241117-192834-XXXXXX\n");
+    printf("  # Output: Retrieved and copied prompt\n\n");
     exit(0);
 }
 
@@ -2735,6 +3044,39 @@ int main(int argc, char* argv[])
     if (!g_arena.base)
         fatal("Failed to allocate arena");
 
+    /* Check for 'get' subcommand before other processing */
+    if (argc > 1 && strcmp(argv[1], "get") == 0)
+    {
+        if (argc < 3)
+        {
+            fprintf(stderr, "Usage: %s get <uuid>\n", argv[0]);
+            cleanup();
+            return 1;
+        }
+        
+        char* content = load_prompt(argv[2], &g_arena);
+        if (!content)
+        {
+            fprintf(stderr, "Prompt not found: %s\n", argv[2]);
+            cleanup();
+            return 1;
+        }
+        
+        /* Copy to clipboard */
+        if (!copy_to_clipboard(content))
+        {
+            fprintf(stderr, "Clipboard copy failed; outputting to stdout.\n");
+            printf("%s", content);
+        }
+        else
+        {
+            fprintf(stderr, "Retrieved and copied prompt %s\n", argv[2]);
+        }
+        
+        cleanup();
+        return 0;
+    }
+
     /* Set executable directory for tokenizer library loading */
     char* exe_dir = get_executable_dir();
     if (exe_dir)
@@ -3619,6 +3961,13 @@ int main(int argc, char* argv[])
         {
             fclose(diag_out);
         }
+    }
+
+    /* --- Save prompt to disk --- */
+    char* saved_uuid = save_prompt(final_content, argc, argv, processed_files, num_processed_files, &g_arena);
+    if (saved_uuid)
+    {
+        fprintf(stderr, "Retrieve this prompt via llm_ctx get %s\n", saved_uuid);
     }
 
     /* --- Output Handling --- */
