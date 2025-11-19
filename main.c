@@ -420,8 +420,7 @@ void add_to_file_tree(const char* filepath);
 int compare_file_paths(const void* a, const void* b);
 char* find_common_prefix(void);
 void print_tree_node(const char* path, int level, bool is_last, const char* prefix);
-void build_tree_recursive(char** paths, int count, int level, char* prefix,
-                          const char* path_prefix);
+void build_tree_recursive(char** paths, int count, int level, const char* prefix);
 void rank_files(const char* query, FileRank* ranks, int num_files);
 
 
@@ -584,7 +583,7 @@ static bool g_filerank_debug = false;      /* --filerank-debug flag */
 static bool tree_only = false;             /* -T flag - filtered tree */
 static bool global_tree_only = false;      /* -t flag - global tree */
 static bool tree_only_output = false;      /* -O flag - tree only without file content */
-static int tree_max_depth = 4;             /* -L flag - default depth of 4 for web dev projects */
+static int tree_max_depth = 3;             /* -L flag - default depth of 3 for web dev projects */
 /* debug_mode defined in debug.c */
 
 /* FileRank weight configuration */
@@ -1187,102 +1186,101 @@ void print_tree_node(const char* path, int level, bool is_last, const char* pref
 }
 
 /** Build directory structure recursively */
-void build_tree_recursive(char** paths, int count, int level, char* prefix,
-                          const char* path_prefix __attribute__((unused)))
+void build_tree_recursive(char** paths, int count, int level, const char* prefix)
 {
-    if (count <= 0)
-        return;
-
-    /* Check if we've reached max depth for display */
-    if (level >= tree_max_depth)
+    if (count <= 0 || level >= tree_max_depth)
     {
         return;
     }
 
-    char current_dir[MAX_PATH] = "";
-
-    /* Find current directory for this level */
-    for (int i = 0; i < count; i++)
+    typedef struct TreeEntry
     {
+        int start;
+        int end;
+        bool is_dir;
+    } TreeEntry;
+
+    TreeEntry entries[MAX_FILES];
+    int entry_count = 0;
+
+    for (int i = 0; i < count && entry_count < MAX_FILES;)
+    {
+        TreeEntry* entry = &entries[entry_count];
+        entry->start = i;
+
         char* path = paths[i];
         char* slash = strchr(path, '/');
 
         if (slash)
         {
-            int dir_len = slash - path;
-            if (current_dir[0] == '\0')
+            entry->is_dir = true;
+            int dir_len = (int)(slash - path);
+            int j = i + 1;
+
+            while (j < count)
             {
-                strncpy(current_dir, path, dir_len);
-                current_dir[dir_len] = '\0';
-            }
-        }
-    }
-
-    /* First print files at current level */
-    for (int i = 0; i < count; i++)
-    {
-        if (strchr(paths[i], '/') == NULL)
-        {
-            fprintf(tree_file, "%s%s%s\n", prefix, (level > 0) ? "├── " : "", paths[i]);
-        }
-    }
-
-    /* Then process subdirectories */
-    for (int i = 0; i < count;)
-    {
-        char* slash = strchr(paths[i], '/');
-        if (!slash)
-        {
-            i++; /* Skip files, already processed */
-            continue;
-        }
-
-        int dir_len = slash - paths[i];
-        char dirname[MAX_PATH];
-        strncpy(dirname, paths[i], dir_len);
-        dirname[dir_len] = '\0';
-
-        /* Count how many entries are in this directory */
-        int subdir_count = 0;
-        for (int j = i; j < count; j++)
-        {
-            if (strncmp(paths[j], dirname, dir_len) == 0 && paths[j][dir_len] == '/')
-            {
-                subdir_count++;
-            }
-            else if (j > i)
-            {
-                break; /* No more entries in this directory */
-            }
-        }
-
-        if (subdir_count > 0)
-        {
-            /* Print directory entry */
-            fprintf(tree_file, "%s%s%s\n", prefix, (level > 0) ? "├── " : "", dirname);
-
-            /* Create new prefix for subdirectory items */
-            char new_prefix[MAX_PATH];
-            sprintf(new_prefix, "%s%s", prefix, (level > 0) ? "│   " : "");
-
-            /* Create path array for subdirectory items */
-            char* subdirs[MAX_FILES];
-            int subdir_idx = 0;
-
-            /* Extract paths relative to this subdirectory */
-            for (int j = i; j < i + subdir_count; j++)
-            {
-                subdirs[subdir_idx++] = paths[j] + dir_len + 1; /* Skip dirname and slash */
+                char* other = paths[j];
+                if (strncmp(other, path, dir_len) == 0 && other[dir_len] == '/')
+                {
+                    j++;
+                }
+                else
+                {
+                    break;
+                }
             }
 
-            /* Process subdirectory */
-            build_tree_recursive(subdirs, subdir_count, level + 1, new_prefix, dirname);
-
-            i += subdir_count;
+            entry->end = j;
         }
         else
         {
-            i++; /* Move to next entry */
+            entry->is_dir = false;
+            entry->end = i + 1;
+        }
+
+        entry_count++;
+        i = entry->end;
+    }
+
+    for (int idx = 0; idx < entry_count; idx++)
+    {
+        TreeEntry* entry = &entries[idx];
+        bool is_last = (idx == entry_count - 1);
+
+        fprintf(tree_file, "%s%s", prefix, is_last ? "└── " : "├── ");
+
+        if (entry->is_dir)
+        {
+            char* name_source = paths[entry->start];
+            char* slash = strchr(name_source, '/');
+            int dir_len = slash ? (int)(slash - name_source) : (int)strlen(name_source);
+
+            fprintf(tree_file, "%.*s\n", dir_len, name_source);
+
+            if (level + 1 >= tree_max_depth)
+            {
+                continue;
+            }
+
+            char child_prefix[MAX_PATH];
+            snprintf(child_prefix, sizeof(child_prefix), "%s%s", prefix, is_last ? "    " : "│   ");
+
+            char* child_paths[MAX_FILES];
+            int child_count = 0;
+            for (int j = entry->start; j < entry->end && child_count < MAX_FILES; j++)
+            {
+                char* child = strchr(paths[j], '/');
+                if (child && child[1] != '\0')
+                {
+                    child_paths[child_count++] = child + 1;
+                }
+            }
+
+            build_tree_recursive(child_paths, child_count, level + 1, child_prefix);
+        }
+        else
+        {
+            fprintf(tree_file, "%s\n", paths[entry->start]);
         }
     }
 }
@@ -1359,7 +1357,7 @@ void generate_file_tree(void)
     fprintf(tree_file, "%s\n", common_prefix);
 
     /* Build the tree recursively */
-    build_tree_recursive(paths, path_count, 0, "", common_prefix);
+    build_tree_recursive(paths, path_count, 0, "");
 
     /* common_prefix was allocated from the arena; no explicit free needed */
 

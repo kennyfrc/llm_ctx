@@ -570,6 +570,44 @@ TEST(test_file_tree_structure) {
     rmdir(TEST_DIR "/__include_tree");
 }
 
+TEST(test_file_tree_connectors) {
+    const char *tree_root = TEST_DIR "/__tree_visual";
+    const char *dir_a = TEST_DIR "/__tree_visual/__aa_dir";
+    const char *dir_b = TEST_DIR "/__tree_visual/__bb_dir";
+    const char *file_a = TEST_DIR "/__tree_visual/__aa_dir/__tv_alpha_child.txt";
+    const char *file_b = TEST_DIR "/__tree_visual/__bb_dir/__tv_beta_child.txt";
+    const char *root_leaf = TEST_DIR "/__tree_visual/__tv_root_leaf.txt";
+
+    mkdir(tree_root, 0755);
+    mkdir(dir_a, 0755);
+    mkdir(dir_b, 0755);
+
+    FILE *f = fopen(file_a, "w");
+    if (f) { fprintf(f, "alpha\n"); fclose(f); }
+    f = fopen(file_b, "w");
+    if (f) { fprintf(f, "beta\n"); fclose(f); }
+    f = fopen(root_leaf, "w");
+    if (f) { fprintf(f, "root leaf\n"); fclose(f); }
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "cd ./tmp/__llm_ctx_test && %s/llm_ctx -T -o --no-gitignore -f __tree_visual",
+             getenv("PWD"));
+    char *output = run_command(cmd);
+
+    ASSERT("Tree shows continuing trunk for non-final branches",
+           string_contains(output, "│   └── __tv_alpha_child.txt"));
+    ASSERT("Tree shows final corner connector for last root entry",
+           string_contains(output, "└── __tv_root_leaf.txt"));
+
+    unlink(file_a);
+    unlink(file_b);
+    unlink(root_leaf);
+    rmdir(dir_a);
+    rmdir(dir_b);
+    rmdir(tree_root);
+}
+
 
 /* Test recursive glob '* * / *' respecting .gitignore (prefixed) */
 TEST(test_cli_recursive_glob_all) {
@@ -1726,7 +1764,8 @@ int main(void) {
     RUN_TEST(test_cli_help_message);
     RUN_TEST(test_directory_handling);
     // test_file_tree_structure creates its own dirs/files, run it before recursive tests
-    RUN_TEST(test_file_tree_structure); 
+    RUN_TEST(test_file_tree_structure);
+    RUN_TEST(test_file_tree_connectors);
     RUN_TEST(test_cli_recursive_glob_all);
     RUN_TEST(test_cli_recursive_glob_specific);
     RUN_TEST(test_cli_recursive_glob_no_gitignore);
