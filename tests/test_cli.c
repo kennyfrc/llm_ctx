@@ -1330,9 +1330,11 @@ TEST(test_cli_s_default) {
     snprintf(cmd, sizeof(cmd), "cd %s && %s/llm_ctx -o -s -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
 
-    // With the new default system instructions, -s will always produce system instructions
-    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
-    ASSERT("Output contains default system instructions", string_contains(output, "You are pragmatic"));
+    // With system prompts disabled by default, bare -s shouldn't emit anything without config
+    ASSERT("Output does NOT contain <system_instructions>",
+           !string_contains(output, "<system_instructions>"));
+    ASSERT("Output does NOT contain default system instructions text",
+           !string_contains(output, "You are pragmatic"));
     // Ensure user instructions are not present unless -c is also used
     ASSERT("Output does NOT contain <user_instructions>", !string_contains(output, "<user_instructions>"));
     // Ensure file content is still present
@@ -1469,18 +1471,19 @@ TEST(test_cli_default_system_instructions) {
     char cmd[2048];
     
     /* Run llm_ctx without -s flag in an environment with no config file */
-    /* This should use the hardcoded default system instructions */
+    /* No system instructions should be emitted by default */
     snprintf(cmd, sizeof(cmd), "cd %s && LLM_CTX_NO_CONFIG=1 %s/llm_ctx -o - -f __regular.txt", TEST_DIR, getenv("PWD"));
     char *output = run_command(cmd);
     
-    /* Check that default system instructions are present */
-    ASSERT("Output contains <system_instructions>", string_contains(output, "<system_instructions>"));
-    ASSERT("Output contains default system instructions text", string_contains(output, "You are pragmatic, direct, and focused on simplicity"));
-    ASSERT("Output contains closing </system_instructions>", string_contains(output, "</system_instructions>"));
+    /* Check that no system instructions are emitted when none were provided */
+    ASSERT("Output does NOT contain <system_instructions>",
+           !string_contains(output, "<system_instructions>"));
+    ASSERT("Output does NOT contain default system instructions text",
+           !string_contains(output, "You are pragmatic, direct, and focused on simplicity"));
     ASSERT("Output contains regular file content", string_contains(output, "Regular file content"));
 }
 
-/* Test system instructions precedence: CLI > config > default */
+/* Test system instructions precedence: CLI > config */
 TEST(test_cli_system_instructions_precedence) {
     char cmd[2048];
     char config_path[1024];

@@ -570,11 +570,6 @@ static int file_mode = 0;
 char* user_instructions = NULL;
 static char* system_instructions = NULL;
 
-/* Default system instructions based on traits of pragmatic developers */
-static const char* DEFAULT_SYSTEM_INSTRUCTIONS =
-    "You are pragmatic, direct, and focused on simplicity. You prioritize elegant solutions "
-    "with minimal complexity, favor data-driven designs over excessive abstraction, and "
-    "communicate technical ideas clearly without unnecessary verbosity.";
 static bool want_editor_comments = false;  /* -e flag */
 static char* custom_response_guide = NULL; /* Custom response guide from -e argument */
 static bool raw_mode = false;              /* -R flag */
@@ -3623,12 +3618,6 @@ int main(int argc, char* argv[])
     /* OR if editor comments were requested (via -e) */
     /* OR if stdin was consumed by an option like -c @- or -s @- */
     allow_empty_context = c_flag_used || s_flag_used || e_flag_used || g_stdin_consumed_for_option;
-
-    /* Use default system instructions if none provided */
-    if (!system_instructions && !raw_mode)
-    {
-        system_instructions = arena_strdup_safe(&g_arena, DEFAULT_SYSTEM_INSTRUCTIONS);
-    }
 
     if (!raw_mode)
     {
