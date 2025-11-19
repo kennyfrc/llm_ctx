@@ -28,6 +28,7 @@ void test_cli_e_flag_custom_guide(void);
 void test_cli_exclude_pattern(void);
 void test_cli_exclude_multiple_patterns(void);
 void test_cli_exclude_with_glob(void);
+void test_cli_line_ranges(void);
 
 /* Set up the test environment */
 void setup_test_env(void) {
@@ -219,6 +220,63 @@ void setup_test_env(void) {
     f = fopen(TEST_DIR "/.git/objects/dummy", "w"); // Example file inside subdir
     if (f) { fprintf(f, "dummy object\n"); fclose(f); }
 
+}
+
+TEST(test_cli_line_ranges) {
+    char test_file[PATH_MAX];
+    snprintf(test_file, sizeof(test_file), "%s/__range_test.txt", TEST_DIR);
+
+    FILE *f = fopen(test_file, "w");
+    ASSERT("failed to create range test file", f != NULL);
+    fprintf(f, "Line 1\nLine 2\nLine 3\nLine 4\n");
+    fclose(f);
+
+    char cmd[2048];
+    char out_path[2048];
+    snprintf(out_path, sizeof(out_path), "%s/output.txt", TEST_DIR);
+
+    snprintf(cmd, sizeof(cmd), "./llm_ctx -o %s -f %s:2-3", out_path, test_file);
+    int status = system(cmd);
+    ASSERT("range 2-3 command did not exit normally", WIFEXITED(status));
+    ASSERT_EQUALS(0, WEXITSTATUS(status));
+
+    FILE *out = fopen(out_path, "r");
+    ASSERT("failed to open range output (2-3)", out != NULL);
+    static char buffer[327680];
+    size_t bytes_read = fread(buffer, 1, sizeof(buffer) - 1, out);
+    buffer[bytes_read] = '\0';
+    fclose(out);
+
+    ASSERT("missing Line 2 (2-3)", strstr(buffer, "Line 2") != NULL);
+    ASSERT("missing Line 3 (2-3)", strstr(buffer, "Line 3") != NULL);
+    ASSERT("should not include Line 1 (2-3)", strstr(buffer, "Line 1") == NULL);
+    ASSERT("should not include Line 4 (2-3)", strstr(buffer, "Line 4") == NULL);
+
+    /* Single line and open range */
+    snprintf(cmd, sizeof(cmd), "./llm_ctx -o %s -f %s:3", out_path, test_file);
+    status = system(cmd);
+    ASSERT("range single line command did not exit normally", WIFEXITED(status));
+    ASSERT_EQUALS(0, WEXITSTATUS(status));
+    out = fopen(out_path, "r");
+    ASSERT("failed to open range output (single line)", out != NULL);
+    bytes_read = fread(buffer, 1, sizeof(buffer) - 1, out);
+    buffer[bytes_read] = '\0';
+    fclose(out);
+    ASSERT("missing Line 3 (single line)", strstr(buffer, "Line 3") != NULL);
+    ASSERT("should not include Line 2 (single line)", strstr(buffer, "Line 2") == NULL);
+
+    snprintf(cmd, sizeof(cmd), "./llm_ctx -o %s -f %s:2-", out_path, test_file);
+    status = system(cmd);
+    ASSERT("range open-ended command did not exit normally", WIFEXITED(status));
+    ASSERT_EQUALS(0, WEXITSTATUS(status));
+    out = fopen(out_path, "r");
+    ASSERT("failed to open range output (open-ended)", out != NULL);
+    bytes_read = fread(buffer, 1, sizeof(buffer) - 1, out);
+    buffer[bytes_read] = '\0';
+    fclose(out);
+    ASSERT("missing Line 2 (open-ended)", strstr(buffer, "Line 2") != NULL);
+    ASSERT("missing Line 4 (open-ended)", strstr(buffer, "Line 4") != NULL);
+    ASSERT("should not include Line 1 (open-ended)", strstr(buffer, "Line 1") == NULL);
 }
 
 /* Clean up the test environment */
@@ -1715,11 +1773,12 @@ int main(void) {
     
     /* Test for file output functionality */
     RUN_TEST(test_cli_output_to_file);
-    
+
     /* Tests for CLI exclude patterns */
     RUN_TEST(test_cli_exclude_pattern);
     RUN_TEST(test_cli_exclude_multiple_patterns);
     RUN_TEST(test_cli_exclude_with_glob);
+    RUN_TEST(test_cli_line_ranges);
 
     /* Temporarily skipped tests for UTF-16/32 handling, as the current heuristic */
     /* correctly identifies them as binary (due to null bytes), but the ideal */

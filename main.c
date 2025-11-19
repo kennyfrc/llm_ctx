@@ -35,6 +35,13 @@ static const char* g_token_model = "gpt-4o";
 static char* g_token_diagnostics_file = NULL;
 static bool g_token_diagnostics_requested = true;
 
+typedef struct
+{
+    char* path;
+    int start_line; /* 1-based; 0 means beginning */
+    int end_line;   /* 1-based inclusive; 0 means end of file */
+} ProcessedFile;
+
 void cleanup(void);
 
 static bool g_effective_copy_to_clipboard = true;
@@ -156,8 +163,8 @@ static char* ensure_prompts_dir(Arena* arena)
 static char* slurp_stream(FILE* fp);
 
 
-static char* save_prompt(const char* content, int argc, char* argv[], 
-                        char** processed_files, int num_processed_files,
+static char* save_prompt(const char* content, int argc, char* argv[],
+                        ProcessedFile* processed_files, int num_processed_files,
                         Arena* arena)
 {
     if (!content || !arena)
@@ -211,7 +218,22 @@ static char* save_prompt(const char* content, int argc, char* argv[],
         fprintf(fp, "<file_list>\n");
         for (int i = 0; i < num_processed_files; i++)
         {
-            fprintf(fp, "%s\n", processed_files[i]);
+            if (processed_files[i].start_line > 0 || processed_files[i].end_line > 0)
+            {
+                if (processed_files[i].end_line > 0)
+                {
+                    fprintf(fp, "%s:%d-%d\n", processed_files[i].path, processed_files[i].start_line,
+                            processed_files[i].end_line);
+                }
+                else
+                {
+                    fprintf(fp, "%s:%d-\n", processed_files[i].path, processed_files[i].start_line);
+                }
+            }
+            else
+            {
+                fprintf(fp, "%s\n", processed_files[i].path);
+            }
         }
         fprintf(fp, "</file_list>\n");
         fprintf(fp, "\n");
@@ -387,8 +409,8 @@ typedef struct
 
 
 void show_help(void);
-bool collect_file(const char* filepath);
-bool output_file_content(const char* filepath, FILE* output);
+bool collect_file(const char* filepath, int start_line, int end_line);
+bool output_file_content(const ProcessedFile* file, FILE* output);
 void add_user_instructions(const char* instructions);
 void find_recursive(const char* base_dir, const char* pattern);
 bool copy_to_clipboard(const char* buffer);
@@ -537,7 +559,7 @@ typedef struct
 char temp_file_path[MAX_PATH];
 FILE* temp_file = NULL;
 int files_found = 0;
-char* processed_files[MAX_FILES];
+ProcessedFile processed_files[MAX_FILES];
 int num_processed_files = 0;
 FileInfo file_tree[MAX_FILES];
 int file_tree_count = 0;
@@ -896,7 +918,7 @@ static void add_response_guide(const char* problem)
     }
 }
 /** Check if file already processed to avoid duplicates */
-bool file_already_processed(const char* filepath)
+bool file_already_processed(const char* filepath, int start_line, int end_line)
 {
     /* Pre-condition: valid filepath parameter */
     assert(filepath != NULL);
@@ -909,9 +931,8 @@ bool file_already_processed(const char* filepath)
     for (int i = 0; i < num_processed_files; i++)
     {
         /* Invariant: each processed_files entry is valid */
-        assert(processed_files[i] != NULL);
-
-        if (strcmp(processed_files[i], filepath) == 0)
+        if (strcmp(processed_files[i].path, filepath) == 0 &&
+            processed_files[i].start_line == start_line && processed_files[i].end_line == end_line)
         {
             /* Post-condition: found matching file */
             return true;
@@ -922,7 +943,7 @@ bool file_already_processed(const char* filepath)
 }
 
 /** Add file to processed files list */
-void add_to_processed_files(const char* filepath)
+void add_to_processed_files(const char* filepath, int start_line, int end_line)
 {
     /* Pre-condition: valid filepath */
     assert(filepath != NULL);
@@ -933,8 +954,10 @@ void add_to_processed_files(const char* filepath)
 
     if (num_processed_files < MAX_FILES)
     {
-        processed_files[num_processed_files] = arena_strdup_safe(&g_arena, filepath);
-        if (!processed_files[num_processed_files])
+        processed_files[num_processed_files].path = arena_strdup_safe(&g_arena, filepath);
+        processed_files[num_processed_files].start_line = start_line;
+        processed_files[num_processed_files].end_line = end_line;
+        if (!processed_files[num_processed_files].path)
         {
             fatal("Out of memory duplicating file path: %s", filepath);
         }
@@ -942,7 +965,7 @@ void add_to_processed_files(const char* filepath)
 
         /* Post-condition: file was added successfully */
         assert(num_processed_files > 0);
-        assert(strcmp(processed_files[num_processed_files - 1], filepath) == 0);
+        assert(strcmp(processed_files[num_processed_files - 1].path, filepath) == 0);
     }
 }
 
@@ -1468,7 +1491,8 @@ void show_help(void)
     printf("  -r, --rank     Enable FileRank to sort files by relevance to query\n");
     printf("                 (default: preserve file order as specified)\n");
     printf("  -R, --raw      Raw mode: omit system instructions and response guide\n");
-    printf("  -f [FILE...]   Process files instead of stdin content\n");
+    printf("  -f [FILE...]   Process files instead of stdin content (supports file:START-END)\n");
+    printf("                 Examples: app.c:10-20, notes.txt:15-, readme.md:8\n");
     printf("  -t             Generate complete directory tree (full tree)\n");
     printf("  -T             Generate file tree only for specified files (filtered tree)\n");
     printf("  -O             Generate tree only (no file content)\n");
@@ -1765,9 +1789,11 @@ void output_file_callback(const char* name, const char* type, const char* conten
     /* Add to processed files list for content output and tree display */
     if (num_processed_files < MAX_FILES)
     {
-        processed_files[num_processed_files] = arena_strdup_safe(&g_arena, name);
+        processed_files[num_processed_files].path = arena_strdup_safe(&g_arena, name);
+        processed_files[num_processed_files].start_line = 0;
+        processed_files[num_processed_files].end_line = 0;
         /* Check allocation immediately */
-        if (!processed_files[num_processed_files])
+        if (!processed_files[num_processed_files].path)
         {
             fatal("Out of memory duplicating special file name: %s", name);
         }
@@ -1781,10 +1807,10 @@ void output_file_callback(const char* name, const char* type, const char* conten
 }
 
 /** Collect file for processing without outputting content */
-bool collect_file(const char* filepath)
+bool collect_file(const char* filepath, int start_line, int end_line)
 {
     // Avoid duplicates in content output
-    if (file_already_processed(filepath))
+    if (file_already_processed(filepath, start_line, end_line))
     {
         return true;
     }
@@ -1796,14 +1822,14 @@ bool collect_file(const char* filepath)
     {
         if (num_processed_files < MAX_FILES)
         {
-            processed_files[num_processed_files] = arena_strdup_safe(&g_arena, filepath);
+            processed_files[num_processed_files].path = arena_strdup_safe(&g_arena, filepath);
+            processed_files[num_processed_files].start_line = start_line;
+            processed_files[num_processed_files].end_line = end_line;
             /* Check allocation immediately */
-            if (!processed_files[num_processed_files])
+            if (!processed_files[num_processed_files].path)
             {
                 /* Use fatal for consistency on OOM */
                 fatal("Out of memory duplicating file path in collect_file: %s", filepath);
-                /* fatal() does not return, but for clarity: */
-                /* return false; */
             }
             num_processed_files++;
             files_found++; // Increment count only for files we will output content for
@@ -1823,17 +1849,36 @@ bool collect_file(const char* filepath)
 }
 
 /** Output file content with fenced code blocks for LLM */
-bool output_file_content(const char* filepath, FILE* output)
+bool output_file_content(const ProcessedFile* file_info, FILE* output)
 {
     /* Ensure the file context block is opened before writing file content */
     open_file_context_if_needed();
+
+    if (!file_info || !file_info->path)
+    {
+        return true;
+    }
+
+    const char* filepath = file_info->path;
 
     /* Check if this is a special file (e.g., stdin content) */
     for (int i = 0; i < num_special_files; i++)
     {
         if (strcmp(filepath, special_files[i].filename) == 0)
         {
-            fprintf(output, "File: %s\n", filepath);
+            fprintf(output, "File: %s", filepath);
+            if (file_info->start_line > 0 || file_info->end_line > 0)
+            {
+                if (file_info->end_line > 0)
+                {
+                    fprintf(output, " (lines %d-%d)", file_info->start_line, file_info->end_line);
+                }
+                else
+                {
+                    fprintf(output, " (lines %d-)", file_info->start_line);
+                }
+            }
+            fprintf(output, "\n");
             /* Check if the content is the binary placeholder */
             if (strcmp(special_files[i].content, "[Binary file content skipped]") == 0)
             {
@@ -1885,17 +1930,50 @@ bool output_file_content(const char* filepath, FILE* output)
     else
     {
         /* File is not binary, output its content with fences */
-        fprintf(output, "File: %s\n", filepath);
+        fprintf(output, "File: %s", filepath);
+        if (file_info->start_line > 0 || file_info->end_line > 0)
+        {
+            if (file_info->end_line > 0)
+            {
+                fprintf(output, " (lines %d-%d)", file_info->start_line, file_info->end_line);
+            }
+            else
+            {
+                fprintf(output, " (lines %d-)", file_info->start_line);
+            }
+        }
+        fprintf(output, "\n");
         fprintf(output, "```\n");
 
-        /* Read and write the file contents in chunks */
+        /* Read and write the file contents */
         char buffer[4096];
         size_t bytes_read;
         /* Ensure we read from the beginning after the binary check */
         rewind(file);
-        while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0)
+
+        if (file_info->start_line == 0 && file_info->end_line == 0)
         {
-            fwrite(buffer, 1, bytes_read, output);
+            while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0)
+            {
+                fwrite(buffer, 1, bytes_read, output);
+            }
+        }
+        else
+        {
+            int current_line = 1;
+            while (fgets(buffer, sizeof(buffer), file))
+            {
+                if (current_line >= file_info->start_line &&
+                    (file_info->end_line == 0 || current_line <= file_info->end_line))
+                {
+                    fputs(buffer, output);
+                }
+
+                if (strchr(buffer, '\n'))
+                {
+                    current_line++;
+                }
+            }
         }
 
         /* Close the code fence and add a separator */
@@ -1985,7 +2063,7 @@ void find_recursive(const char* base_dir, const char* pattern)
             {
                 // Collect the file for content output ONLY if it matches and is readable
                 // collect_file now handles adding to processed_files and files_found
-                collect_file(path);
+                collect_file(path, 0, 0);
             }
         }
     }
@@ -1994,6 +2072,77 @@ void find_recursive(const char* base_dir, const char* pattern)
 }
 
 /** Process glob pattern to find matching files */
+static bool parse_range_suffix(const char* input, char* path_out, size_t max_len, int* start, int* end)
+{
+    if (!input || !path_out || !start || !end)
+    {
+        return false;
+    }
+
+    const char* colon = strrchr(input, ':');
+    if (!colon)
+    {
+        return false;
+    }
+
+    const char* p = colon + 1;
+    if (*p == '\0')
+    {
+        return false; /* Empty suffix */
+    }
+
+    char* endptr;
+    long s = strtol(p, &endptr, 10);
+    long e = 0;
+
+    if (p == endptr)
+    {
+        return false; /* No digits */
+    }
+
+    if (*endptr == '-')
+    {
+        if (*(endptr + 1) != '\0')
+        {
+            e = strtol(endptr + 1, &endptr, 10);
+            if (*endptr != '\0')
+            {
+                return false; /* trailing garbage */
+            }
+        }
+        else
+        {
+            e = 0; /* open-ended */
+        }
+    }
+    else if (*endptr == '\0')
+    {
+        e = s; /* single line */
+    }
+    else
+    {
+        return false; /* invalid character */
+    }
+
+    if (s < 0)
+    {
+        s = 0;
+    }
+
+    size_t base_len = (size_t)(colon - input);
+    if (base_len >= max_len)
+    {
+        return false;
+    }
+
+    strncpy(path_out, input, base_len);
+    path_out[base_len] = '\0';
+
+    *start = (int)s;
+    *end = (int)e;
+    return true;
+}
+
 bool process_pattern(const char* pattern)
 {
     int initial_files_found = files_found;
@@ -2006,6 +2155,27 @@ bool process_pattern(const char* pattern)
         add_to_file_tree(pattern);
         find_recursive(pattern, "*");
         return (files_found > initial_files_found);
+    }
+
+    /* Check for range suffix */
+    char base_path[MAX_PATH];
+    int start_line = 0;
+    int end_line = 0;
+    bool has_range = parse_range_suffix(pattern, base_path, sizeof(base_path), &start_line, &end_line);
+
+    if (has_range)
+    {
+        if (lstat(base_path, &statbuf) == 0 && S_ISREG(statbuf.st_mode))
+        {
+            if (respect_gitignore && should_ignore_path(base_path))
+                return false;
+            if (matches_cli_exclude(base_path))
+                return false;
+
+            add_to_file_tree(base_path);
+            collect_file(base_path, start_line, end_line);
+            return (files_found > initial_files_found);
+        }
     }
 
     /* Check if this is a recursive pattern */
@@ -2098,7 +2268,7 @@ bool process_pattern(const char* pattern)
             {
                 // collect_file now handles adding to processed_files and files_found,
                 // and checks for readability.
-                collect_file(path);
+                collect_file(path, 0, 0);
             }
             // If it's a directory matched by glob, descend into it
             else if (S_ISDIR(statbuf.st_mode))
@@ -2179,7 +2349,7 @@ void cleanup(void)
 
     for (int i = 0; i < num_processed_files; i++)
     {
-        processed_files[i] = NULL;
+        processed_files[i].path = NULL;
     }
 
     /* Free special file content */
@@ -2710,8 +2880,32 @@ void rank_files(const char* query, FileRank* ranks, int num_files)
         {
             char buffer[4096];
             rewind(f);
+            int current_line = 1;
+            const ProcessedFile* pf = NULL;
+            for (int k = 0; k < num_processed_files; k++)
+            {
+                if (strcmp(processed_files[k].path, ranks[i].path) == 0)
+                {
+                    pf = &processed_files[k];
+                    break;
+                }
+            }
+            int start_line = pf ? pf->start_line : 0;
+            int end_line = pf ? pf->end_line : 0;
+
             while (fgets(buffer, sizeof(buffer), f))
             {
+                if (start_line > 0 && current_line < start_line)
+                {
+                    if (strchr(buffer, '\n'))
+                        current_line++;
+                    continue;
+                }
+                if (end_line > 0 && current_line > end_line)
+                {
+                    break;
+                }
+
                 for (int j = 0; j < num_tokens; j++)
                 {
                     if (!term_found[j] && count_word_hits(buffer, tokens[j]) > 0)
@@ -2719,6 +2913,9 @@ void rank_files(const char* query, FileRank* ranks, int num_files)
                         term_found[j] = 1;
                     }
                 }
+
+                if (strchr(buffer, '\n'))
+                    current_line++;
             }
             fclose(f);
         }
@@ -2826,13 +3023,40 @@ void rank_files(const char* query, FileRank* ranks, int num_files)
                     /* Fallback to simple counting */
                     char buffer[4096];
                     rewind(f);
+                    int current_line = 1;
+                    const ProcessedFile* pf = NULL;
+                    for (int k = 0; k < num_processed_files; k++)
+                    {
+                        if (strcmp(processed_files[k].path, ranks[i].path) == 0)
+                        {
+                            pf = &processed_files[k];
+                            break;
+                        }
+                    }
+                    int start_line = pf ? pf->start_line : 0;
+                    int end_line = pf ? pf->end_line : 0;
+
                     while (fgets(buffer, sizeof(buffer), f))
                     {
+                        if (start_line > 0 && current_line < start_line)
+                        {
+                            if (strchr(buffer, '\n'))
+                                current_line++;
+                            continue;
+                        }
+                        if (end_line > 0 && current_line > end_line)
+                        {
+                            break;
+                        }
+
                         for (int j = 0; j < num_tokens; j++)
                         {
                             double w = kw_weight_for(tokens[j]);
                             content_hits += w * count_word_hits(buffer, tokens[j]);
                         }
+
+                        if (strchr(buffer, '\n'))
+                            current_line++;
                     }
                 }
             }
@@ -3566,7 +3790,7 @@ int main(int argc, char* argv[])
             /* Initialize FileRank structures */
             for (int i = 0; i < num_processed_files; i++)
             {
-                ranks[i].path = processed_files[i];
+                ranks[i].path = processed_files[i].path;
                 ranks[i].score = 0.0;
                 ranks[i].bytes = 0;
                 ranks[i].tokens = 0;
@@ -3632,14 +3856,24 @@ int main(int argc, char* argv[])
             /* Update processed_files array to match sorted order */
             for (int i = 0; i < num_processed_files; i++)
             {
-                processed_files[i] = (char*)ranks[i].path;
+                /* Preserve ranges alongside path when reordering */
+                for (int j = i; j < num_processed_files; j++)
+                {
+                    if (strcmp(processed_files[j].path, ranks[i].path) == 0)
+                    {
+                        ProcessedFile tmp = processed_files[i];
+                        processed_files[i] = processed_files[j];
+                        processed_files[j] = tmp;
+                        break;
+                    }
+                }
             }
         }
 
         /* First pass: try outputting all files */
         for (int i = 0; i < num_processed_files; i++)
         {
-            output_file_content(processed_files[i], temp_file);
+            output_file_content(&processed_files[i], temp_file);
         }
 
         /* Add closing file_context tag */
@@ -3751,13 +3985,13 @@ int main(int argc, char* argv[])
                 FILE* mem_file = fmemopen(file_content, 1024 * 1024, "w");
                 if (mem_file)
                 {
-                    output_file_content(processed_files[i], mem_file);
+                    output_file_content(&processed_files[i], mem_file);
                     fclose(mem_file);
 
                     size_t file_tokens = llm_count_tokens(file_content, g_token_model);
                     if (file_tokens == SIZE_MAX)
                     {
-                        fatal("Tokenizer failed while counting '%s'", processed_files[i]);
+                        fatal("Tokenizer failed while counting '%s'", processed_files[i].path);
                     }
 
                     if (running_tokens + file_tokens + 50 <= g_token_budget)
@@ -3771,7 +4005,7 @@ int main(int argc, char* argv[])
                     {
                         fprintf(stderr,
                                 "Skipping remaining %d files - adding '%s' would exceed budget\n",
-                                num_processed_files - i, processed_files[i]);
+                                num_processed_files - i, processed_files[i].path);
                         arena_set_mark(&g_arena, mark);
                         break;
                     }
