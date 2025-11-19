@@ -3204,6 +3204,8 @@ int main(int argc, char* argv[])
     /* This replaces the manual strcmp/strncmp chain, reducing complexity */
     /* and adhering to the "minimize execution paths" principle. */
     int opt;
+    char** explicit_files = arena_push_array_safe(&g_arena, char*, MAX_FILES);
+    int explicit_file_count = 0;
     /* Add 'C' to the short options string. It takes no argument. */
     /* Add 'b:' for short form of --token-budget and 'D::' for token diagnostics */
     while ((opt = getopt_long(argc, argv, "hc:s::fRe::CtdTOL:o::b:D::k:x:r", long_options, NULL)) !=
@@ -3238,6 +3240,17 @@ int main(int argc, char* argv[])
             break;
         case 'f': /* -f or --files */
             file_mode = 1;
+            while (optind < argc && argv[optind] && argv[optind][0] != '-')
+            {
+                if (explicit_file_count >= MAX_FILES)
+                {
+                    fprintf(stderr,
+                            "Error: Too many files specified via -f (maximum %d)\n",
+                            MAX_FILES);
+                    return 1;
+                }
+                explicit_files[explicit_file_count++] = argv[optind++];
+            }
             break;
         case 'e': /* -e or --editor-comments with optional argument */
             /* Handle similar to -s: check if there's a non-option argument following */
@@ -3647,8 +3660,13 @@ int main(int argc, char* argv[])
     /* Process input based on mode */
     if (file_mode)
     {
+        for (int i = 0; i < explicit_file_count; i++)
+        {
+            process_pattern(explicit_files[i]);
+        }
+
         /* Process files listed after options */
-        if (file_args_start >= argc)
+        if (explicit_file_count == 0 && file_args_start >= argc)
         {
             /* Check if stdin was already consumed by an @- option */
             bool used_stdin_for_args = g_stdin_consumed_for_option;

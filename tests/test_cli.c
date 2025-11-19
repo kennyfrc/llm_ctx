@@ -383,6 +383,28 @@ TEST(test_cli_no_gitignore) {
     ASSERT("Output contains __test_2.txt", string_contains(output, "__test_2.txt"));
 }
 
+/* Test that -f consumes inline arguments until the next flag */
+TEST(test_cli_f_flag_consumes_inline_files) {
+    char cmd[1024];
+
+    /* Pass explicit files right after -f and ensure later flags still work */
+    snprintf(cmd,
+             sizeof(cmd),
+             "cd %s && %s/llm_ctx -o -f __regular.txt __test_important.txt -x '__test_important.txt' --no-"
+             "gitignore 2>&1",
+             TEST_DIR,
+             getenv("PWD"));
+
+    char *output = run_command(cmd);
+
+    ASSERT("Output contains __regular.txt when provided inline",
+           string_contains(output, "__regular.txt"));
+    ASSERT("Explicit file excluded by -x indicates next flag was parsed",
+           !string_contains(output, "__test_important.txt"));
+    ASSERT("No missing-file warning when inline files exist",
+           !string_contains(output, "File mode specified"));
+}
+
 /* Test ignoring of log files (prefixed) */
 TEST(test_cli_ignore_logs) {
     char cmd[1024];
@@ -1698,6 +1720,7 @@ int main(void) {
     /* Run tests */
     RUN_TEST(test_cli_gitignore_default);
     RUN_TEST(test_cli_no_gitignore);
+    RUN_TEST(test_cli_f_flag_consumes_inline_files);
     RUN_TEST(test_cli_ignore_logs);
     RUN_TEST(test_cli_ignore_dirs);
     RUN_TEST(test_cli_help_message);
