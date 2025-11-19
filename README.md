@@ -4,6 +4,8 @@
 
 **Quick Examples:**
 
+- **Line ranges**: `llm_ctx -f file.txt:10-20` (10 through 20), `file.txt:15-` (15 to end), `file.txt:8` (just line 8). Works with globs and respects `.gitignore`.
+
 1.  **Review the last commit** (automatically copied to clipboard):
     ```bash
     git diff HEAD~1 | llm_ctx -c "Review the changes in this commit"
@@ -23,10 +25,10 @@
     ```
     *(Note: `{}` expansion might depend on your shell)*
 
-4.  **Provide context for the entire project** (respecting `.gitignore`, automatically copied to clipboard):
+4.  **Provide context for the entire project**, optionally with line ranges (respecting `.gitignore`, automatically copied to clipboard):
     ```bash
     # Use a recursive glob. Assuming that .gitignore has node_modules/, build/, *.log etc., these will be skipped.
-    llm_ctx -f '**/*' -c "Please conduct a code review of this project, and find any potential bugs."
+    llm_ctx -f '**/*:1-120' -c "Please conduct a code review of this project, and find any potential bugs."
     ```
     *(Warning: This can generate a lot of context!)*
     
