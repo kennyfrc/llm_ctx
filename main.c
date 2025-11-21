@@ -1463,7 +1463,7 @@ bool is_binary(FILE* file)
 void show_help(void)
 {
     printf("Usage: llm_ctx [OPTIONS] [FILE...]\n");
-    printf("       llm_ctx get <UUID>\n");
+    printf("       llm_ctx get <UUID> [--read]\n");
     printf("Format files for LLM code analysis with appropriate tags.\n\n");
     printf("Options:\n");
     printf("  -c TEXT        Add user instruction text wrapped in <user_instructions> tags\n");
@@ -1512,6 +1512,10 @@ void show_help(void)
     printf("                        Patterns use git-style glob syntax\n");
     printf("                        Applied after .gitignore processing\n");
     printf("  --no-gitignore        Ignore .gitignore files when collecting files\n");
+    printf("\n");
+    printf("Get subcommand options:\n");
+    printf("  --read               Output prompt content to stdout instead of clipboard\n");
+    printf("\n");
     printf("  --ignore-config       Skip loading configuration file\n\n");
     printf("By default, llm_ctx reads content from stdin.\n");
     printf("Use -f flag to indicate file arguments are provided.\n");
@@ -1551,9 +1555,12 @@ void show_help(void)
     printf("  # Generate and save a prompt (automatically copied to clipboard)\n");
     printf("  git diff | llm_ctx -c \"Review changes\"\n");
     printf("  # Output will include: saved as 20241117-192834-XXXXXX\n\n");
-    printf("  # Retrieve a saved prompt by UUID\n");
+    printf("  # Retrieve a saved prompt by UUID (copies to clipboard by default)\n");
     printf("  llm_ctx get 20241117-192834-XXXXXX\n");
     printf("  # Output: Retrieved and copied prompt\n\n");
+    printf("  # Retrieve a saved prompt with stdout output (use --read)\n");
+    printf("  llm_ctx get 20241117-192834-XXXXXX --read\n");
+    printf("  # Output: prompt content sent to stdout\n\n");
     exit(0);
 }
 
@@ -2392,6 +2399,7 @@ static const struct option long_options[] = {
     {"keywords", required_argument, 0, 405},          /* Keywords boost specification */
     {"filerank-cutoff", required_argument, 0, 406},   /* FileRank cutoff specification */
     {"exclude", required_argument, 0, 'x'},           /* Exclude pattern */
+    {"read", no_argument, 0, 407},                    /* Output to stdout instead of clipboard (get subcommand) */
     {0, 0, 0, 0}                                      /* Terminator */
 };
 static bool s_flag_used = false;                 /* Track if -s was used */
@@ -3141,9 +3149,20 @@ int main(int argc, char* argv[])
     {
         if (argc < 3)
         {
-            fprintf(stderr, "Usage: %s get <uuid>\n", argv[0]);
+            fprintf(stderr, "Usage: %s get <uuid> [--read]\n", argv[0]);
             cleanup();
             return 1;
+        }
+        
+        /* Check for --read flag */
+        bool read_flag = false;
+        for (int i = 3; i < argc; i++)
+        {
+            if (strcmp(argv[i], "--read") == 0)
+            {
+                read_flag = true;
+                break;
+            }
         }
         
         char* content = load_prompt(argv[2], &g_arena);
@@ -3154,15 +3173,24 @@ int main(int argc, char* argv[])
             return 1;
         }
         
-        /* Copy to clipboard */
-        if (!copy_to_clipboard(content))
+        /* Output based on --read flag */
+        if (read_flag)
         {
-            fprintf(stderr, "Clipboard copy failed; outputting to stdout.\n");
+            /* Output to stdout when --read is specified */
             printf("%s", content);
         }
         else
         {
-            fprintf(stderr, "Retrieved and copied prompt %s\n", argv[2]);
+            /* Copy to clipboard (default behavior) */
+            if (!copy_to_clipboard(content))
+            {
+                fprintf(stderr, "Clipboard copy failed; outputting to stdout.\n");
+                printf("%s", content);
+            }
+            else
+            {
+                fprintf(stderr, "Retrieved and copied prompt %s\n", argv[2]);
+            }
         }
         
         cleanup();

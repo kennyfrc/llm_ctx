@@ -29,6 +29,7 @@ void test_cli_exclude_pattern(void);
 void test_cli_exclude_multiple_patterns(void);
 void test_cli_exclude_with_glob(void);
 void test_cli_line_ranges(void);
+void test_cli_get_read_flag(void);
 
 /* Set up the test environment */
 void setup_test_env(void) {
@@ -1845,6 +1846,9 @@ int main(void) {
     RUN_TEST(test_cli_exclude_with_glob);
     RUN_TEST(test_cli_line_ranges);
 
+    /* Test for get subcommand --read flag */
+    RUN_TEST(test_cli_get_read_flag);
+
     /* Temporarily skipped tests for UTF-16/32 handling, as the current heuristic */
     /* correctly identifies them as binary (due to null bytes), but the ideal */
     /* behavior would be to treat them as text. These tests assert the ideal */
@@ -2061,5 +2065,82 @@ TEST(test_cli_output_to_file) {
     snprintf(cmd, sizeof(cmd),
              "rm -f %s/__test_output.txt %s/__output_result.txt %s/__output_result2.txt %s/__output_result3.txt %s/__output_result4.txt",
              TEST_DIR, TEST_DIR, TEST_DIR, TEST_DIR, TEST_DIR);
+    run_command(cmd);
+}
+
+/* Test for get subcommand --read flag functionality */
+TEST(test_cli_get_read_flag) {
+    char cmd[1024];
+    char msg_file_path[1024];
+    char uuid[64] = "";
+    
+    /* Create a test prompt file by running llm_ctx and capturing output */
+    snprintf(msg_file_path, sizeof(msg_file_path), "%s/__test_prompt_input.txt", TEST_DIR);
+    FILE *msg_file = fopen(msg_file_path, "w");
+    ASSERT("Test prompt file created", msg_file != NULL);
+    if (!msg_file) return;
+    fprintf(msg_file, "This is a test prompt for the get command with --read flag.");
+    fprintf(msg_file, "\nTesting both clipboard and stdout output behaviors.");
+    fclose(msg_file);
+
+    /* Generate a test prompt using stdin and capture the UUID from output */
+    snprintf(cmd, sizeof(cmd), "cd %s && cat __test_prompt_input.txt | %s/llm_ctx -c \"Test get subcommand\" 2>&1", TEST_DIR, getenv("PWD"));
+    char *output = run_command(cmd);
+    
+    /* Extract UUID from the output */
+    char *uuid_start = strstr(output, "llm_ctx get ");
+    if (uuid_start) {
+        uuid_start += strlen("llm_ctx get ");
+        char *uuid_end = strchr(uuid_start, '\n');
+        if (uuid_end) {
+            size_t uuid_len = uuid_end - uuid_start;
+            if (uuid_len < sizeof(uuid)) {
+                strncpy(uuid, uuid_start, uuid_len);
+                uuid[uuid_len] = '\0';
+            }
+        }
+    }
+    
+    ASSERT("Successfully generated test prompt with UUID", strlen(uuid) > 0);
+    
+    /* Test 1: Default behavior (clipboard) - should show clipboard success message */
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx get %s 2>&1", getenv("PWD"), uuid);
+    output = run_command(cmd);
+    
+    ASSERT("Default get shows clipboard success message", string_contains(output, "Retrieved and copied prompt"));
+    ASSERT("Default get contains UUID in message", string_contains(output, uuid));
+    ASSERT("Default get does NOT contain prompt content in output", !string_contains(output, "This is a test prompt"));
+    
+    /* Test 2: --read flag behavior - should output to stdout without clipboard message */
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx get %s --read 2>&1", getenv("PWD"), uuid);
+    output = run_command(cmd);
+    
+    ASSERT("--read flag outputs prompt content to stdout", string_contains(output, "This is a test prompt"));
+    ASSERT("--read flag contains second line of prompt", string_contains(output, "Testing both clipboard and stdout"));
+    ASSERT("--read flag does NOT show clipboard success message", !string_contains(output, "Retrieved and copied prompt"));
+    ASSERT("--read flag does NOT show clipboard failure message", !string_contains(output, "Clipboard copy failed"));
+    
+    /* Test 3: Error handling - missing UUID with usage message */
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx get 2>&1", getenv("PWD"));
+    output = run_command(cmd);
+    
+    ASSERT("Missing UUID shows usage with --read option", string_contains(output, "Usage:") && string_contains(output, "[--read]"));
+    
+    /* Test 4: Help message includes --read flag documentation */
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx --help 2>&1", getenv("PWD"));
+    output = run_command(cmd);
+    
+    ASSERT("Help shows get subcommand usage with --read", string_contains(output, "llm_ctx get <UUID> [--read]"));
+    ASSERT("Help documents --read flag", string_contains(output, "--read") && string_contains(output, "Output prompt content to stdout"));
+    
+    /* Test 5: Non-existent UUID error */
+    snprintf(cmd, sizeof(cmd), "%s/llm_ctx get non-existent-uuid-12345 --read 2>&1", getenv("PWD"));
+    output = run_command(cmd);
+    
+    ASSERT("Non-existent UUID shows error message", string_contains(output, "Prompt not found"));
+    ASSERT("Non-existent UUID includes the invalid UUID", string_contains(output, "non-existent-uuid-12345"));
+    
+    /* Cleanup */
+    snprintf(cmd, sizeof(cmd), "rm -f %s/__test_prompt_input.txt", TEST_DIR);
     run_command(cmd);
 }
