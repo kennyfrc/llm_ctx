@@ -1452,9 +1452,11 @@ bool is_binary(FILE* file)
         /* Handle appropriately, e.g., log a warning or return an error state. */
         /* For now, proceed but be aware the file position is wrong. */
         fprintf(stderr, "Warning: Failed to restore file position for binary check.\n");
+        /* Skip the position assertion since seek failed */
+        return likely_binary;
     }
 
-    /* Post-condition: file pointer is restored (best effort) */
+    /* Post-condition: file pointer is restored (only assert if seek succeeded) */
     assert(ftell(file) == original_pos);
 
     return likely_binary;
@@ -2192,6 +2194,12 @@ bool process_pattern(const char* pattern)
             size_t base_len = recursive_marker - pattern;
             if (base_len > 0)
             {
+                /* Bounds check for base_dir */
+                if (base_len >= MAX_PATH)
+                {
+                    fprintf(stderr, "Warning: Pattern base directory too long, truncating\n");
+                    base_len = MAX_PATH - 1;
+                }
                 strncpy(base_dir, pattern, base_len);
                 base_dir[base_len] = '\0';
 
@@ -2207,7 +2215,15 @@ bool process_pattern(const char* pattern)
             {
                 pattern_start++;
             }
-            strcpy(file_pattern, pattern_start);
+            /* Bounds-checked copy for file_pattern */
+            size_t pattern_len = strlen(pattern_start);
+            if (pattern_len >= MAX_PATH)
+            {
+                fprintf(stderr, "Warning: File pattern too long, truncating\n");
+                pattern_len = MAX_PATH - 1;
+            }
+            strncpy(file_pattern, pattern_start, pattern_len);
+            file_pattern[pattern_len] = '\0';
         }
 
         /* Set defaults for empty values */
@@ -2405,7 +2421,7 @@ static const struct option long_options[] = {
 static bool s_flag_used = false;                 /* Track if -s was used */
 static bool c_flag_used = false;                 /* Track if -c/-C/--command was used */
 static bool e_flag_used = false;                 /* Track if -e was used */
-static bool r_flag_used = false;                 /* Track if -r was used */
+/* r_flag_used removed - was dead code (declared but never read) */
 static bool g_stdin_consumed_for_option = false; /* Track if stdin was used for @- */
 static bool ignore_config_flag = false;          /* Track if --ignore-config was used */
 /* No specific CLI flag for copy yet, so no copy_flag_used needed */
@@ -3291,7 +3307,6 @@ int main(int argc, char* argv[])
             break;
         case 'R': /* -R or --raw */
             raw_mode = true;
-            r_flag_used = true;
             break;
         case 'd': /* -d or --debug */
             debug_mode = true;
@@ -3934,8 +3949,10 @@ int main(int argc, char* argv[])
     }
 
     /* Token counting succeeded - always display usage */
-    fprintf(stderr, "Token usage: %zu / %zu (%zu%% of budget)\n", total_tokens, g_token_budget,
-            (total_tokens * 100) / g_token_budget);
+    /* Use floating point division to avoid integer overflow on very large token counts */
+    double budget_pct = 100.0 * (double)total_tokens / (double)g_token_budget;
+    fprintf(stderr, "Token usage: %zu / %zu (%.0f%% of budget)\n", total_tokens, g_token_budget,
+            budget_pct);
 
     /* Check budget */
     if (total_tokens > g_token_budget)
@@ -4061,8 +4078,10 @@ int main(int argc, char* argv[])
                 fprintf(stderr, "\nFileRank selection complete:\n");
                 fprintf(stderr, "  - Selected %d most relevant files out of %d total\n",
                         files_included, num_processed_files);
-                fprintf(stderr, "  - Token usage: %zu / %zu (%zu%% of budget)\n", total_tokens,
-                        g_token_budget, (total_tokens * 100) / g_token_budget);
+                /* Use floating point division to avoid integer overflow */
+                double pct = 100.0 * (double)total_tokens / (double)g_token_budget;
+                fprintf(stderr, "  - Token usage: %zu / %zu (%.0f%% of budget)\n", total_tokens,
+                        g_token_budget, pct);
             }
         }
         else
