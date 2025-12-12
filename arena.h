@@ -37,6 +37,9 @@ extern "C"
 #ifdef ARENA_ENABLE_COMMIT
         size_t commit;
 #endif
+#ifndef _WIN32
+        int is_mmap; /* 1 if allocated via mmap, 0 if via malloc */
+#endif
     } Arena;
 
 #define KiB(x) ((size_t)(x) << 10)
@@ -105,6 +108,7 @@ extern "C"
                 return a;
             a.base = ptr;
             a.size = reserve;
+            a.is_mmap = 0; /* Allocated via malloc */
 #ifdef ARENA_ENABLE_COMMIT
             a.commit = reserve;
 #endif
@@ -113,6 +117,7 @@ extern "C"
         {
             a.base = ptr;
             a.size = reserve;
+            a.is_mmap = 1; /* Allocated via mmap */
 #ifdef ARENA_ENABLE_COMMIT
             a.commit = reserve;
 #endif
@@ -128,13 +133,23 @@ extern "C"
 #ifdef _WIN32
         VirtualFree(a->base, 0, MEM_RELEASE);
 #else
-        munmap(a->base, a->size);
+        if (a->is_mmap)
+        {
+            munmap(a->base, a->size);
+        }
+        else
+        {
+            free(a->base);
+        }
 #endif
         a->base = NULL;
         a->pos = 0;
         a->size = 0;
 #ifdef ARENA_ENABLE_COMMIT
         a->commit = 0;
+#endif
+#ifndef _WIN32
+        a->is_mmap = 0;
 #endif
     }
 
