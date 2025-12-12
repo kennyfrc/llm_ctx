@@ -208,14 +208,14 @@ size_t llm_count_tokens(const char* text, const char* model)
         }
     }
 
-    /* Clean up */
-    if (tokens && tokens != (Rank*)0x4)
+    /* Clean up token array - tiktoken-c returns:
+     * - NULL on error (null pointer input, invalid UTF-8)
+     * - Box::into_raw() heap pointer on success (must be freed with free())
+     * The Rust library uses #[global_allocator] = System, so free() is correct.
+     * See tiktoken-c/src/lib.rs tiktoken_corebpe_encode_ordinary() for details. */
+    if (tokens)
     {
-        /* Only free if it's a valid heap pointer */
-        if ((uintptr_t)tokens > 0x1000)
-        {
-            free(tokens);
-        }
+        free(tokens);
     }
     g_destroy_corebpe(bpe);
 
