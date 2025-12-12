@@ -249,7 +249,15 @@ static void parse_templates(FILE* fp, ConfigSettings* settings, Arena* arena)
             else if (strncmp(p, "templates.", 10) == 0)
             {
                 state = STATE_IN_TEMPLATE;
-                strcpy(current_template, p + 10);
+                /* Bounds-checked copy for template name */
+                size_t template_name_len = strlen(p + 10);
+                if (template_name_len >= sizeof(current_template))
+                {
+                    fprintf(stderr, "Warning: Template name too long, truncating: %s\n", p + 10);
+                    template_name_len = sizeof(current_template) - 1;
+                }
+                strncpy(current_template, p + 10, template_name_len);
+                current_template[template_name_len] = '\0';
 
                 // Create new template
                 current_tmpl = &settings->templates[settings->template_count++];
