@@ -30,7 +30,7 @@
 
 static Arena g_arena;
 
-static size_t g_token_budget = 96000;
+static size_t g_token_budget = 1024 * 64;
 static const char* g_token_model = "gpt-4o";
 static char* g_token_diagnostics_file = NULL;
 static bool g_token_diagnostics_requested = true;
