@@ -133,6 +133,12 @@ toml_table_t* toml_parse_file(FILE* fp, char* errbuf, int errbufsz)
             toml_free(tab);
             return NULL;
         }
+        if (key_len == 0)
+        {
+            snprintf(errbuf, errbufsz, "Line %d: Empty key", line_no);
+            toml_free(tab);
+            return NULL;
+        }
         memcpy(key, p, key_len);
         key[key_len] = '\0';
 
@@ -141,6 +147,14 @@ toml_table_t* toml_parse_file(FILE* fp, char* errbuf, int errbufsz)
         while (key_end > key && isspace(*key_end))
             key_end--;
         *(key_end + 1) = '\0';
+        
+        // Check if key is empty after trimming
+        if (key[0] == '\0')
+        {
+            snprintf(errbuf, errbufsz, "Line %d: Empty key after trimming", line_no);
+            toml_free(tab);
+            return NULL;
+        }
 
         // Parse value
         p = eq + 1;
